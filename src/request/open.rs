@@ -24,10 +24,10 @@ bitflags::bitflags! {
 
 #[derive(Debug)]
 pub struct OpenReq {
-    req: Request,
-    ino: Ino,
-    flags: OFlag,
-    dev: Sender,
+    pub(crate) req: Request,
+    pub(crate) ino: Ino,
+    pub(crate) flags: OFlag,
+    pub(crate) dev: Sender,
 }
 
 #[derive(Debug)]
@@ -120,6 +120,20 @@ impl OpenResp {
         self.backing_id = Some(PassthroughFd::backing_id(fd));
         self
     }
+
+    pub(super) fn build(self) -> OpenOut {
+        let flags = RawOpenFlags::from_bits_retain((self.flags & OpenFlags::all()).bits());
+        let (flags, backing_id) = if let Some(backing_id) = self.backing_id {
+            (flags | RawOpenFlags::PASSTHROUGH, backing_id.as_raw())
+        } else {
+            (flags, 0)
+        };
+        OpenOut {
+            fh: self.fh.into(),
+            open_flags: flags,
+            backing_id,
+        }
+    }
 }
 
 impl Server {
@@ -148,24 +162,7 @@ impl Server {
                 dev: tx.clone(),
             };
             handle_error(match fs.open(&req).await {
-                Ok(resp) => {
-                    let flags =
-                        RawOpenFlags::from_bits_retain((resp.flags & OpenFlags::all()).bits());
-                    let (flags, backing_id) = if let Some(backing_id) = resp.backing_id {
-                        (flags | RawOpenFlags::PASSTHROUGH, backing_id.as_raw())
-                    } else {
-                        (flags, 0)
-                    };
-                    tx.send(MsgOut::new(
-                        req.id(),
-                        OpenOut {
-                            fh: resp.fh.into(),
-                            open_flags: flags,
-                            backing_id,
-                        },
-                    ))
-                    .await
-                }
+                Ok(resp) => tx.send(MsgOut::new(req.id(), resp.build())).await,
                 Err(err) => send_error(err, req.id(), &mut tx).await,
             });
         })

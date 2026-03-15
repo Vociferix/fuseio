@@ -1,8 +1,8 @@
 #![allow(async_fn_in_trait)]
 
 use crate::request::{
-    AccessReq, BmapReq, CopyFileRangeReq, Entry, ForgetReq, GetAttrsReq, GetAttrsResp, LookupReq,
-    OpenReq, OpenResp,
+    AccessReq, BmapReq, CopyFileRangeReq, CreateReq, CreateResp, Entry, ForgetReq, GetAttrsReq,
+    GetAttrsResp, LookupReq, MknodReq, OpenReq, OpenResp,
 };
 use crate::{Error, FsConfig, KernelConfig, MountOpt, Result};
 
@@ -49,5 +49,34 @@ pub trait Filesystem: 'static {
     async fn lookup(&self, req: &LookupReq<'_>) -> Result<Entry> {
         let _ = (self, req);
         Err(Error::ENOSYS)
+    }
+
+    async fn mknod(&self, req: &MknodReq<'_>) -> Result<Entry> {
+        let _ = (self, req);
+        Err(Error::ENOSYS)
+    }
+
+    async fn create(&self, req: &CreateReq<'_>) -> Result<CreateResp> {
+        let mknod_req = MknodReq {
+            req: req.req,
+            parent: req.parent,
+            mode: req.mode,
+            umask: req.umask,
+            rdev: 0,
+            name: req.name,
+        };
+
+        let entry = self.mknod(&mknod_req).await?;
+
+        let open_req = OpenReq {
+            req: req.req,
+            ino: entry.ino,
+            flags: req.flags,
+            dev: req.dev.clone(),
+        };
+
+        let open_resp = self.open(&open_req).await?;
+
+        Ok(CreateResp::from_parts(entry, open_resp))
     }
 }

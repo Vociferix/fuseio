@@ -1,26 +1,111 @@
 use super::{
-    Ino, Mode, OFlag, OpenAccessMode, OpenFlags, Request, decode, handle_error, send_error,
+    Entry, FileHandle, Ino, InodeAttrs, Mode, OFlag, OpenAccessMode, OpenFlags, OpenResp, Request,
+    decode, handle_error, send_error,
 };
 use crate::async_rc::AsyncRc;
 use crate::channel::Sender;
-use crate::layout::{CreateIn, CreateOut, MsgOut};
+use crate::layout::{CreateIn, CreateOut, CreateOutCompat, MsgOut};
 use crate::serve::Server;
-use crate::{Error, Filesystem, PassthroughFd, Result};
+use crate::{Filesystem, PassthroughFd, Result};
 
 use compio::runtime::spawn;
 
+use std::ffi::OsStr;
 use std::os::fd::AsFd;
+use std::os::unix::ffi::OsStrExt;
+use std::time::Duration;
 
 #[derive(Debug)]
-pub struct CreateReq {
-    req: Request,
-    flags: OFlag,
-    mode: Mode,
-    umask: Mode,
-    dev: Sender,
+pub struct CreateReq<'a> {
+    pub(crate) req: Request,
+    pub(crate) parent: Ino,
+    pub(crate) flags: OFlag,
+    pub(crate) mode: Mode,
+    pub(crate) umask: Mode,
+    pub(crate) name: &'a OsStr,
+    pub(crate) dev: Sender,
 }
 
-impl CreateReq {
+#[derive(Debug)]
+pub struct CreateResp {
+    open: OpenResp,
+    entry: Entry,
+}
+
+impl CreateResp {
+    pub fn from_parts(entry: Entry, open: OpenResp) -> Self {
+        Self { open, entry }
+    }
+
+    pub fn new(ino: Ino, fh: FileHandle) -> Self {
+        Self {
+            open: OpenResp::new(fh),
+            entry: Entry::new(ino),
+        }
+    }
+
+    pub fn flags(self, flags: OpenFlags) -> Self {
+        let Self { open, entry } = self;
+        Self {
+            open: open.flags(flags),
+            entry,
+        }
+    }
+
+    pub fn add_flags(self, flags: OpenFlags) -> Self {
+        let Self { open, entry } = self;
+        Self {
+            open: open.add_flags(flags),
+            entry,
+        }
+    }
+
+    pub fn passthrough<T: AsFd>(self, fd: &PassthroughFd<T>) -> Self {
+        let Self { open, entry } = self;
+        Self {
+            open: open.passthrough(fd),
+            entry,
+        }
+    }
+
+    pub fn generation(self, generation: u64) -> Self {
+        let Self { open, entry } = self;
+        Self {
+            open,
+            entry: entry.generation(generation),
+        }
+    }
+
+    pub fn entry_ttl(self, ttl: Duration) -> Self {
+        let Self { open, entry } = self;
+        Self {
+            open,
+            entry: entry.entry_ttl(ttl),
+        }
+    }
+
+    pub fn attrs(self, attrs: InodeAttrs) -> Self {
+        let Self { open, entry } = self;
+        Self {
+            open,
+            entry: entry.attrs(attrs),
+        }
+    }
+
+    pub fn attrs_ttl(self, ttl: Duration) -> Self {
+        let Self { open, entry } = self;
+        Self {
+            open,
+            entry: entry.attrs_ttl(ttl),
+        }
+    }
+}
+
+impl<'a> CreateReq<'a> {
+    pub fn parent_ino(&self) -> Ino {
+        self.parent
+    }
+
     pub fn flags(&self) -> OFlag {
         self.flags
     }
@@ -42,12 +127,16 @@ impl CreateReq {
         self.umask
     }
 
+    pub fn name(&self) -> &'a OsStr {
+        self.name
+    }
+
     pub fn open_passthrough<T: AsFd>(&self, fd: T) -> Result<PassthroughFd<T>> {
         PassthroughFd::open(fd, self.dev.clone())
     }
 }
 
-impl std::ops::Deref for CreateReq {
+impl std::ops::Deref for CreateReq<'_> {
     type Target = Request;
 
     fn deref(&self) -> &Request {
@@ -60,8 +149,53 @@ impl Server {
     where
         F: Filesystem,
     {
-        let body = decode::<CreateIn>(body)?;
+        let (hdr, name) = decode::<CreateIn>(body)?;
 
-        todo!()
+        let name_len = memchr::memchr(0, name).unwrap_or(name.len());
+        let mut buf = self.bufs.checkout_with_capacity::<u8>(name_len);
+        buf.extend_from_slice(&name[..name_len]);
+
+        let fs = fs.clone();
+        let mut tx = self.tx.clone();
+        let minor = self.ver.1;
+
+        spawn(async move {
+            let req = CreateReq {
+                req,
+                parent: ino,
+                flags: OFlag::from_bits_retain(hdr.flags.cast_signed()),
+                mode: Mode::from_bits_retain(hdr.mode),
+                umask: Mode::from_bits_retain(hdr.mode),
+                name: OsStr::from_bytes(&buf),
+                dev: tx.clone(),
+            };
+            handle_error(match fs.create(&req).await {
+                Ok(resp) => {
+                    if minor < 9 {
+                        tx.send(MsgOut::new(
+                            req.id(),
+                            CreateOutCompat {
+                                entry: resp.entry.build().compat(),
+                                open: resp.open.build(),
+                            },
+                        ))
+                        .await
+                    } else {
+                        tx.send(MsgOut::new(
+                            req.id(),
+                            CreateOut {
+                                entry: resp.entry.build(),
+                                open: resp.open.build(),
+                            },
+                        ))
+                        .await
+                    }
+                }
+                Err(err) => send_error(err, req.id(), &mut tx).await,
+            })
+        })
+        .detach();
+
+        Ok(())
     }
 }

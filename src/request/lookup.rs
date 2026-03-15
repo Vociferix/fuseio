@@ -19,7 +19,7 @@ pub struct LookupReq<'a> {
 
 #[derive(Debug)]
 pub struct Entry {
-    ino: Ino,
+    pub(crate) ino: Ino,
     generation: u64,
     entry_ttl: Option<Duration>,
     attr_ttl: Option<Duration>,

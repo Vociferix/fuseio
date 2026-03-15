@@ -306,17 +306,17 @@ pub struct GetXtimesOut {
 #[repr(C)]
 #[derive(Debug, Clone, Copy, Zeroable, Pod)]
 pub struct MknodIn {
-    mode: u32,
-    rdev: u32,
-    umask: u32,
-    padding: u32,
+    pub mode: u32,
+    pub rdev: u32,
+    pub umask: u32,
+    pub padding: u32,
 }
 
 #[repr(C)]
 #[derive(Debug, Clone, Copy, Zeroable, Pod)]
 pub struct MknodInCompat {
-    mode: u32,
-    rdev: u32,
+    pub mode: u32,
+    pub rdev: u32,
 }
 
 impl MknodIn {
@@ -419,15 +419,15 @@ pub struct CreateIn {
 #[repr(C)]
 #[derive(Debug, Clone, Copy, Zeroable, Pod)]
 pub struct CreateOut {
-    entry: EntryOut,
-    open: OpenOut,
+    pub entry: EntryOut,
+    pub open: OpenOut,
 }
 
 #[repr(C)]
 #[derive(Debug, Clone, Copy, Zeroable, Pod)]
 pub struct CreateOutCompat {
-    entry: EntryOutCompat,
-    open: OpenOut,
+    pub entry: EntryOutCompat,
+    pub open: OpenOut,
 }
 
 impl CreateOut {

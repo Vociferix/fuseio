@@ -58,8 +58,10 @@ pub use access::AccessReq;
 pub use batch_forget::{ForgetIno, ForgetReq};
 pub use bmap::BmapReq;
 pub use copy_file_range::{CopyFileRangePos, CopyFileRangeReq};
+pub use create::{CreateReq, CreateResp};
 pub use getattr::{GetAttrsReq, GetAttrsResp, InodeAttrs};
 pub use lookup::{Entry, LookupReq};
+pub use mknod::MknodReq;
 pub use open::{OpenAccessMode, OpenFlags, OpenReq, OpenResp};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
