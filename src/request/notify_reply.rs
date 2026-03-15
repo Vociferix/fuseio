@@ -1,11 +1,9 @@
 use super::{Ino, Request};
-use crate::Filesystem;
 use crate::async_rc::AsyncRc;
 use crate::serve::Server;
+use crate::{Error, Filesystem, Result};
 
 use compio::runtime::spawn;
-
-use std::io::Result;
 
 impl Server {
     pub fn notify_reply<F>(

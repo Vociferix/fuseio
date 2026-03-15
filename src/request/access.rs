@@ -1,12 +1,10 @@
-use super::{AccessFlags, Ino, Request, send_result};
-use crate::Filesystem;
+use super::{AccessFlags, Ino, Request, decode, handle_error, send_result};
 use crate::async_rc::AsyncRc;
 use crate::layout::AccessIn;
 use crate::serve::Server;
+use crate::{Filesystem, Result};
 
 use compio::runtime::spawn;
-
-use std::io::Result;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct AccessReq {
@@ -34,9 +32,7 @@ impl Server {
     where
         F: Filesystem,
     {
-        let Some(body) = self.decode::<AccessIn>(body, fs, &req) else {
-            return Ok(());
-        };
+        let body = decode::<AccessIn>(body)?.0;
 
         let mut tx = self.tx.clone();
         let fs = fs.clone();
@@ -48,7 +44,7 @@ impl Server {
 
         spawn(async move {
             let res = fs.access(&req).await;
-            let _ = send_result(res, req.id(), &mut tx).await;
+            handle_error(send_result(res, req.id(), &mut tx).await);
         })
         .detach();
 

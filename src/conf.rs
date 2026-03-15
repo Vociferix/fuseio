@@ -1,3 +1,5 @@
+use crate::request::Ino;
+
 use std::time::Duration;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
@@ -19,6 +21,7 @@ pub struct FsConfig {
     time_gran: Duration,
     passthrough: bool,
     stackable: bool,
+    pub(crate) root_inode: Ino,
 }
 
 const MACOS: bool = cfg!(target_os = "macos");
@@ -183,6 +186,7 @@ impl FsConfig {
             time_gran: Duration::from_nanos(1),
             passthrough: false,
             stackable: false,
+            root_inode: unsafe { Ino::from_raw_unchecked(1) },
         }
     }
 
@@ -232,6 +236,11 @@ impl FsConfig {
 
     pub fn stackable(mut self, enable: bool) -> Self {
         self.stackable = enable;
+        self
+    }
+
+    pub fn root_ino(mut self, ino: Ino) -> Self {
+        self.root_inode = ino;
         self
     }
 

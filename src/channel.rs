@@ -1,7 +1,7 @@
 use crate::buf_pool::Buf;
 
 use compio::BufResult;
-use compio::driver::{OwnedFd, op::OpenFile};
+use compio::driver::{OwnedFd, SharedFd, op::OpenFile};
 use compio::fs::AsyncFd;
 use compio::io::{AsyncRead, AsyncWriteExt};
 use compio::runtime::submit;
@@ -20,7 +20,7 @@ pub struct Sender {
 #[derive(Debug)]
 pub struct Receiver {
     dev: AsyncFd<OwnedFd>,
-    buf: Buf,
+    buf: Buf<u8>,
 }
 
 pub async fn channel<P>(path: P) -> Result<(Sender, Receiver)>
@@ -41,7 +41,7 @@ where
     let tx = Sender { dev: fd.clone() };
     let rx = Receiver {
         dev: fd,
-        buf: Buf::with_capacity(std::mem::align_of::<u64>(), BUF_SIZE),
+        buf: Buf::with_capacity(BUF_SIZE),
     };
 
     Ok((tx, rx))
@@ -98,7 +98,7 @@ impl AsRawFd for Sender {
 
 impl Receiver {
     pub async fn recv(&mut self) -> std::io::Result<&[u8]> {
-        let mut buf = std::mem::replace(&mut self.buf, Buf::new(std::mem::align_of::<u64>()));
+        let mut buf = std::mem::take(&mut self.buf);
         buf.clear();
         buf.reserve(BUF_SIZE);
 
@@ -117,7 +117,7 @@ impl Clone for Receiver {
     fn clone(&self) -> Self {
         Self {
             dev: self.dev.clone(),
-            buf: Vec::with_capacity(BUF_SIZE),
+            buf: Buf::with_capacity(BUF_SIZE),
         }
     }
 }

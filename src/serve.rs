@@ -1,9 +1,12 @@
 use crate::async_rc::AsyncRc;
 use crate::buf_pool::BufPool;
 use crate::channel::{Receiver, Sender, channel};
-use crate::layout::{self, HeaderIn, HeaderOut, InitIn, InitOut, Opcode};
+use crate::layout::{
+    self, HeaderIn, HeaderOut, InitIn, InitOut, InitOutCompat, InitOutCompat22, Opcode,
+};
 use crate::mount::{Mount, Unmount};
 use crate::request;
+use crate::request::Ino;
 use crate::{Filesystem, KernelConfig, MountHandle, MountOpt, Version};
 
 use bytemuck::{Zeroable, bytes_of_mut};
@@ -11,6 +14,7 @@ use compio::runtime::JoinHandle;
 use compio::runtime::event::{Event, EventHandle};
 use futures_util::{FutureExt, select_biased};
 
+use std::cell::Cell;
 use std::io::{Error as IoError, ErrorKind, Result};
 use std::os::fd::AsFd;
 use std::rc::Rc;
@@ -18,6 +22,9 @@ use std::rc::Rc;
 pub struct Server {
     pub(crate) tx: Sender,
     pub(crate) bufs: BufPool,
+    pub(crate) ver: Version,
+    pub(crate) root_ino: Ino,
+    pub(crate) root_ino_init: Cell<bool>,
 }
 
 pub async fn mount(
@@ -33,8 +40,8 @@ pub async fn mount(
         .mount(tx.as_fd(), mountpoint.as_ref(), opts.as_ref())
         .await?;
 
-    let version = match handshake(&mut fs, &mut tx, &mut rx).await {
-        Ok(version) => version,
+    let (version, root_ino) = match handshake(&mut fs, &mut tx, &mut rx, opts.as_ref()).await {
+        Ok(init) => init,
         Err(err) => {
             let _ = unmounter.unmount(tx.as_fd(), mountpoint.as_ref(), opts.as_ref());
             return Err(err);
@@ -63,6 +70,9 @@ pub async fn mount(
     let server = Server {
         tx,
         bufs: BufPool::new(),
+        ver: version,
+        root_ino,
+        root_ino_init: Cell::new(root_ino.as_raw() == 1),
     };
 
     let task = compio::runtime::spawn(Server::serve(
@@ -142,12 +152,59 @@ impl Server {
             Err(err) => return Err(err),
         };
 
-        bytes_of_mut(hdr).copy_from_slice(&msg[..HDR_LEN]);
+        *hdr = unsafe { std::ptr::read(msg.as_ptr() as *const HeaderIn) };
 
-        self.dispatch(fs, &hdr, &msg[HDR_LEN..]).await
+        if msg.len() < hdr.len as usize {
+            let unique = hdr.unique;
+            let fs = fs.clone();
+            let mut tx = self.tx.clone();
+            compio::runtime::spawn(async move {
+                let _fs = fs;
+                let res = tx
+                    .send(HeaderOut {
+                        len: const { std::mem::size_of::<HeaderOut>() as u32 },
+                        error: -crate::Error::EPROTO.raw_os_error(),
+                        unique,
+                    })
+                    .await;
+                if let Err(err) = res {
+                    log::error!("failed to send error response to kernel: {err}");
+                }
+            })
+            .detach();
+            return Ok(false);
+        }
+
+        let body = &msg[HDR_LEN..(hdr.len as usize)];
+
+        match self.dispatch(fs, &hdr, body).await {
+            Ok(destroy) => Ok(destroy),
+            Err(err) => {
+                let unique = hdr.unique;
+                let fs = fs.clone();
+                let mut tx = self.tx.clone();
+                compio::runtime::spawn(async move {
+                    let _fs = fs;
+                    let _ = tx
+                        .send(HeaderOut {
+                            len: const { std::mem::size_of::<HeaderOut>() as u32 },
+                            error: -err.raw_os_error(),
+                            unique,
+                        })
+                        .await;
+                })
+                .detach();
+                return Ok(false);
+            }
+        }
     }
 
-    async fn dispatch<F>(&mut self, fs: &AsyncRc<F>, hdr: &HeaderIn, body: &[u8]) -> Result<bool>
+    async fn dispatch<F>(
+        &mut self,
+        fs: &AsyncRc<F>,
+        hdr: &HeaderIn,
+        body: &[u8],
+    ) -> std::result::Result<bool, crate::Error>
     where
         F: Filesystem,
     {
@@ -228,18 +285,13 @@ impl Server {
             // TODO: Is this a normal opcode to setup a CUSE device or does this
             //       come in instead of Opcode::INIT in the case of CUSE?
             //Opcode::CUSE_INIT => {},
-            _ => {
-                return Err(std::io::Error::new(
-                    std::io::ErrorKind::InvalidData,
-                    "unknown opcode received from kernel",
-                ));
-            }
+            _ => return Err(crate::Error::EINVAL),
         }?;
 
         Ok(false)
     }
 
-    async fn destroy(&mut self, hdr: &HeaderIn) -> Result<bool> {
+    async fn destroy(&mut self, hdr: &HeaderIn) -> std::result::Result<bool, crate::Error> {
         self.tx
             .send(HeaderOut {
                 len: const { std::mem::size_of::<HeaderOut>() as u32 },
@@ -255,7 +307,8 @@ async fn handshake(
     fs: &mut impl Filesystem,
     tx: &mut Sender,
     rx: &mut Receiver,
-) -> Result<Version> {
+    opts: &[MountOpt],
+) -> Result<(Version, Ino)> {
     let mut hdr = HeaderIn::zeroed();
     let mut init = InitIn::zeroed();
 
@@ -310,7 +363,7 @@ async fn handshake(
         tx.send(out).await?;
     }
 
-    if init.major < 7 || (init.major == 7 && init.minor < 6) {
+    if init.major < layout::VERSION_MAJOR {
         let out = HeaderOut {
             len: const { HDR_LEN as u32 },
             error: -crate::Error::EPROTO.raw_os_error(),
@@ -326,7 +379,7 @@ async fn handshake(
         ));
     }
 
-    let conf = match fs.initialize(KernelConfig::new(init)).await {
+    let conf = match fs.initialize(KernelConfig::new(init), opts).await {
         Ok(conf) => conf,
         Err(err) => {
             let out = HeaderOut {
@@ -339,16 +392,46 @@ async fn handshake(
         }
     };
 
-    let out = layout::MsgOut {
-        hdr: HeaderOut {
-            len: const { (HDR_LEN + std::mem::size_of::<InitOut>()) as u32 },
-            error: 0,
-            unique: hdr.unique,
-        },
-        body: conf.build(),
-    };
+    let root_ino = conf.root_inode;
 
-    tx.send(out).await?;
+    let body = conf.build();
 
-    Ok(crate::Version(init.major, init.minor))
+    if init.minor < 5 {
+        let out = layout::MsgOut {
+            hdr: HeaderOut {
+                len: const { (HDR_LEN + std::mem::size_of::<InitOutCompat>()) as u32 },
+                error: 0,
+                unique: hdr.unique,
+            },
+            body: body.compat(),
+        };
+
+        tx.send(out).await?;
+    } else if init.minor < 23 {
+        let out = layout::MsgOut {
+            hdr: HeaderOut {
+                len: const { (HDR_LEN + std::mem::size_of::<InitOutCompat22>()) as u32 },
+                error: 0,
+                unique: hdr.unique,
+            },
+            body: body.compat22(),
+        };
+
+        tx.send(out).await?;
+    } else {
+        let out = layout::MsgOut {
+            hdr: HeaderOut {
+                len: const { (HDR_LEN + std::mem::size_of::<InitOut>()) as u32 },
+                error: 0,
+                unique: hdr.unique,
+            },
+            body,
+        };
+
+        tx.send(out).await?;
+    }
+
+    let ver = Version(init.major, init.minor);
+
+    Ok((Version(init.major, init.minor), root_ino))
 }

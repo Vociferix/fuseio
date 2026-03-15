@@ -48,12 +48,61 @@ pub mod unlink;
 pub mod write;
 
 #[doc(inline)]
-pub use nix::unistd::{AccessFlags, Gid, Pid, Uid};
+pub use nix::{
+    fcntl::OFlag,
+    sys::stat::Mode,
+    unistd::{AccessFlags, Gid, Pid, Uid},
+};
 
 pub use access::AccessReq;
+pub use batch_forget::{ForgetIno, ForgetReq};
+pub use bmap::BmapReq;
+pub use copy_file_range::{CopyFileRangePos, CopyFileRangeReq};
+pub use getattr::{GetAttrsReq, GetAttrsResp, InodeAttrs};
+pub use lookup::{Entry, LookupReq};
+pub use open::{OpenAccessMode, OpenFlags, OpenReq, OpenResp};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct Ino(NonZeroU64);
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub struct FileHandle(u64);
+
+#[cfg(target_os = "macos")]
+#[doc(inline)]
+pub use nix::sys::stat::FileFlag;
+
+#[cfg(not(target_os = "macos"))]
+bitflags::bitflags! {
+    /// File flags.
+    pub struct FileFlag: u8 {
+        /// The file may only be appended to.
+        const SF_APPEND = 0;
+        /// The file has been archived.
+        const SF_ARCHIVED = 0;
+        /// The file may not be changed.
+        const SF_IMMUTABLE = 0;
+        /// Mask of superuser changeable flags
+        const SF_SETTABLE = 0;
+        /// The file may only be appended to.
+        const UF_APPEND = 0;
+        /// File is compressed at the file system level.
+        const UF_COMPRESSED = 0;
+        /// The file may be hidden from directory listings at the application's
+        /// discretion.
+        const UF_HIDDEN = 0;
+        /// The file may not be changed.
+        const UF_IMMUTABLE = 0;
+        /// Do not dump the file.
+        const UF_NODUMP = 0;
+        /// The directory is opaque when viewed through a union stack.
+        const UF_OPAQUE = 0;
+        /// Mask of owner changeable flags.
+        const UF_SETTABLE = 0;
+        /// File renames and deletes are tracked.
+        const UF_TRACKED = 0;
+    }
+}
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct Request {
@@ -63,27 +112,9 @@ pub struct Request {
     pid: Pid,
 }
 
-impl crate::serve::Server {
-    fn decode<T: bytemuck::Pod>(
-        &self,
-        bytes: &[u8],
-        fs: &crate::async_rc::AsyncRc<impl crate::Filesystem>,
-        req: &Request,
-    ) -> Option<T> {
-        match from_bytes::<T>(bytes) {
-            Ok(value) => Some(value),
-            Err(err) => {
-                let mut tx = self.tx.clone();
-                let unique = req.id();
-                let fs = fs.clone();
-                compio::runtime::spawn(async move {
-                    let _fs = fs;
-                    let _ = send_error(err, unique, &mut tx).await;
-                })
-                .detach();
-                None
-            }
-        }
+fn handle_error<E: std::error::Error>(res: Result<(), E>) {
+    if let Err(err) = res {
+        log::error!("failed to send response to kernel: {err}");
     }
 }
 
@@ -129,19 +160,30 @@ async fn send_ok(unique: u64, tx: &mut crate::channel::Sender) -> std::io::Resul
     send_errno(0, unique, tx).await
 }
 
-fn from_bytes<T: bytemuck::Pod>(bytes: &[u8]) -> crate::Result<T> {
-    if bytes.len() < std::mem::size_of::<T>() {
+// This function is meant to be called on the `body` argument passed to an operation
+// request handler in order to decode the body or subheader.
+//
+// All FUSE messages have an alignment of 8 or less, and the `body` argument passed
+// to operation request handlers is meant to always be aligned to 8 bytes. If the
+// type `T` has an alignment larger than 8 bytes, this function will panic (but is
+// written such that the compiler should optimize this panic out as long as `T` is
+// aligned to 8 bytes or less).
+//
+// To guard against bugs and misuse, if `bytes` does not start at an address aligned
+// properly for `T` or `bytes` is smaller than `T`, this function will return an
+// error.
+fn decode<T: bytemuck::Pod>(bytes: &[u8]) -> crate::Result<(T, &[u8])> {
+    assert!(std::mem::align_of::<T>() <= std::mem::align_of::<u64>());
+
+    let ptr = bytes.as_ptr() as *const T;
+
+    if bytes.len() < std::mem::size_of::<T>() || !ptr.is_aligned() {
         return Err(crate::Error::EINVAL);
     }
-    let mut out = std::mem::MaybeUninit::<T>::uninit();
-    unsafe {
-        std::ptr::copy_nonoverlapping(
-            bytes.as_ptr(),
-            out.as_mut_ptr().cast(),
-            std::mem::size_of::<T>(),
-        );
-    }
-    Ok(unsafe { out.assume_init() })
+
+    Ok((unsafe { std::ptr::read(ptr) }, unsafe {
+        std::slice::from_raw_parts(ptr.add(1).cast(), bytes.len() - std::mem::size_of::<T>())
+    }))
 }
 
 impl Ino {
@@ -189,6 +231,28 @@ impl std::fmt::Octal for Ino {
 impl std::fmt::Binary for Ino {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         std::fmt::Binary::fmt(&self.0, f)
+    }
+}
+
+impl FileHandle {
+    pub const fn from_raw(raw: u64) -> Self {
+        Self(raw)
+    }
+
+    pub const fn as_raw(self) -> u64 {
+        self.0
+    }
+}
+
+impl From<FileHandle> for u64 {
+    fn from(fh: FileHandle) -> Self {
+        fh.0
+    }
+}
+
+impl From<u64> for FileHandle {
+    fn from(raw: u64) -> FileHandle {
+        FileHandle(raw)
     }
 }
 

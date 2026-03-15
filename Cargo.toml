@@ -7,9 +7,11 @@ edition = "2024"
 aligned-vec = "0.6.4"
 arrayvec = "0.7.6"
 async-bounds = "0.1.0"
-bitflags = "2.11.0"
+bitflags = { version = "2.11.0", features = ["bytemuck"] }
 bytemuck = { version = "1.25.0", features = ["derive"] }
 compio = { version = "0.18.0", features = ["event", "fs"] }
 futures-util = { version = "0.3.32", default-features = false }
-nix = { version = "0.31.2", features = ["user", "process", "fs"] }
+log = "0.4.29"
+memchr = "2.8.0"
+nix = { version = "0.31.2", features = ["user", "process", "fs", "ioctl"] }
 page_size = "0.6.0"

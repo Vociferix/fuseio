@@ -1,12 +1,10 @@
-use super::{Ino, Request, send_error};
-use crate::Filesystem;
+use super::{Ino, Request, decode};
 use crate::async_rc::AsyncRc;
-use crate::serve::Server;
 use crate::layout::{BatchForgetIn, ForgetOne};
+use crate::serve::Server;
+use crate::{Error, Filesystem, Result};
 
 use compio::runtime::spawn;
-
-use std::io::Result;
 
 #[derive(Debug)]
 pub struct ForgetReq<'a> {
@@ -14,10 +12,10 @@ pub struct ForgetReq<'a> {
     pub(super) inodes: &'a [ForgetIno],
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
+#[repr(transparent)]
+#[derive(Debug, Clone, Copy, bytemuck::Zeroable, bytemuck::Pod)]
 pub struct ForgetIno {
-    pub(super) ino: Ino,
-    pub(super) nlookup: u64,
+    pub(super) inner: ForgetOne,
 }
 
 impl<'a> ForgetReq<'a> {
@@ -54,17 +52,17 @@ impl<'a> IntoIterator for &ForgetReq<'a> {
 
 impl ForgetIno {
     pub fn ino(&self) -> Ino {
-        self.ino
+        unsafe { Ino::from_raw_unchecked(self.inner.nodeid) }
     }
 
     pub fn num_lookups(&self) -> u64 {
-        self.nlookup
+        self.inner.nlookup
     }
 }
 
 impl From<ForgetIno> for Ino {
     fn from(forget: ForgetIno) -> Ino {
-        forget.ino
+        forget.ino()
     }
 }
 
@@ -73,15 +71,13 @@ impl Server {
         &self,
         fs: &AsyncRc<F>,
         req: Request,
-        ino: Ino,
+        _ino: Ino,
         body: &[u8],
     ) -> Result<()>
     where
         F: Filesystem,
     {
-        let Some(subhdr) = self.decode::<BatchForgetIn>(body, fs, &req) else {
-            return Ok(());
-        };
+        let (subhdr, data) = decode::<BatchForgetIn>(body)?;
 
         let count = subhdr.count as usize;
 
@@ -89,20 +85,30 @@ impl Server {
             return Ok(());
         }
 
-        let data = &body[std::mem::size_of::<BatchForgetIn>()..];
-
         if data.len() < count * std::mem::size_of::<ForgetOne>() {
-            let mut tx = self.tx.clone();
-            let fs = fs.clone();
-            let unique = req.id();
-            spawn(async move {
-                let _fs = fs;
-                let _ = send_error(crate::Error::EINVAL, unique, &mut tx).await;
-            }).detach();
-            return Ok(());
+            return Err(Error::EINVAL);
         }
 
-        todo!();
+        let data: &[ForgetOne] =
+            bytemuck::cast_slice(&data[..(count * std::mem::size_of::<ForgetOne>())]);
+        for elem in data {
+            if elem.nodeid == 0 {
+                return Err(Error::EINVAL);
+            }
+        }
+
+        let mut inos = self.bufs.checkout_with_capacity::<ForgetIno>(count);
+        inos.extend_from_slice(bytemuck::cast_slice(
+            &data[..(count * std::mem::size_of::<ForgetIno>())],
+        ));
+
+        let fs = fs.clone();
+
+        spawn(async move {
+            let req = ForgetReq { req, inodes: &inos };
+            fs.forget(&req).await;
+        })
+        .detach();
 
         Ok(())
     }

@@ -8,10 +8,11 @@ mod fs;
 mod handle;
 mod layout;
 mod options;
-mod request;
+mod passthrough;
 mod serve;
 
 pub mod mount;
+pub mod request;
 
 pub use fs::Filesystem;
 
@@ -22,6 +23,7 @@ pub use conf::{FsConfig, InitFlags, KernelConfig, Version};
 pub use error::Error;
 pub use handle::MountHandle;
 pub use options::{MountOpt, ParseMountOptError};
+pub use passthrough::{BackingId, PassthroughFd};
 
 pub type Result<T> = std::result::Result<T, Error>;
 
