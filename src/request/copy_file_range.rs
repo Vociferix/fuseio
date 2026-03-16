@@ -80,12 +80,12 @@ impl Server {
                 req,
                 src: CopyFileRangePos {
                     ino,
-                    fh: body.fh_in.into(),
+                    fh: FileHandle(body.fh_in),
                     off: body.off_in,
                 },
                 dst: CopyFileRangePos {
                     ino: ino_out,
-                    fh: body.fh_out.into(),
+                    fh: FileHandle(body.fh_out),
                     off: body.off_out,
                 },
                 len: body.len,

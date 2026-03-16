@@ -49,7 +49,7 @@ pub mod write;
 
 #[doc(inline)]
 pub use nix::{
-    fcntl::OFlag,
+    fcntl::{FallocateFlags, OFlag},
     sys::stat::Mode,
     unistd::{AccessFlags, Gid, Pid, Uid},
 };
@@ -59,6 +59,8 @@ pub use batch_forget::{ForgetIno, ForgetReq};
 pub use bmap::BmapReq;
 pub use copy_file_range::{CopyFileRangePos, CopyFileRangeReq};
 pub use create::{CreateReq, CreateResp};
+pub use fallocate::FallocateReq;
+pub use flush::FlushReq;
 pub use getattr::{GetAttrsReq, GetAttrsResp, InodeAttrs};
 pub use lookup::{Entry, LookupReq};
 pub use mknod::MknodReq;
@@ -68,7 +70,10 @@ pub use open::{OpenAccessMode, OpenFlags, OpenReq, OpenResp};
 pub struct Ino(NonZeroU64);
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
-pub struct FileHandle(u64);
+pub struct FileHandle(pub u64);
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub struct LockOwner(pub u64);
 
 #[cfg(target_os = "macos")]
 #[doc(inline)]
@@ -206,6 +211,18 @@ impl Ino {
     }
 }
 
+impl From<NonZeroU64> for Ino {
+    fn from(ino: NonZeroU64) -> Self {
+        Self(ino)
+    }
+}
+
+impl From<Ino> for NonZeroU64 {
+    fn from(ino: Ino) -> Self {
+        ino.0
+    }
+}
+
 impl std::fmt::Display for Ino {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         std::fmt::Display::fmt(&self.0, f)
@@ -236,25 +253,63 @@ impl std::fmt::Binary for Ino {
     }
 }
 
-impl FileHandle {
-    pub const fn from_raw(raw: u64) -> Self {
-        Self(raw)
-    }
-
-    pub const fn as_raw(self) -> u64 {
-        self.0
+impl std::fmt::Display for FileHandle {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        std::fmt::Display::fmt(&self.0, f)
     }
 }
 
-impl From<FileHandle> for u64 {
-    fn from(fh: FileHandle) -> Self {
-        fh.0
+impl std::fmt::UpperHex for FileHandle {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        std::fmt::UpperHex::fmt(&self.0, f)
     }
 }
 
-impl From<u64> for FileHandle {
-    fn from(raw: u64) -> FileHandle {
-        FileHandle(raw)
+impl std::fmt::LowerHex for FileHandle {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        std::fmt::LowerHex::fmt(&self.0, f)
+    }
+}
+
+impl std::fmt::Octal for FileHandle {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        std::fmt::Octal::fmt(&self.0, f)
+    }
+}
+
+impl std::fmt::Binary for FileHandle {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        std::fmt::Binary::fmt(&self.0, f)
+    }
+}
+
+impl std::fmt::Display for LockOwner {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        std::fmt::Display::fmt(&self.0, f)
+    }
+}
+
+impl std::fmt::UpperHex for LockOwner {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        std::fmt::UpperHex::fmt(&self.0, f)
+    }
+}
+
+impl std::fmt::LowerHex for LockOwner {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        std::fmt::LowerHex::fmt(&self.0, f)
+    }
+}
+
+impl std::fmt::Octal for LockOwner {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        std::fmt::Octal::fmt(&self.0, f)
+    }
+}
+
+impl std::fmt::Binary for LockOwner {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        std::fmt::Binary::fmt(&self.0, f)
     }
 }
 

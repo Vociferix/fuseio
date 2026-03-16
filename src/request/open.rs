@@ -129,7 +129,7 @@ impl OpenResp {
             (flags, 0)
         };
         OpenOut {
-            fh: self.fh.into(),
+            fh: self.fh.0,
             open_flags: flags,
             backing_id,
         }

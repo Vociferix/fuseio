@@ -1,8 +1,8 @@
 #![allow(async_fn_in_trait)]
 
 use crate::request::{
-    AccessReq, BmapReq, CopyFileRangeReq, CreateReq, CreateResp, Entry, ForgetReq, GetAttrsReq,
-    GetAttrsResp, LookupReq, MknodReq, OpenReq, OpenResp,
+    AccessReq, BmapReq, CopyFileRangeReq, CreateReq, CreateResp, Entry, FallocateReq, FlushReq,
+    ForgetReq, GetAttrsReq, GetAttrsResp, LookupReq, MknodReq, OpenReq, OpenResp,
 };
 use crate::{Error, FsConfig, KernelConfig, MountOpt, Result};
 
@@ -78,5 +78,15 @@ pub trait Filesystem: 'static {
         let open_resp = self.open(&open_req).await?;
 
         Ok(CreateResp::from_parts(entry, open_resp))
+    }
+
+    async fn fallocate(&self, req: &FallocateReq) -> Result<()> {
+        let _ = (self, req);
+        Err(Error::ENOSYS)
+    }
+
+    async fn flush(&self, req: &FlushReq) -> Result<()> {
+        let _ = (self, req);
+        Err(Error::ENOSYS)
     }
 }
