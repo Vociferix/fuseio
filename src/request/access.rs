@@ -1,4 +1,4 @@
-use super::{AccessFlags, Ino, Request, decode, handle_error, send_result};
+use super::{AccessFlags, Body, Ino, Request, decode, handle_error, send_result};
 use crate::async_rc::AsyncRc;
 use crate::layout::AccessIn;
 use crate::serve::Server;
@@ -28,7 +28,7 @@ impl std::ops::Deref for AccessReq {
 }
 
 impl Server {
-    pub fn access<F>(&self, fs: &AsyncRc<F>, req: Request, ino: Ino, body: &[u8]) -> Result<()>
+    pub fn access<F>(&self, fs: &AsyncRc<F>, req: Request, ino: Ino, body: Body) -> Result<()>
     where
         F: Filesystem,
     {

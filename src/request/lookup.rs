@@ -1,4 +1,4 @@
-use super::{Ino, InodeAttrs, Request, handle_error, send_error};
+use super::{Body, Ino, InodeAttrs, Request, handle_error, send_error};
 use crate::async_rc::AsyncRc;
 use crate::layout::{EntryOut, MsgOut};
 use crate::serve::Server;
@@ -99,29 +99,28 @@ impl Entry {
 }
 
 impl Server {
-    pub fn lookup<F>(&self, fs: &AsyncRc<F>, req: Request, ino: Ino, body: &[u8]) -> Result<()>
+    pub fn lookup<F>(&self, fs: &AsyncRc<F>, req: Request, ino: Ino, mut name: Body) -> Result<()>
     where
         F: Filesystem,
     {
-        let name_len = memchr::memchr(0, body).unwrap_or(body.len());
-        let mut buf = self.bufs.checkout_with_capacity::<u8>(name_len);
-        buf.extend_from_slice(&body[..name_len]);
+        let name_len = memchr::memchr(0, &name).unwrap_or(name.len());
+        name.truncate(name_len);
 
         let fs = fs.clone();
         let mut tx = self.tx.clone();
         let minor = self.ver.1;
 
-        let is_root_name = name_len == 0 || buf.as_slice() == b"/";
+        let is_root_name = name_len == 0 || name.as_slice() == b"/";
         let root_is_init = self.root_ino_init.get();
 
         let root_ino = self.root_ino;
 
         let ino = if ino.as_raw() == 1 && is_root_name && !root_is_init {
             self.root_ino_init.set(true);
-            buf.clear();
+            name.clear();
             None
         } else if ino == self.root_ino && root_is_init {
-            buf.clear();
+            name.clear();
             None
         } else {
             Some(ino)
@@ -131,7 +130,7 @@ impl Server {
             let req = LookupReq {
                 req,
                 parent: ino,
-                name: OsStr::from_bytes(&buf),
+                name: OsStr::from_bytes(&name),
             };
             handle_error(match fs.lookup(&req).await {
                 Ok(mut resp) => {

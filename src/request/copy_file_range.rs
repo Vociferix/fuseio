@@ -1,4 +1,4 @@
-use super::{FileHandle, Ino, Request, decode, handle_error, send_error};
+use super::{Body, FileHandle, Ino, Request, decode, handle_error, send_error};
 use crate::async_rc::AsyncRc;
 use crate::layout::{CopyFileRangeIn, MsgOut};
 use crate::serve::Server;
@@ -63,7 +63,7 @@ impl Server {
         fs: &AsyncRc<F>,
         req: Request,
         ino: Ino,
-        body: &[u8],
+        body: Body,
     ) -> Result<()>
     where
         F: Filesystem,

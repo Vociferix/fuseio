@@ -1,4 +1,4 @@
-use super::{Ino, Request, decode};
+use super::{Body, Ino, Request, decode};
 use crate::async_rc::AsyncRc;
 use crate::layout::{BatchForgetIn, ForgetOne};
 use crate::serve::Server;
@@ -72,7 +72,7 @@ impl Server {
         fs: &AsyncRc<F>,
         req: Request,
         _ino: Ino,
-        body: &[u8],
+        body: Body,
     ) -> Result<()>
     where
         F: Filesystem,

@@ -1,4 +1,4 @@
-use super::{FallocateFlags, FileHandle, Ino, Request, decode, handle_error, send_result};
+use super::{Body, FallocateFlags, FileHandle, Ino, Request, decode, handle_error, send_result};
 use crate::async_rc::AsyncRc;
 use crate::layout::FallocateIn;
 use crate::serve::Server;
@@ -47,7 +47,7 @@ impl std::ops::Deref for FallocateReq {
 }
 
 impl Server {
-    pub fn fallocate<F>(&self, fs: &AsyncRc<F>, req: Request, ino: Ino, body: &[u8]) -> Result<()>
+    pub fn fallocate<F>(&self, fs: &AsyncRc<F>, req: Request, ino: Ino, body: Body) -> Result<()>
     where
         F: Filesystem,
     {

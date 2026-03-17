@@ -1,11 +1,12 @@
 use crate::async_rc::AsyncRc;
-use crate::buf_pool::BufPool;
+use crate::buf_pool::{BufGuard, BufPool};
 use crate::channel::{Receiver, Sender, channel};
 use crate::layout::{
     self, HeaderIn, HeaderOut, InitIn, InitOut, InitOutCompat, InitOutCompat22, Opcode,
 };
 use crate::mount::{Mount, Unmount};
 use crate::request;
+use crate::request::Body;
 use crate::request::Ino;
 use crate::{Filesystem, KernelConfig, MountHandle, MountOpt, Version};
 
@@ -175,7 +176,7 @@ impl Server {
             return Ok(false);
         }
 
-        let body = &msg[HDR_LEN..(hdr.len as usize)];
+        let body = Body::new(msg, HDR_LEN..(hdr.len as usize));
 
         match self.dispatch(fs, &hdr, body).await {
             Ok(destroy) => Ok(destroy),
@@ -203,7 +204,7 @@ impl Server {
         &mut self,
         fs: &AsyncRc<F>,
         hdr: &HeaderIn,
-        body: &[u8],
+        body: Body,
     ) -> std::result::Result<bool, crate::Error>
     where
         F: Filesystem,

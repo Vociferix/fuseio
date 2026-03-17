@@ -1,4 +1,4 @@
-use super::{Ino, Mode, Request, decode, handle_error, send_error};
+use super::{Body, Ino, Mode, Request, decode, handle_error, send_error};
 use crate::async_rc::AsyncRc;
 use crate::layout::{MknodIn, MknodInCompat, MsgOut};
 use crate::serve::Server;
@@ -50,20 +50,19 @@ impl std::ops::Deref for MknodReq<'_> {
 }
 
 impl Server {
-    pub fn mknod<F>(&self, fs: &AsyncRc<F>, req: Request, ino: Ino, body: &[u8]) -> Result<()>
+    pub fn mknod<F>(&self, fs: &AsyncRc<F>, req: Request, ino: Ino, body: Body) -> Result<()>
     where
         F: Filesystem,
     {
-        let (hdr, name) = if self.ver.1 < 12 {
+        let (hdr, mut name) = if self.ver.1 < 12 {
             let (hdr, name) = decode::<MknodInCompat>(body)?;
             (MknodIn::from_compat(hdr), name)
         } else {
             decode::<MknodIn>(body)?
         };
 
-        let name_len = memchr::memchr(0, name).unwrap_or(name.len());
-        let mut buf = self.bufs.checkout_with_capacity::<u8>(name_len);
-        buf.extend_from_slice(&name[..name_len]);
+        let name_len = memchr::memchr(0, &name).unwrap_or(name.len());
+        name.truncate(name_len);
 
         let fs = fs.clone();
         let mut tx = self.tx.clone();
@@ -76,7 +75,7 @@ impl Server {
                 mode: Mode::from_bits_retain(hdr.mode),
                 umask: Mode::from_bits_retain(hdr.umask),
                 rdev: hdr.rdev,
-                name: OsStr::from_bytes(&buf),
+                name: OsStr::from_bytes(&name),
             };
             handle_error(match fs.mknod(&req).await {
                 Ok(resp) => {

@@ -117,8 +117,18 @@ impl KStatFs {
 pub struct FileLock {
     pub start: u64,
     pub end: u64,
-    pub typ: u32,
+    pub typ: LockOp,
     pub pid: u32,
+}
+
+#[repr(C)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Zeroable, Pod)]
+pub struct LockOp(pub u32);
+
+impl LockOp {
+    pub const READ: Self = Self(nix::libc::F_RDLCK.cast_unsigned());
+    pub const WRITE: Self = Self(nix::libc::F_WRLCK.cast_unsigned());
+    pub const UNLOCK: Self = Self(nix::libc::F_UNLCK.cast_unsigned());
 }
 
 #[repr(C)]
@@ -553,8 +563,16 @@ impl StatFsOut {
 #[derive(Debug, Clone, Copy, Zeroable, Pod)]
 pub struct FsyncIn {
     pub fh: u64,
-    pub fsync_flags: u32,
+    pub fsync_flags: FsyncFlags,
     pub padding: u32,
+}
+
+bitflags::bitflags! {
+    #[repr(C)]
+    #[derive(Debug, Clone, Copy, Zeroable, Pod)]
+    pub struct FsyncFlags: u32 {
+        const DATASYNC = 1;
+    }
 }
 
 #[repr(C)]

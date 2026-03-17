@@ -1,4 +1,4 @@
-use super::{Ino, Request, decode, handle_error, send_error};
+use super::{Body, Ino, Request, decode, handle_error, send_error};
 use crate::async_rc::AsyncRc;
 use crate::layout::{BmapIn, MsgOut};
 use crate::serve::Server;
@@ -37,7 +37,7 @@ impl std::ops::Deref for BmapReq {
 }
 
 impl Server {
-    pub fn bmap<F>(&self, fs: &AsyncRc<F>, req: Request, ino: Ino, body: &[u8]) -> Result<()>
+    pub fn bmap<F>(&self, fs: &AsyncRc<F>, req: Request, ino: Ino, body: Body) -> Result<()>
     where
         F: Filesystem,
     {

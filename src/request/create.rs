@@ -1,6 +1,6 @@
 use super::{
-    Entry, FileHandle, Ino, InodeAttrs, Mode, OFlag, OpenAccessMode, OpenFlags, OpenResp, Request,
-    decode, handle_error, send_error,
+    Body, Entry, FileHandle, Ino, InodeAttrs, Mode, OFlag, OpenAccessMode, OpenFlags, OpenResp,
+    Request, decode, handle_error, send_error,
 };
 use crate::async_rc::AsyncRc;
 use crate::channel::Sender;
@@ -145,15 +145,14 @@ impl std::ops::Deref for CreateReq<'_> {
 }
 
 impl Server {
-    pub fn create<F>(&self, fs: &AsyncRc<F>, req: Request, ino: Ino, body: &[u8]) -> Result<()>
+    pub fn create<F>(&self, fs: &AsyncRc<F>, req: Request, ino: Ino, body: Body) -> Result<()>
     where
         F: Filesystem,
     {
-        let (hdr, name) = decode::<CreateIn>(body)?;
+        let (hdr, mut name) = decode::<CreateIn>(body)?;
 
-        let name_len = memchr::memchr(0, name).unwrap_or(name.len());
-        let mut buf = self.bufs.checkout_with_capacity::<u8>(name_len);
-        buf.extend_from_slice(&name[..name_len]);
+        let name_len = memchr::memchr(0, &name).unwrap_or(name.len());
+        name.truncate(name_len);
 
         let fs = fs.clone();
         let mut tx = self.tx.clone();
@@ -166,7 +165,7 @@ impl Server {
                 flags: OFlag::from_bits_retain(hdr.flags.cast_signed()),
                 mode: Mode::from_bits_retain(hdr.mode),
                 umask: Mode::from_bits_retain(hdr.mode),
-                name: OsStr::from_bytes(&buf),
+                name: OsStr::from_bytes(&name),
                 dev: tx.clone(),
             };
             handle_error(match fs.create(&req).await {

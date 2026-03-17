@@ -1,3 +1,5 @@
+use crate::buf_pool::BufGuard;
+
 use std::num::NonZeroU64;
 
 pub mod access;
@@ -61,7 +63,10 @@ pub use copy_file_range::{CopyFileRangePos, CopyFileRangeReq};
 pub use create::{CreateReq, CreateResp};
 pub use fallocate::FallocateReq;
 pub use flush::FlushReq;
+pub use fsync::FsyncReq;
+pub use fsyncdir::FsyncDirReq;
 pub use getattr::{GetAttrsReq, GetAttrsResp, InodeAttrs};
+pub use getlk::{FileLock, FileRange, GetLockReq, LockKind};
 pub use lookup::{Entry, LookupReq};
 pub use mknod::MknodReq;
 pub use open::{OpenAccessMode, OpenFlags, OpenReq, OpenResp};
@@ -117,6 +122,103 @@ pub struct Request {
     uid: Uid,
     gid: Gid,
     pid: Pid,
+}
+
+#[derive(Debug, Clone)]
+pub struct Body {
+    msg: crate::buf_pool::BufGuard<u8>,
+    offset: usize,
+    len: usize,
+}
+
+impl Body {
+    pub fn new<I>(msg: BufGuard<u8>, slice_range: I) -> Self
+    where
+        I: std::slice::SliceIndex<[u8], Output = [u8]>,
+    {
+        let (offset, len) = {
+            let slice = &msg.as_slice()[slice_range];
+            let offset = unsafe { slice.as_ptr().offset_from_unsigned(msg.as_ptr()) };
+            (offset, slice.len())
+        };
+
+        Self { msg, offset, len }
+    }
+
+    pub fn len(&self) -> usize {
+        self.len
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.len == 0
+    }
+
+    pub fn as_ptr(&self) -> *const u8 {
+        unsafe { self.msg.as_ptr().add(self.offset) }
+    }
+
+    pub fn as_mut_ptr(&mut self) -> *mut u8 {
+        unsafe { self.msg.as_mut_ptr().add(self.offset) }
+    }
+
+    pub fn as_slice(&self) -> &[u8] {
+        unsafe { std::slice::from_raw_parts(self.as_ptr(), self.len) }
+    }
+
+    pub fn as_mut_slice(&mut self) -> &mut [u8] {
+        unsafe { std::slice::from_raw_parts_mut(self.as_mut_ptr(), self.len) }
+    }
+
+    pub fn pop_front(&mut self, n: usize) -> usize {
+        let n = n.min(self.len);
+        self.offset += n;
+        self.len -= n;
+        n
+    }
+
+    pub fn pop_back(&mut self, n: usize) -> usize {
+        let n = n.min(self.len);
+        self.len -= n;
+        n
+    }
+
+    pub fn truncate(&mut self, new_len: usize) {
+        if new_len < self.len {
+            self.len = new_len;
+        }
+    }
+
+    pub fn rtruncate(&mut self, new_len: usize) {
+        if new_len < self.len {
+            let n = self.len - new_len;
+            self.offset += n;
+            self.len = new_len;
+        }
+    }
+
+    pub fn clear(&mut self) {
+        self.len = 0;
+    }
+}
+
+impl std::borrow::Borrow<[u8]> for Body {
+    fn borrow(&self) -> &[u8] {
+        self.as_slice()
+    }
+}
+
+impl AsRef<[u8]> for Body {
+    fn as_ref(&self) -> &[u8] {
+        self.as_slice()
+    }
+}
+
+impl std::ops::Deref for Body {
+    type Target = [u8];
+
+    fn deref(&self) -> &[u8] {
+        self.as_slice()
+    }
 }
 
 fn handle_error<E: std::error::Error>(res: Result<(), E>) {
@@ -179,18 +281,21 @@ async fn send_ok(unique: u64, tx: &mut crate::channel::Sender) -> std::io::Resul
 // To guard against bugs and misuse, if `bytes` does not start at an address aligned
 // properly for `T` or `bytes` is smaller than `T`, this function will return an
 // error.
-fn decode<T: bytemuck::Pod>(bytes: &[u8]) -> crate::Result<(T, &[u8])> {
+fn decode<T: bytemuck::Pod>(mut body: Body) -> crate::Result<(T, Body)> {
     assert!(std::mem::align_of::<T>() <= std::mem::align_of::<u64>());
 
-    let ptr = bytes.as_ptr() as *const T;
+    let ptr = body.as_ptr() as *const T;
 
-    if bytes.len() < std::mem::size_of::<T>() || !ptr.is_aligned() {
+    if body.len() < std::mem::size_of::<T>() || !ptr.is_aligned() {
         return Err(crate::Error::EINVAL);
     }
 
-    Ok((unsafe { std::ptr::read(ptr) }, unsafe {
-        std::slice::from_raw_parts(ptr.add(1).cast(), bytes.len() - std::mem::size_of::<T>())
-    }))
+    let val = unsafe { std::ptr::read(ptr) };
+
+    body.offset += std::mem::size_of::<T>();
+    body.len -= std::mem::size_of::<T>();
+
+    Ok((val, body))
 }
 
 impl Ino {

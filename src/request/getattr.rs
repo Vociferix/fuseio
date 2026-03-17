@@ -1,4 +1,6 @@
-use super::{FileFlag, FileHandle, Gid, Ino, Mode, Request, Uid, decode, handle_error, send_error};
+use super::{
+    Body, FileFlag, FileHandle, Gid, Ino, Mode, Request, Uid, decode, handle_error, send_error,
+};
 use crate::async_rc::AsyncRc;
 use crate::layout::{Attr, AttrOut, GetAttrFlags, GetAttrIn, MsgOut};
 use crate::serve::Server;
@@ -250,7 +252,7 @@ impl Default for InodeAttrs {
 }
 
 impl Server {
-    pub fn getattr<F>(&self, fs: &AsyncRc<F>, req: Request, ino: Ino, body: &[u8]) -> Result<()>
+    pub fn getattr<F>(&self, fs: &AsyncRc<F>, req: Request, ino: Ino, body: Body) -> Result<()>
     where
         F: Filesystem,
     {

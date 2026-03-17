@@ -1,5 +1,4 @@
-use super::{ForgetIno, ForgetReq};
-use super::{Ino, Request, decode};
+use super::{Body, ForgetIno, ForgetReq, Ino, Request, decode};
 use crate::async_rc::AsyncRc;
 use crate::layout::{ForgetIn, ForgetOne};
 use crate::serve::Server;
@@ -8,7 +7,7 @@ use crate::{Filesystem, Result};
 use compio::runtime::spawn;
 
 impl Server {
-    pub fn forget<F>(&self, fs: &AsyncRc<F>, req: Request, ino: Ino, body: &[u8]) -> Result<()>
+    pub fn forget<F>(&self, fs: &AsyncRc<F>, req: Request, ino: Ino, body: Body) -> Result<()>
     where
         F: Filesystem,
     {

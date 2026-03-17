@@ -1,4 +1,4 @@
-use super::{FileHandle, Ino, OFlag, Request, decode, handle_error, send_error};
+use super::{Body, FileHandle, Ino, OFlag, Request, decode, handle_error, send_error};
 use crate::async_rc::AsyncRc;
 use crate::channel::Sender;
 use crate::layout::{MsgOut, OpenFlags as RawOpenFlags, OpenIn, OpenOut};
@@ -137,7 +137,7 @@ impl OpenResp {
 }
 
 impl Server {
-    pub fn open<F>(&self, fs: &AsyncRc<F>, req: Request, ino: Ino, body: &[u8]) -> Result<()>
+    pub fn open<F>(&self, fs: &AsyncRc<F>, req: Request, ino: Ino, body: Body) -> Result<()>
     where
         F: Filesystem,
     {
