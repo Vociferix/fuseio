@@ -121,7 +121,7 @@ pub struct FileLock {
     pub pid: u32,
 }
 
-#[repr(C)]
+#[repr(transparent)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Zeroable, Pod)]
 pub struct LockOp(pub u32);
 
@@ -632,8 +632,16 @@ pub struct LockIn {
     pub fh: u64,
     pub owner: u64,
     pub lk: FileLock,
-    pub lk_flags: u32,
+    pub lk_flags: LockFlags,
     pub padding: u32,
+}
+
+bitflags::bitflags! {
+    #[repr(transparent)]
+    #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Zeroable, Pod)]
+    pub struct LockFlags: u32 {
+        const FLOCK = 1;
+    }
 }
 
 #[repr(C)]

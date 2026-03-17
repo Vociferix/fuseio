@@ -41,7 +41,6 @@ pub mod rename2;
 pub mod rmdir;
 pub mod setattr;
 pub mod setlk;
-pub mod setlkw;
 pub mod setvolname;
 pub mod setxattr;
 pub mod statfs;
@@ -51,7 +50,7 @@ pub mod write;
 
 #[doc(inline)]
 pub use nix::{
-    fcntl::{FallocateFlags, OFlag},
+    fcntl::{FallocateFlags, FlockArg, OFlag},
     sys::stat::Mode,
     unistd::{AccessFlags, Gid, Pid, Uid},
 };
@@ -70,6 +69,7 @@ pub use getlk::{FileLock, FileRange, GetLockReq, LockKind};
 pub use lookup::{Entry, LookupReq};
 pub use mknod::MknodReq;
 pub use open::{OpenAccessMode, OpenFlags, OpenReq, OpenResp};
+pub use setlk::{FlockReq, SetLockReq};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct Ino(NonZeroU64);

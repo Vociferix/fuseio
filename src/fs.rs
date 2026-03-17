@@ -2,8 +2,8 @@
 
 use crate::request::{
     AccessReq, BmapReq, CopyFileRangeReq, CreateReq, CreateResp, Entry, FallocateReq, FileLock,
-    FlushReq, ForgetReq, FsyncDirReq, FsyncReq, GetAttrsReq, GetAttrsResp, GetLockReq, LookupReq,
-    MknodReq, OpenReq, OpenResp,
+    FlockReq, FlushReq, ForgetReq, FsyncDirReq, FsyncReq, GetAttrsReq, GetAttrsResp, GetLockReq,
+    LookupReq, MknodReq, OpenReq, OpenResp, SetLockReq,
 };
 use crate::{Error, FsConfig, KernelConfig, MountOpt, Result};
 
@@ -102,6 +102,16 @@ pub trait Filesystem: 'static {
     }
 
     async fn getlock(&self, req: &GetLockReq) -> Result<FileLock> {
+        let _ = (self, req);
+        Err(Error::ENOSYS)
+    }
+
+    async fn setlock(&self, req: &SetLockReq) -> Result<()> {
+        let _ = (self, req);
+        Err(Error::ENOSYS)
+    }
+
+    async fn flock(&self, req: &FlockReq) -> Result<()> {
         let _ = (self, req);
         Err(Error::ENOSYS)
     }
