@@ -1,4 +1,4 @@
-use crate::buf_pool::{BufGuard, BufPool};
+use crate::{Buf, BufPool};
 
 use compio::BufResult;
 use compio::driver::{OwnedFd, op::OpenFile};
@@ -59,28 +59,22 @@ fn path_string(path: impl AsRef<std::path::Path>) -> Result<std::ffi::CString> {
 }
 
 impl Sender {
-    pub async fn send_buf(&mut self, buf: &mut Vec<u8>) -> std::io::Result<()> {
-        let BufResult(res, tmp_buf) = self.dev.write_all(core::mem::take(buf)).await;
-        *buf = tmp_buf;
-        res
+    pub async fn send_buf(&mut self, buf: Buf) -> std::io::Result<()> {
+        self.dev.write_all(buf).await.0
     }
 
-    pub async fn send<T>(&mut self, data: T) -> std::io::Result<()>
+    pub async fn vsend<B>(&mut self, bufs: B) -> std::io::Result<()>
     where
-        T: bytemuck::Pod + 'static,
+        B: compio::buf::IoVectoredBuf,
     {
-        struct Buf<T>(T);
+        self.dev.write_vectored_all(bufs).await.0
+    }
 
-        impl<T> compio::buf::IoBuf for Buf<T>
-        where
-            T: bytemuck::Pod + 'static,
-        {
-            fn as_init(&self) -> &[u8] {
-                bytemuck::bytes_of(&self.0)
-            }
-        }
-
-        self.dev.write_all(Buf(data)).await.0
+    pub async fn send<B>(&mut self, buf: B) -> std::io::Result<()>
+    where
+        B: compio::buf::IoBuf,
+    {
+        self.dev.write_all(buf).await.0
     }
 }
 
@@ -97,8 +91,8 @@ impl AsRawFd for Sender {
 }
 
 impl Receiver {
-    pub async fn recv(&mut self) -> std::io::Result<BufGuard<u8>> {
-        let buf = self.bufs.checkout_with_capacity::<u8>(BUF_SIZE);
+    pub async fn recv(&mut self) -> std::io::Result<Buf> {
+        let buf = self.bufs.checkout_with_capacity(BUF_SIZE);
 
         let compio::BufResult(res, mut buf) = self.dev.read(buf).await;
         let len = res?;

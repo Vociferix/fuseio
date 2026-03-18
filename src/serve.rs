@@ -1,24 +1,21 @@
+use crate::BufPool;
 use crate::async_rc::AsyncRc;
-use crate::buf_pool::{BufGuard, BufPool};
 use crate::channel::{Receiver, Sender, channel};
 use crate::layout::{
     self, HeaderIn, HeaderOut, InitIn, InitOut, InitOutCompat, InitOutCompat22, Opcode,
 };
 use crate::mount::{Mount, Unmount};
-use crate::request;
 use crate::request::Body;
 use crate::request::Ino;
 use crate::{Filesystem, KernelConfig, MountHandle, MountOpt, Version};
 
 use bytemuck::{Zeroable, bytes_of_mut};
-use compio::runtime::JoinHandle;
 use compio::runtime::event::{Event, EventHandle};
 use futures_util::{FutureExt, select_biased};
 
 use std::cell::Cell;
 use std::io::{Error as IoError, ErrorKind, Result};
 use std::os::fd::AsFd;
-use std::rc::Rc;
 
 pub struct Server {
     pub(crate) tx: Sender,
@@ -431,8 +428,6 @@ async fn handshake(
 
         tx.send(out).await?;
     }
-
-    let ver = Version(init.major, init.minor);
 
     Ok((Version(init.major, init.minor), root_ino))
 }

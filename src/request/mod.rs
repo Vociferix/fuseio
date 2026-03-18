@@ -1,4 +1,4 @@
-use crate::buf_pool::BufGuard;
+use crate::Buf;
 
 use std::num::NonZeroU64;
 
@@ -66,6 +66,7 @@ pub use fsync::FsyncReq;
 pub use fsyncdir::FsyncDirReq;
 pub use getattr::{GetAttrsReq, GetAttrsResp, InodeAttrs};
 pub use getlk::{FileLock, FileRange, GetLockReq, LockKind};
+pub use getxattr::{GetXattrLenReq, GetXattrReq};
 pub use lookup::{Entry, LookupReq};
 pub use mknod::MknodReq;
 pub use open::{OpenAccessMode, OpenFlags, OpenReq, OpenResp};
@@ -126,13 +127,13 @@ pub struct Request {
 
 #[derive(Debug, Clone)]
 pub struct Body {
-    msg: crate::buf_pool::BufGuard<u8>,
+    msg: Buf,
     offset: usize,
     len: usize,
 }
 
 impl Body {
-    pub fn new<I>(msg: BufGuard<u8>, slice_range: I) -> Self
+    pub fn new<I>(msg: Buf, slice_range: I) -> Self
     where
         I: std::slice::SliceIndex<[u8], Output = [u8]>,
     {

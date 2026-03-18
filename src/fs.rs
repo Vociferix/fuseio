@@ -3,9 +3,11 @@
 use crate::request::{
     AccessReq, BmapReq, CopyFileRangeReq, CreateReq, CreateResp, Entry, FallocateReq, FileLock,
     FlockReq, FlushReq, ForgetReq, FsyncDirReq, FsyncReq, GetAttrsReq, GetAttrsResp, GetLockReq,
-    LookupReq, MknodReq, OpenReq, OpenResp, SetLockReq,
+    GetXattrLenReq, GetXattrReq, LookupReq, MknodReq, OpenReq, OpenResp, SetLockReq,
 };
 use crate::{Error, FsConfig, KernelConfig, MountOpt, Result};
+
+use compio::buf::IoBuf;
 
 pub trait Filesystem: 'static {
     async fn initialize(&mut self, kconf: KernelConfig, opts: &[MountOpt]) -> Result<FsConfig> {
@@ -114,5 +116,15 @@ pub trait Filesystem: 'static {
     async fn flock(&self, req: &FlockReq) -> Result<()> {
         let _ = (self, req);
         Err(Error::ENOSYS)
+    }
+
+    async fn getxattrlen(&self, req: &GetXattrLenReq<'_>) -> Result<usize> {
+        let _ = (self, req);
+        Err(Error::ENOSYS)
+    }
+
+    async fn getxattr(&self, req: &GetXattrReq<'_>) -> Result<impl IoBuf> {
+        let _ = (self, req);
+        Err::<crate::Buf, _>(Error::ENOSYS)
     }
 }

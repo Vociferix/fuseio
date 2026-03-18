@@ -1,5 +1,6 @@
 mod async_rc;
-mod buf_pool;
+mod buf;
+//mod buf_pool;
 mod builder;
 mod channel;
 mod conf;
@@ -18,6 +19,7 @@ pub use fs::Filesystem;
 
 const MAX_WRITE_SIZE: usize = 16 * 1024 * 1024;
 
+pub use buf::{Buf, BufPool};
 pub use builder::Builder;
 pub use conf::{FsConfig, InitFlags, KernelConfig, Version};
 pub use error::Error;

@@ -31,6 +31,12 @@ impl<T: Pod> MsgOut<T> {
 
 unsafe impl<T: Pod> Pod for MsgOut<T> {}
 
+impl<T: Pod> compio::buf::IoBuf for MsgOut<T> {
+    fn as_init(&self) -> &[u8] {
+        bytemuck::bytes_of(self)
+    }
+}
+
 #[repr(C)]
 #[derive(Debug, Clone, Copy, Zeroable, Pod)]
 pub struct Attr {
@@ -830,6 +836,12 @@ pub struct HeaderOut {
     pub len: u32,
     pub error: i32,
     pub unique: u64,
+}
+
+impl compio::buf::IoBuf for HeaderOut {
+    fn as_init(&self) -> &[u8] {
+        bytemuck::bytes_of(self)
+    }
 }
 
 #[repr(C)]

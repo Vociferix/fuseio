@@ -10,7 +10,8 @@ async-bounds = "0.1.0"
 bitflags = { version = "2.11.0", features = ["bytemuck"] }
 bytemuck = { version = "1.25.0", features = ["derive"] }
 compio = { version = "0.18.0", features = ["event", "fs"] }
-futures-util = { version = "0.3.32", default-features = false }
+crossbeam-utils = { version = "0.8.21", default-features = false }
+futures-util = { version = "0.3.32", default-features = false, features = ["io"] }
 log = "0.4.29"
 memchr = "2.8.0"
 nix = { version = "0.31.2", features = ["user", "process", "fs", "ioctl"] }
