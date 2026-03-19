@@ -77,7 +77,7 @@ impl Server {
                 rdev: hdr.rdev,
                 name: OsStr::from_bytes(&name),
             };
-            handle_error(match fs.mknod(&req).await {
+            handle_error(match fs.make_inode(&req).await {
                 Ok(resp) => {
                     let body = resp.build();
                     if minor < 9 {

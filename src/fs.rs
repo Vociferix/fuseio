@@ -5,7 +5,7 @@ use crate::request::{
     FlockReq, FlushReq, ForgetReq, FsyncDirReq, FsyncReq, GetAttrsReq, GetAttrsResp, GetLockReq,
     GetXattrLenReq, GetXattrReq, LookupReq, MknodReq, OpenReq, OpenResp, SetLockReq,
 };
-use crate::{Error, FsConfig, KernelConfig, MountOpt, Result};
+use crate::{Error, FsConfig, IntoIoBuf, KernelConfig, MountOpt, Result};
 
 use compio::buf::IoBuf;
 
@@ -54,7 +54,7 @@ pub trait Filesystem: 'static {
         Err(Error::ENOSYS)
     }
 
-    async fn mknod(&self, req: &MknodReq<'_>) -> Result<Entry> {
+    async fn make_inode(&self, req: &MknodReq<'_>) -> Result<Entry> {
         let _ = (self, req);
         Err(Error::ENOSYS)
     }
@@ -69,7 +69,7 @@ pub trait Filesystem: 'static {
             name: req.name,
         };
 
-        let entry = self.mknod(&mknod_req).await?;
+        let entry = self.make_inode(&mknod_req).await?;
 
         let open_req = OpenReq {
             req: req.req,
@@ -103,12 +103,12 @@ pub trait Filesystem: 'static {
         Err(Error::ENOSYS)
     }
 
-    async fn getlock(&self, req: &GetLockReq) -> Result<FileLock> {
+    async fn get_lock(&self, req: &GetLockReq) -> Result<FileLock> {
         let _ = (self, req);
         Err(Error::ENOSYS)
     }
 
-    async fn setlock(&self, req: &SetLockReq) -> Result<()> {
+    async fn set_lock(&self, req: &SetLockReq) -> Result<()> {
         let _ = (self, req);
         Err(Error::ENOSYS)
     }
@@ -118,12 +118,12 @@ pub trait Filesystem: 'static {
         Err(Error::ENOSYS)
     }
 
-    async fn getxattrlen(&self, req: &GetXattrLenReq<'_>) -> Result<usize> {
+    async fn get_xattr_len(&self, req: &GetXattrLenReq<'_>) -> Result<usize> {
         let _ = (self, req);
         Err(Error::ENOSYS)
     }
 
-    async fn getxattr(&self, req: &GetXattrReq<'_>) -> Result<impl IoBuf> {
+    async fn get_xattr(&self, req: &GetXattrReq<'_>) -> Result<impl IntoIoBuf> {
         let _ = (self, req);
         Err::<crate::Buf, _>(Error::ENOSYS)
     }

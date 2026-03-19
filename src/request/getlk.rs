@@ -227,7 +227,7 @@ impl Server {
                 kind,
             };
 
-            handle_error(match fs.getlock(&req).await {
+            handle_error(match fs.get_lock(&req).await {
                 Ok(lock) => tx.send(MsgOut::new(req.id(), lock.build())).await,
                 Err(err) => send_error(err, req.id(), &mut tx).await,
             });

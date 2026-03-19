@@ -225,7 +225,7 @@ impl Server {
                 block,
             };
 
-            handle_error(send_result(fs.setlock(&req).await, req.id(), &mut tx).await);
+            handle_error(send_result(fs.set_lock(&req).await, req.id(), &mut tx).await);
         })
         .detach();
 

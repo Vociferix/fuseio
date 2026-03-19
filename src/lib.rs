@@ -19,7 +19,7 @@ pub use fs::Filesystem;
 
 const MAX_WRITE_SIZE: usize = 16 * 1024 * 1024;
 
-pub use buf::{Buf, BufPool};
+pub use buf::{Buf, BufPool, IntoIoBuf, Vectored};
 pub use builder::Builder;
 pub use conf::{FsConfig, InitFlags, KernelConfig, Version};
 pub use error::Error;

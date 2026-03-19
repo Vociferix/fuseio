@@ -11,6 +11,7 @@ bitflags = { version = "2.11.0", features = ["bytemuck"] }
 bytemuck = { version = "1.25.0", features = ["derive"] }
 compio = { version = "0.18.0", features = ["event", "fs"] }
 crossbeam-utils = { version = "0.8.21", default-features = false }
+either = { version = "1.15.0", default-features = false }
 futures-util = { version = "0.3.32", default-features = false, features = ["io"] }
 log = "0.4.29"
 memchr = "2.8.0"
