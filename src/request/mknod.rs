@@ -10,7 +10,7 @@ use std::ffi::OsStr;
 use std::os::unix::ffi::OsStrExt;
 
 #[derive(Debug)]
-pub struct MknodReq<'a> {
+pub struct MakeInodeReq<'a> {
     pub(crate) req: Request,
     pub(crate) parent: Ino,
     pub(crate) mode: Mode,
@@ -19,7 +19,7 @@ pub struct MknodReq<'a> {
     pub(crate) name: &'a OsStr,
 }
 
-impl<'a> MknodReq<'a> {
+impl<'a> MakeInodeReq<'a> {
     pub fn parent_ino(&self) -> Ino {
         self.parent
     }
@@ -41,7 +41,7 @@ impl<'a> MknodReq<'a> {
     }
 }
 
-impl std::ops::Deref for MknodReq<'_> {
+impl std::ops::Deref for MakeInodeReq<'_> {
     type Target = Request;
 
     fn deref(&self) -> &Request {
@@ -69,7 +69,7 @@ impl Server {
         let minor = self.ver.1;
 
         spawn(async move {
-            let req = MknodReq {
+            let ureq = MakeInodeReq {
                 req,
                 parent: ino,
                 mode: Mode::from_bits_retain(hdr.mode),
@@ -77,7 +77,7 @@ impl Server {
                 rdev: hdr.rdev,
                 name: OsStr::from_bytes(&name),
             };
-            handle_error(match fs.make_inode(&req).await {
+            handle_error(match fs.make_inode(ureq).await {
                 Ok(resp) => {
                     let body = resp.build();
                     if minor < 9 {

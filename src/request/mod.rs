@@ -59,17 +59,17 @@ pub use access::AccessReq;
 pub use batch_forget::{ForgetIno, ForgetReq};
 pub use bmap::BmapReq;
 pub use copy_file_range::{CopyFileRangePos, CopyFileRangeReq};
-pub use create::{CreateReq, CreateResp};
+pub use create::{CreateReq, CreatedFile};
 pub use fallocate::FallocateReq;
 pub use flush::FlushReq;
 pub use fsync::FsyncReq;
 pub use fsyncdir::FsyncDirReq;
-pub use getattr::{GetAttrsReq, GetAttrsResp, InodeAttrs};
+pub use getattr::{GetAttrsReq, InodeAttrs};
 pub use getlk::{FileLock, FileRange, GetLockReq, LockKind};
 pub use getxattr::{GetXattrLenReq, GetXattrReq};
 pub use lookup::{Entry, LookupReq};
-pub use mknod::MknodReq;
-pub use open::{OpenAccessMode, OpenFlags, OpenReq, OpenResp};
+pub use mknod::MakeInodeReq;
+pub use open::{OpenAccessMode, OpenFlags, OpenReq, OpenedFile};
 pub use setlk::{FlockReq, SetLockReq};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]

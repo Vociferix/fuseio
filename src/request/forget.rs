@@ -23,9 +23,9 @@ impl Server {
                 },
             }];
 
-            let req = ForgetReq { req, inodes: &inos };
+            let ureq = ForgetReq { req, inodes: &inos };
 
-            fs.forget(&req).await;
+            fs.forget(ureq).await;
         })
         .detach();
 

@@ -217,7 +217,7 @@ impl Server {
         let mut tx = self.tx.clone();
 
         spawn(async move {
-            let req = GetLockReq {
+            let ureq = GetLockReq {
                 req,
                 ino,
                 fh: FileHandle(body.fh),
@@ -227,7 +227,7 @@ impl Server {
                 kind,
             };
 
-            handle_error(match fs.get_lock(&req).await {
+            handle_error(match fs.get_lock(ureq).await {
                 Ok(lock) => tx.send(MsgOut::new(req.id(), lock.build())).await,
                 Err(err) => send_error(err, req.id(), &mut tx).await,
             });

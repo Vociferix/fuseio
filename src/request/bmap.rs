@@ -47,13 +47,13 @@ impl Server {
         let mut tx = self.tx.clone();
 
         spawn(async move {
-            let req = BmapReq {
+            let ureq = BmapReq {
                 req,
                 inode: ino,
                 block: body.block,
                 blocksize: body.blocksize,
             };
-            handle_error(match fs.bmap(&req).await {
+            handle_error(match fs.bmap(ureq).await {
                 Ok(idx) => tx.send(MsgOut::new(req.id(), idx)).await,
                 Err(err) => send_error(err, req.id(), &mut tx).await,
             });

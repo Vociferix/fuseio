@@ -105,8 +105,8 @@ impl Server {
         let fs = fs.clone();
 
         spawn(async move {
-            let req = ForgetReq { req, inodes: &inos };
-            fs.forget(&req).await;
+            let ureq = ForgetReq { req, inodes: &inos };
+            fs.forget(ureq).await;
         })
         .detach();
 

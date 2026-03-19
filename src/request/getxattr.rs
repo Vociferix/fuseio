@@ -94,13 +94,13 @@ impl Server {
 
         spawn(async move {
             if max_len == 0 {
-                let req = GetXattrLenReq {
+                let ureq = GetXattrLenReq {
                     req,
                     ino,
                     key: OsStr::from_bytes(&name),
                 };
 
-                handle_error(match fs.get_xattr_len(&req).await {
+                handle_error(match fs.get_xattr_len(ureq).await {
                     Ok(len) => {
                         let Ok(size) = u32::try_from(len) else {
                             handle_error(send_error(Error::ERANGE, req.id(), &mut tx).await);
@@ -112,7 +112,7 @@ impl Server {
                     Err(err) => send_error(err, req.id(), &mut tx).await,
                 })
             } else {
-                let req = GetXattrReq {
+                let ureq = GetXattrReq {
                     req,
                     ino,
                     key: OsStr::from_bytes(&name),
@@ -120,7 +120,7 @@ impl Server {
                     buf_pool: pool,
                 };
 
-                handle_error(match fs.get_xattr(&req).await {
+                handle_error(match fs.get_xattr(ureq).await {
                     Ok(buf) => {
                         let buf = buf.into_io_buf();
                         let len = buf.total_len();

@@ -174,14 +174,14 @@ impl Server {
         let mut tx = self.tx.clone();
 
         spawn(async move {
-            let req = FlockReq {
+            let ureq = FlockReq {
                 req,
                 ino,
                 fh: FileHandle(body.fh),
                 owner: LockOwner(body.owner),
                 op,
             };
-            handle_error(send_result(fs.flock(&req).await, req.id(), &mut tx).await);
+            handle_error(send_result(fs.flock(ureq).await, req.id(), &mut tx).await);
         })
         .detach();
 
@@ -214,7 +214,7 @@ impl Server {
         let mut tx = self.tx.clone();
 
         spawn(async move {
-            let req = SetLockReq {
+            let ureq = SetLockReq {
                 req,
                 ino,
                 fh: FileHandle(body.fh),
@@ -225,7 +225,7 @@ impl Server {
                 block,
             };
 
-            handle_error(send_result(fs.set_lock(&req).await, req.id(), &mut tx).await);
+            handle_error(send_result(fs.set_lock(ureq).await, req.id(), &mut tx).await);
         })
         .detach();
 

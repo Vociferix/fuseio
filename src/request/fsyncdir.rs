@@ -46,14 +46,14 @@ impl Server {
         let mut tx = self.tx.clone();
 
         spawn(async move {
-            let req = FsyncDirReq {
+            let ureq = FsyncDirReq {
                 req,
                 ino,
                 fh: FileHandle(body.fh),
                 datasync: body.fsync_flags.contains(FsyncFlags::DATASYNC),
             };
 
-            handle_error(send_result(fs.fsyncdir(&req).await, req.id(), &mut tx).await);
+            handle_error(send_result(fs.fsyncdir(ureq).await, req.id(), &mut tx).await);
         })
         .detach();
 

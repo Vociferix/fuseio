@@ -1,5 +1,5 @@
 use super::{
-    Body, Entry, FileHandle, Ino, InodeAttrs, Mode, OFlag, OpenAccessMode, OpenFlags, OpenResp,
+    Body, Entry, FileHandle, Ino, InodeAttrs, Mode, OFlag, OpenAccessMode, OpenFlags, OpenedFile,
     Request, decode, handle_error, send_error,
 };
 use crate::async_rc::AsyncRc;
@@ -27,19 +27,19 @@ pub struct CreateReq<'a> {
 }
 
 #[derive(Debug)]
-pub struct CreateResp {
-    open: OpenResp,
+pub struct CreatedFile {
+    open: OpenedFile,
     entry: Entry,
 }
 
-impl CreateResp {
-    pub fn from_parts(entry: Entry, open: OpenResp) -> Self {
+impl CreatedFile {
+    pub fn from_parts(entry: Entry, open: OpenedFile) -> Self {
         Self { open, entry }
     }
 
     pub fn new(ino: Ino, fh: FileHandle) -> Self {
         Self {
-            open: OpenResp::new(fh),
+            open: OpenedFile::new(fh),
             entry: Entry::new(ino),
         }
     }
@@ -76,11 +76,11 @@ impl CreateResp {
         }
     }
 
-    pub fn entry_ttl(self, ttl: Duration) -> Self {
+    pub fn ttl(self, ttl: Duration) -> Self {
         let Self { open, entry } = self;
         Self {
             open,
-            entry: entry.entry_ttl(ttl),
+            entry: entry.ttl(ttl),
         }
     }
 
@@ -89,14 +89,6 @@ impl CreateResp {
         Self {
             open,
             entry: entry.attrs(attrs),
-        }
-    }
-
-    pub fn attrs_ttl(self, ttl: Duration) -> Self {
-        let Self { open, entry } = self;
-        Self {
-            open,
-            entry: entry.attrs_ttl(ttl),
         }
     }
 }
@@ -134,6 +126,26 @@ impl<'a> CreateReq<'a> {
     pub fn open_passthrough<T: AsFd>(&self, fd: T) -> Result<PassthroughFd<T>> {
         PassthroughFd::open(fd, self.dev.clone())
     }
+
+    pub fn as_make_inode_req(&self) -> super::MakeInodeReq<'a> {
+        super::MakeInodeReq {
+            req: self.req,
+            parent: self.parent,
+            mode: self.mode,
+            umask: self.umask,
+            rdev: 0,
+            name: self.name,
+        }
+    }
+
+    pub fn as_open_req(&self, entry: &Entry) -> super::OpenReq {
+        super::OpenReq {
+            req: self.req,
+            ino: entry.ino,
+            flags: self.flags,
+            dev: self.dev.clone(),
+        }
+    }
 }
 
 impl std::ops::Deref for CreateReq<'_> {
@@ -159,7 +171,7 @@ impl Server {
         let minor = self.ver.1;
 
         spawn(async move {
-            let req = CreateReq {
+            let ureq = CreateReq {
                 req,
                 parent: ino,
                 flags: OFlag::from_bits_retain(hdr.flags.cast_signed()),
@@ -168,7 +180,7 @@ impl Server {
                 name: OsStr::from_bytes(&name),
                 dev: tx.clone(),
             };
-            handle_error(match fs.create(&req).await {
+            handle_error(match fs.create(ureq).await {
                 Ok(resp) => {
                     if minor < 9 {
                         tx.send(MsgOut::new(

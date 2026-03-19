@@ -57,7 +57,7 @@ impl Server {
         let mut tx = self.tx.clone();
 
         spawn(async move {
-            let req = FallocateReq {
+            let ureq = FallocateReq {
                 req,
                 ino,
                 fh: FileHandle(body.fh),
@@ -65,7 +65,7 @@ impl Server {
                 len: body.length,
                 mode: FallocateFlags::from_bits_retain(body.mode.cast_signed()),
             };
-            handle_error(send_result(fs.fallocate(&req).await, req.id(), &mut tx).await);
+            handle_error(send_result(fs.fallocate(ureq).await, req.id(), &mut tx).await);
         })
         .detach();
 

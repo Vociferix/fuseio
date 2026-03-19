@@ -36,14 +36,14 @@ impl Server {
 
         let mut tx = self.tx.clone();
         let fs = fs.clone();
-        let req = AccessReq {
+        let ureq = AccessReq {
             req,
             ino,
             flags: AccessFlags::from_bits_retain(body.mask.cast_signed()),
         };
 
         spawn(async move {
-            let res = fs.access(&req).await;
+            let res = fs.access(ureq).await;
             handle_error(send_result(res, req.id(), &mut tx).await);
         })
         .detach();

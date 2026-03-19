@@ -17,12 +17,6 @@ pub struct GetAttrsReq {
     fh: Option<FileHandle>,
 }
 
-#[derive(Debug)]
-pub struct GetAttrsResp {
-    attrs: InodeAttrs,
-    ttl: Option<Duration>,
-}
-
 #[derive(Debug, Clone, Copy)]
 pub struct InodeAttrs {
     size: u64,
@@ -40,6 +34,7 @@ pub struct InodeAttrs {
     #[cfg(target_os = "macos")]
     flags: u32,
     blksize: usize,
+    ttl: Option<Duration>,
 }
 
 impl GetAttrsReq {
@@ -57,36 +52,6 @@ impl std::ops::Deref for GetAttrsReq {
 
     fn deref(&self) -> &Request {
         &self.req
-    }
-}
-
-impl GetAttrsResp {
-    pub fn new(attrs: InodeAttrs, ttl: Duration) -> Self {
-        Self {
-            attrs,
-            ttl: Some(ttl),
-        }
-    }
-
-    fn build(self, ino: Ino) -> AttrOut {
-        let (attr_valid, attr_valid_nsec) = if let Some(ttl) = self.ttl {
-            (ttl.as_secs(), ttl.subsec_nanos())
-        } else {
-            (u64::MAX, u32::MAX)
-        };
-
-        AttrOut {
-            attr_valid,
-            attr_valid_nsec,
-            dummy: 0,
-            attr: self.attrs.build(ino),
-        }
-    }
-}
-
-impl From<InodeAttrs> for GetAttrsResp {
-    fn from(attrs: InodeAttrs) -> Self {
-        Self { attrs, ttl: None }
     }
 }
 
@@ -108,6 +73,7 @@ impl InodeAttrs {
             #[cfg(target_os = "macos")]
             flags: FileFlag::empty(),
             blksize: 4096,
+            ttl: None,
         }
     }
 
@@ -196,6 +162,30 @@ impl InodeAttrs {
         self
     }
 
+    pub fn ttl(mut self, ttl: Duration) -> Self {
+        self.ttl = Some(ttl);
+        self
+    }
+
+    pub(super) fn get_ttl(&self) -> (u64, u32) {
+        if let Some(ttl) = self.ttl {
+            (ttl.as_secs(), ttl.subsec_nanos())
+        } else {
+            (u64::MAX, u32::MAX)
+        }
+    }
+
+    pub(super) fn build_attr_out(self, ino: Ino) -> AttrOut {
+        let (attr_valid, attr_valid_nsec) = self.get_ttl();
+
+        AttrOut {
+            attr_valid,
+            attr_valid_nsec,
+            dummy: 0,
+            attr: self.build(ino),
+        }
+    }
+
     pub(super) fn build(self, ino: Ino) -> Attr {
         let atime = self
             .atime
@@ -275,11 +265,11 @@ impl Server {
                 None
             };
 
-            let req = GetAttrsReq { req, ino, fh };
+            let ureq = GetAttrsReq { req, ino, fh };
 
-            handle_error(match fs.get_attrs(&req).await {
+            handle_error(match fs.get_attrs(ureq).await {
                 Ok(resp) => {
-                    let body = resp.build(ino);
+                    let body = resp.build_attr_out(ino);
                     if minor < 9 {
                         tx.send(MsgOut::new(req.id(), body.compat())).await
                     } else {

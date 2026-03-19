@@ -31,7 +31,7 @@ pub struct OpenReq {
 }
 
 #[derive(Debug)]
-pub struct OpenResp {
+pub struct OpenedFile {
     fh: FileHandle,
     flags: OpenFlags,
     backing_id: Option<BackingId>,
@@ -97,7 +97,7 @@ impl OpenAccessMode {
     }
 }
 
-impl OpenResp {
+impl OpenedFile {
     pub fn new(fh: FileHandle) -> Self {
         Self {
             fh,
@@ -155,13 +155,13 @@ impl Server {
         let mut tx = self.tx.clone();
 
         spawn(async move {
-            let req = OpenReq {
+            let ureq = OpenReq {
                 req,
                 ino,
                 flags,
                 dev: tx.clone(),
             };
-            handle_error(match fs.open(&req).await {
+            handle_error(match fs.open(ureq).await {
                 Ok(resp) => tx.send(MsgOut::new(req.id(), resp.build())).await,
                 Err(err) => send_error(err, req.id(), &mut tx).await,
             });

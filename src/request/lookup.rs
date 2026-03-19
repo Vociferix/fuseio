@@ -22,7 +22,6 @@ pub struct Entry {
     pub(crate) ino: Ino,
     generation: u64,
     entry_ttl: Option<Duration>,
-    attr_ttl: Option<Duration>,
     attr: Option<InodeAttrs>,
 }
 
@@ -50,7 +49,6 @@ impl Entry {
             ino,
             generation: 0,
             entry_ttl: None,
-            attr_ttl: None,
             attr: None,
         }
     }
@@ -60,7 +58,7 @@ impl Entry {
         self
     }
 
-    pub fn entry_ttl(mut self, ttl: Duration) -> Self {
+    pub fn ttl(mut self, ttl: Duration) -> Self {
         self.entry_ttl = Some(ttl);
         self
     }
@@ -70,22 +68,14 @@ impl Entry {
         self
     }
 
-    pub fn attrs_ttl(mut self, ttl: Duration) -> Self {
-        self.attr_ttl = Some(ttl);
-        self
-    }
-
     pub(super) fn build(self) -> EntryOut {
         let (entry_valid, entry_valid_nsec) = if let Some(entry_ttl) = self.entry_ttl {
             (entry_ttl.as_secs(), entry_ttl.subsec_nanos())
         } else {
             (u64::MAX, u32::MAX)
         };
-        let (attr_valid, attr_valid_nsec) = if let Some(attr_ttl) = self.attr_ttl {
-            (attr_ttl.as_secs(), attr_ttl.subsec_nanos())
-        } else {
-            (u64::MAX, u32::MAX)
-        };
+        let attrs = self.attr.unwrap_or_else(InodeAttrs::new);
+        let (attr_valid, attr_valid_nsec) = attrs.get_ttl();
         EntryOut {
             nodeid: self.ino.as_raw(),
             generation: self.generation,
@@ -93,7 +83,7 @@ impl Entry {
             attr_valid,
             entry_valid_nsec,
             attr_valid_nsec,
-            attr: self.attr.unwrap_or_else(InodeAttrs::new).build(self.ino),
+            attr: attrs.build(self.ino),
         }
     }
 }
@@ -127,12 +117,12 @@ impl Server {
         };
 
         spawn(async move {
-            let req = LookupReq {
+            let ureq = LookupReq {
                 req,
                 parent: ino,
                 name: OsStr::from_bytes(&name),
             };
-            handle_error(match fs.lookup(&req).await {
+            handle_error(match fs.lookup(ureq).await {
                 Ok(mut resp) => {
                     if ino.is_none() {
                         resp.ino = root_ino;

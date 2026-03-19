@@ -47,13 +47,13 @@ impl Server {
         let mut tx = self.tx.clone();
 
         spawn(async move {
-            let req = FlushReq {
+            let ureq = FlushReq {
                 req,
                 ino,
                 fh: FileHandle(body.fh),
                 lock_owner: LockOwner(body.lock_owner),
             };
-            handle_error(send_result(fs.flush(&req).await, req.id(), &mut tx).await);
+            handle_error(send_result(fs.flush(ureq).await, req.id(), &mut tx).await);
         })
         .detach();
 

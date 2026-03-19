@@ -76,7 +76,7 @@ impl Server {
         let mut tx = self.tx.clone();
 
         spawn(async move {
-            let req = CopyFileRangeReq {
+            let ureq = CopyFileRangeReq {
                 req,
                 src: CopyFileRangePos {
                     ino,
@@ -91,7 +91,7 @@ impl Server {
                 len: body.len,
             };
 
-            handle_error(match fs.copy_file_range(&req).await {
+            handle_error(match fs.copy_file_range(ureq).await {
                 Ok(count) => tx.send(MsgOut::new(req.id(), count)).await,
                 Err(err) => send_error(err, req.id(), &mut tx).await,
             });
