@@ -67,6 +67,7 @@ pub use fsyncdir::FsyncDirReq;
 pub use getattr::{GetAttrsReq, InodeAttrs};
 pub use getlk::{FileLock, FileRange, GetLockReq, LockKind};
 pub use getxattr::{GetXattrLenReq, GetXattrReq};
+pub use link::LinkReq;
 pub use lookup::{Entry, LookupReq};
 pub use mknod::MakeInodeReq;
 pub use open::{OpenAccessMode, OpenFlags, OpenReq, OpenedFile};
