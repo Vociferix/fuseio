@@ -66,12 +66,14 @@ pub use fsync::FsyncReq;
 pub use fsyncdir::FsyncDirReq;
 pub use getattr::{GetAttrsReq, InodeAttrs};
 pub use getlk::{FileLock, FileRange, GetLockReq, LockKind};
-pub use getxattr::{GetXattrLenReq, GetXattrReq};
+pub use getxattr::GetXattrReq;
 pub use link::LinkReq;
+pub use listxattr::GetXattrKeysReq;
 pub use lookup::{Entry, LookupReq};
 pub use mknod::MakeInodeReq;
 pub use open::{OpenAccessMode, OpenFlags, OpenReq, OpenedFile};
 pub use setlk::{FlockReq, SetLockReq};
+pub use setxattr::{SetXattrFlags, SetXattrReq};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct Ino(NonZeroU64);

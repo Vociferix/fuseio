@@ -2,12 +2,13 @@
 
 use crate::request::{
     AccessReq, BmapReq, CopyFileRangeReq, CreateReq, CreatedFile, Entry, FallocateReq, FileLock,
-    FlockReq, FlushReq, ForgetReq, FsyncDirReq, FsyncReq, GetAttrsReq, GetLockReq, GetXattrLenReq,
+    FlockReq, FlushReq, ForgetReq, FsyncDirReq, FsyncReq, GetAttrsReq, GetLockReq, GetXattrKeysReq,
     GetXattrReq, InodeAttrs, LinkReq, LookupReq, MakeInodeReq, OpenReq, OpenedFile, SetLockReq,
+    SetXattrReq,
 };
 use crate::{Error, FsConfig, IntoIoBuf, KernelConfig, MountOpt, Result};
 
-use compio::buf::IoBuf;
+use futures_util::{Stream, StreamExt};
 
 pub trait Filesystem: 'static {
     async fn initialize(&mut self, kconf: KernelConfig, opts: &[MountOpt]) -> Result<FsConfig> {
@@ -100,14 +101,37 @@ pub trait Filesystem: 'static {
         Err(Error::ENOSYS)
     }
 
-    async fn get_xattr_len(&self, req: GetXattrLenReq<'_>) -> Result<usize> {
-        let _ = (self, req);
-        Err(Error::ENOSYS)
+    async fn get_xattr_len(&self, req: GetXattrReq<'_>) -> Result<usize> {
+        self.get_xattr(req)
+            .await
+            .map(|buf| buf.into_io_buf().total_len())
     }
 
     async fn get_xattr(&self, req: GetXattrReq<'_>) -> Result<impl IntoIoBuf> {
         let _ = (self, req);
         Err::<crate::Buf, _>(Error::ENOSYS)
+    }
+
+    async fn get_xattr_keys_len(
+        &self,
+        req: GetXattrKeysReq,
+    ) -> Result<impl Stream<Item = Result<usize>>> {
+        self.get_xattr_keys(req)
+            .await
+            .map(|stream| stream.map(|res| res.map(|buf| buf.into_io_buf().total_len())))
+    }
+
+    async fn get_xattr_keys(
+        &self,
+        req: GetXattrKeysReq,
+    ) -> Result<impl Stream<Item = Result<impl IntoIoBuf>> + '_> {
+        let _ = (self, req);
+        Err::<futures_util::stream::Empty<Result<crate::Buf>>, _>(Error::ENOSYS)
+    }
+
+    async fn set_xattr(&self, req: SetXattrReq<'_>) -> Result<()> {
+        let _ = (self, req);
+        Err(Error::ENOSYS)
     }
 
     async fn link(&self, req: LinkReq<'_>) -> Result<Entry> {

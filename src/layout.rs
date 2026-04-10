@@ -583,32 +583,30 @@ bitflags::bitflags! {
 
 #[repr(C)]
 #[derive(Debug, Clone, Copy, Zeroable, Pod)]
-pub struct SetXattrIn {
+pub struct SetXattrInExt {
     pub size: u32,
     pub flags: u32,
-    #[cfg(not(target_os = "macos"))]
     pub setxattr_flags: u32,
-    #[cfg(target_os = "macos")]
-    pub position: u32,
     pub padding: u32,
 }
 
 #[repr(C)]
 #[derive(Debug, Clone, Copy, Zeroable, Pod)]
-pub struct SetXattrInCompat {
+pub struct SetXattrIn {
     pub size: u32,
     pub flags: u32,
+    #[cfg(target_os = "macos")]
+    pub position: u32,
+    #[cfg(target_os = "macos")]
+    pub padding: u32,
 }
 
-impl SetXattrIn {
-    pub fn from_compat(compat: SetXattrInCompat) -> Self {
+impl SetXattrInExt {
+    pub fn from_basic(compat: SetXattrIn) -> Self {
         Self {
             size: compat.size,
             flags: compat.flags,
-            #[cfg(not(target_os = "macos"))]
             setxattr_flags: 0,
-            #[cfg(target_os = "macos")]
-            position: 0,
             padding: 0,
         }
     }

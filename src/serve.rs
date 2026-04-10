@@ -7,7 +7,7 @@ use crate::layout::{
 use crate::mount::{Mount, Unmount};
 use crate::request::Body;
 use crate::request::Ino;
-use crate::{Filesystem, KernelConfig, MountHandle, MountOpt, Version};
+use crate::{Filesystem, InitFlags, KernelConfig, MountHandle, MountOpt, Version};
 
 use bytemuck::{Zeroable, bytes_of_mut};
 use compio::runtime::event::{Event, EventHandle};
@@ -23,6 +23,7 @@ pub struct Server {
     pub(crate) ver: Version,
     pub(crate) root_ino: Ino,
     pub(crate) root_ino_init: Cell<bool>,
+    pub(crate) want: InitFlags,
 }
 
 pub async fn mount(
@@ -38,7 +39,8 @@ pub async fn mount(
         .mount(tx.as_fd(), mountpoint.as_ref(), opts.as_ref())
         .await?;
 
-    let (version, root_ino) = match handshake(&mut fs, &mut tx, &mut rx, opts.as_ref()).await {
+    let (version, root_ino, want) = match handshake(&mut fs, &mut tx, &mut rx, opts.as_ref()).await
+    {
         Ok(init) => init,
         Err(err) => {
             let _ = unmounter.unmount(tx.as_fd(), mountpoint.as_ref(), opts.as_ref());
@@ -71,6 +73,7 @@ pub async fn mount(
         ver: version,
         root_ino,
         root_ino_init: Cell::new(root_ino.as_raw() == 1),
+        want,
     };
 
     let task = compio::runtime::spawn(Server::serve(
@@ -306,7 +309,7 @@ async fn handshake(
     tx: &mut Sender,
     rx: &mut Receiver,
     opts: &[MountOpt],
-) -> Result<(Version, Ino)> {
+) -> Result<(Version, Ino, InitFlags)> {
     let mut hdr = HeaderIn::zeroed();
     let mut init = InitIn::zeroed();
 
@@ -390,6 +393,7 @@ async fn handshake(
         }
     };
 
+    let want = conf.flags;
     let root_ino = conf.root_inode;
 
     let body = conf.build();
@@ -429,5 +433,5 @@ async fn handshake(
         tx.send(out).await?;
     }
 
-    Ok((Version(init.major, init.minor), root_ino))
+    Ok((Version(init.major, init.minor), root_ino, want))
 }

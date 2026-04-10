@@ -18,13 +18,6 @@ pub struct GetXattrReq<'a> {
     buf_pool: BufPool,
 }
 
-#[derive(Debug)]
-pub struct GetXattrLenReq<'a> {
-    req: Request,
-    ino: Ino,
-    key: &'a OsStr,
-}
-
 impl<'a> GetXattrReq<'a> {
     pub fn ino(&self) -> Ino {
         self.ino
@@ -43,25 +36,7 @@ impl<'a> GetXattrReq<'a> {
     }
 }
 
-impl<'a> GetXattrLenReq<'a> {
-    pub fn ino(&self) -> Ino {
-        self.ino
-    }
-
-    pub fn key(&self) -> &'a OsStr {
-        self.key
-    }
-}
-
 impl std::ops::Deref for GetXattrReq<'_> {
-    type Target = Request;
-
-    fn deref(&self) -> &Request {
-        &self.req
-    }
-}
-
-impl std::ops::Deref for GetXattrLenReq<'_> {
     type Target = Request;
 
     fn deref(&self) -> &Request {
@@ -94,10 +69,12 @@ impl Server {
 
         spawn(async move {
             if max_len == 0 {
-                let ureq = GetXattrLenReq {
+                let ureq = GetXattrReq {
                     req,
                     ino,
                     key: OsStr::from_bytes(&name),
+                    max_len: usize::MAX,
+                    buf_pool: pool,
                 };
 
                 handle_error(match fs.get_xattr_len(ureq).await {

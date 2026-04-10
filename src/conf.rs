@@ -14,7 +14,7 @@ pub struct KernelConfig {
 pub struct FsConfig {
     k_max_readahead: u32,
     max_readahead: u32,
-    flags: InitFlags,
+    pub(crate) flags: InitFlags,
     max_background: u16,
     congestion_threshold: Option<u16>,
     max_write: u32,
