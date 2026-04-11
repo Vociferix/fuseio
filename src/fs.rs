@@ -1,10 +1,11 @@
 #![allow(async_fn_in_trait)]
 
 use crate::request::{
-    AccessReq, BmapReq, CopyFileRangeReq, CreateReq, CreatedFile, Entry, FallocateReq, FileLock,
-    FlockReq, FlushReq, ForgetReq, FsyncDirReq, FsyncReq, GetAttrsReq, GetLockReq, GetXattrKeysReq,
-    GetXattrReq, InodeAttrs, LinkReq, LookupReq, MakeInodeReq, OpenReq, OpenedFile, RemoveXattrReq,
-    SetLockReq, SetXattrReq,
+    AccessReq, BmapReq, CopyFileRangeReq, CreateFileReq, CreatedFile, Entry, FallocateReq,
+    FileLock, FlockReq, FlushReq, ForgetReq, FsyncDirReq, FsyncReq, GetAttrsReq, GetLockReq,
+    GetXattrKeysReq, GetXattrReq, InodeAttrs, LinkReq, LookupReq, LseekReq, MakeDirReq,
+    MakeFileReq, OpenReq, Opened, ReleaseDirReq, ReleaseFileReq, RemoveXattrReq, SetLockReq,
+    SetXattrReq,
 };
 use crate::{Error, FsConfig, IntoIoBuf, KernelConfig, MountOpt, Result};
 
@@ -45,7 +46,7 @@ pub trait Filesystem: 'static {
         Err(Error::ENOSYS)
     }
 
-    async fn open(&self, req: OpenReq) -> Result<OpenedFile> {
+    async fn open_file(&self, req: OpenReq) -> Result<Opened> {
         let _ = (self, req);
         Err(Error::ENOSYS)
     }
@@ -55,14 +56,14 @@ pub trait Filesystem: 'static {
         Err(Error::ENOSYS)
     }
 
-    async fn make_inode(&self, req: MakeInodeReq<'_>) -> Result<Entry> {
+    async fn make_file(&self, req: MakeFileReq<'_>) -> Result<Entry> {
         let _ = (self, req);
         Err(Error::ENOSYS)
     }
 
-    async fn create(&self, req: CreateReq<'_>) -> Result<CreatedFile> {
-        let entry = self.make_inode(req.as_make_inode_req()).await?;
-        let opened = self.open(req.as_open_req(&entry)).await?;
+    async fn create_file(&self, req: CreateFileReq<'_>) -> Result<CreatedFile> {
+        let entry = self.make_file(req.as_make_inode_req()).await?;
+        let opened = self.open_file(req.as_open_req(&entry)).await?;
         Ok(CreatedFile::from_parts(entry, opened))
     }
 
@@ -140,6 +141,31 @@ pub trait Filesystem: 'static {
     }
 
     async fn link(&self, req: LinkReq<'_>) -> Result<Entry> {
+        let _ = (self, req);
+        Err(Error::ENOSYS)
+    }
+
+    async fn lseek(&self, req: LseekReq) -> Result<u64> {
+        let _ = (self, req);
+        Err(Error::ENOSYS)
+    }
+
+    async fn make_dir(&self, req: MakeDirReq<'_>) -> Result<Entry> {
+        let _ = (self, req);
+        Err(Error::ENOSYS)
+    }
+
+    async fn open_dir(&self, req: OpenReq) -> Result<Opened> {
+        let _ = (self, req);
+        Err(Error::ENOSYS)
+    }
+
+    async fn release_file(&self, req: ReleaseFileReq) -> Result<()> {
+        let _ = (self, req);
+        Err(Error::ENOSYS)
+    }
+
+    async fn release_dir(&self, req: ReleaseDirReq) -> Result<()> {
         let _ = (self, req);
         Err(Error::ENOSYS)
     }

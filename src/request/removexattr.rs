@@ -8,6 +8,7 @@ use compio::runtime::spawn;
 use std::ffi::OsStr;
 use std::os::unix::ffi::OsStrExt;
 
+#[derive(Debug)]
 pub struct RemoveXattrReq<'a> {
     req: Request,
     ino: Ino,

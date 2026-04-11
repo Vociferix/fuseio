@@ -1,5 +1,5 @@
 use super::{
-    Body, Entry, FileHandle, Ino, InodeAttrs, Mode, OFlag, OpenAccessMode, OpenFlags, OpenedFile,
+    Body, Entry, FileHandle, Ino, InodeAttrs, Mode, OFlag, OpenAccessMode, OpenFlags, Opened,
     Request, decode, handle_error, send_error,
 };
 use crate::async_rc::AsyncRc;
@@ -16,7 +16,7 @@ use std::os::unix::ffi::OsStrExt;
 use std::time::Duration;
 
 #[derive(Debug)]
-pub struct CreateReq<'a> {
+pub struct CreateFileReq<'a> {
     pub(crate) req: Request,
     pub(crate) parent: Ino,
     pub(crate) flags: OFlag,
@@ -28,18 +28,18 @@ pub struct CreateReq<'a> {
 
 #[derive(Debug)]
 pub struct CreatedFile {
-    open: OpenedFile,
+    open: Opened,
     entry: Entry,
 }
 
 impl CreatedFile {
-    pub fn from_parts(entry: Entry, open: OpenedFile) -> Self {
+    pub fn from_parts(entry: Entry, open: Opened) -> Self {
         Self { open, entry }
     }
 
     pub fn new(ino: Ino, fh: FileHandle) -> Self {
         Self {
-            open: OpenedFile::new(fh),
+            open: Opened::new(fh),
             entry: Entry::new(ino),
         }
     }
@@ -93,7 +93,7 @@ impl CreatedFile {
     }
 }
 
-impl<'a> CreateReq<'a> {
+impl<'a> CreateFileReq<'a> {
     pub fn parent_ino(&self) -> Ino {
         self.parent
     }
@@ -127,8 +127,8 @@ impl<'a> CreateReq<'a> {
         PassthroughFd::open(fd, self.dev.clone())
     }
 
-    pub fn as_make_inode_req(&self) -> super::MakeInodeReq<'a> {
-        super::MakeInodeReq {
+    pub fn as_make_inode_req(&self) -> super::MakeFileReq<'a> {
+        super::MakeFileReq {
             req: self.req,
             parent: self.parent,
             mode: self.mode,
@@ -148,7 +148,7 @@ impl<'a> CreateReq<'a> {
     }
 }
 
-impl std::ops::Deref for CreateReq<'_> {
+impl std::ops::Deref for CreateFileReq<'_> {
     type Target = Request;
 
     fn deref(&self) -> &Request {
@@ -171,7 +171,7 @@ impl Server {
         let minor = self.ver.1;
 
         spawn(async move {
-            let ureq = CreateReq {
+            let ureq = CreateFileReq {
                 req,
                 parent: ino,
                 flags: OFlag::from_bits_retain(hdr.flags.cast_signed()),
@@ -180,7 +180,7 @@ impl Server {
                 name: OsStr::from_bytes(&name),
                 dev: tx.clone(),
             };
-            handle_error(match fs.create(ureq).await {
+            handle_error(match fs.create_file(ureq).await {
                 Ok(resp) => {
                     if minor < 9 {
                         tx.send(MsgOut::new(

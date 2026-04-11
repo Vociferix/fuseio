@@ -31,7 +31,7 @@ pub struct OpenReq {
 }
 
 #[derive(Debug)]
-pub struct OpenedFile {
+pub struct Opened {
     fh: FileHandle,
     flags: OpenFlags,
     backing_id: Option<BackingId>,
@@ -97,7 +97,7 @@ impl OpenAccessMode {
     }
 }
 
-impl OpenedFile {
+impl Opened {
     pub fn new(fh: FileHandle) -> Self {
         Self {
             fh,
@@ -161,7 +161,7 @@ impl Server {
                 flags,
                 dev: tx.clone(),
             };
-            handle_error(match fs.open(ureq).await {
+            handle_error(match fs.open_file(ureq).await {
                 Ok(resp) => tx.send(MsgOut::new(req.id(), resp.build())).await,
                 Err(err) => send_error(err, req.id(), &mut tx).await,
             });
