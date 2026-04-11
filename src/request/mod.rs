@@ -72,6 +72,7 @@ pub use listxattr::GetXattrKeysReq;
 pub use lookup::{Entry, LookupReq};
 pub use mknod::MakeInodeReq;
 pub use open::{OpenAccessMode, OpenFlags, OpenReq, OpenedFile};
+pub use removexattr::RemoveXattrReq;
 pub use setlk::{FlockReq, SetLockReq};
 pub use setxattr::{SetXattrFlags, SetXattrReq};
 

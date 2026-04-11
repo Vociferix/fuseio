@@ -3,8 +3,8 @@
 use crate::request::{
     AccessReq, BmapReq, CopyFileRangeReq, CreateReq, CreatedFile, Entry, FallocateReq, FileLock,
     FlockReq, FlushReq, ForgetReq, FsyncDirReq, FsyncReq, GetAttrsReq, GetLockReq, GetXattrKeysReq,
-    GetXattrReq, InodeAttrs, LinkReq, LookupReq, MakeInodeReq, OpenReq, OpenedFile, SetLockReq,
-    SetXattrReq,
+    GetXattrReq, InodeAttrs, LinkReq, LookupReq, MakeInodeReq, OpenReq, OpenedFile, RemoveXattrReq,
+    SetLockReq, SetXattrReq,
 };
 use crate::{Error, FsConfig, IntoIoBuf, KernelConfig, MountOpt, Result};
 
@@ -130,6 +130,11 @@ pub trait Filesystem: 'static {
     }
 
     async fn set_xattr(&self, req: SetXattrReq<'_>) -> Result<()> {
+        let _ = (self, req);
+        Err(Error::ENOSYS)
+    }
+
+    async fn remove_xattr(&self, req: RemoveXattrReq<'_>) -> Result<()> {
         let _ = (self, req);
         Err(Error::ENOSYS)
     }
