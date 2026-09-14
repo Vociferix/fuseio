@@ -1,78 +1,185 @@
-use crate::mount::Mount;
-use crate::{Builder, Filesystem};
-
-use compio::runtime::JoinHandle;
-use compio::runtime::event::EventHandle;
+use crate::async_arc::AsyncArc;
+use crate::builder::MountOptList;
+use crate::dev_fuse::{DevFuse, FuseChannel};
+use crate::handshake::{Config, Init, handshake};
+use crate::types::{ReplyInitFlags, Version};
+use crate::{
+    BindFs, Builder, Fs, MountFs, MountOpt,
+    mount::{Mount, Unmount},
+};
 
 use std::io::Result;
 use std::mem::ManuallyDrop;
+use std::os::fd::AsFd;
+use std::path::{Path, PathBuf};
 
-pub struct MountHandle {
-    task: ManuallyDrop<JoinHandle<Result<()>>>,
-    unmount_notifier: Option<EventHandle>,
+pub struct Handle<F, U> {
+    dev: DevFuse,
+    fs: F,
+    minor_ver: u32,
+    flags: ReplyInitFlags,
+    max_readahead: usize,
+    config: Config,
+    once: Option<Once<U>>,
 }
 
-impl MountHandle {
-    pub(crate) fn new(task: JoinHandle<Result<()>>, unmount_notifier: EventHandle) -> Self {
-        Self {
-            task: ManuallyDrop::new(task),
-            unmount_notifier: Some(unmount_notifier),
+pub struct HandleIter<F, U: Unmount> {
+    devs: std::vec::IntoIter<DevFuse>,
+    fs: ManuallyDrop<F>,
+    minor_ver: u32,
+    flags: ReplyInitFlags,
+    max_readahead: usize,
+    config: Config,
+    once: Option<Once<U>>,
+}
+
+struct Once<U> {
+    unmount: U,
+    path: PathBuf,
+    opts: MountOptList,
+}
+
+pub async fn multi_mount<M, F>(
+    builder: Builder<M>,
+    fs: F,
+    mountpoint: PathBuf,
+    workers: usize,
+) -> Result<HandleIter<F::Fs, M::Unmount>>
+where
+    M: Mount,
+    F: MountFs,
+{
+    if workers == 0 {
+        return Err(std::io::Error::new(
+            std::io::ErrorKind::InvalidInput,
+            "cannot mount with zero workers",
+        ));
+    }
+
+    let (mounter, dev, opts) = builder.into_args();
+
+    let dev = AsyncArc::new(DevFuse::open(dev).await?);
+
+    let unmounter = mounter
+        .mount(dev.as_fd(), &mountpoint, opts.as_ref())
+        .await?;
+
+    let Init {
+        fs,
+        ver,
+        flags,
+        max_readahead,
+        config,
+    } = match handshake(fs, dev.clone(), opts.as_ref()).await {
+        Ok(init) => init,
+        Err(err) => {
+            let _ = unmounter
+                .unmount(dev.as_fd(), mountpoint.as_ref(), opts.as_ref())
+                .await;
+            return Err(err);
         }
+    };
+
+    let dev = AsyncArc::unwrap(dev).await;
+
+    let mut devs = Vec::with_capacity(workers);
+    for _ in 1..workers {
+        let dev = match dev.try_clone().await {
+            Ok(dev) => dev,
+            Err(err) => {
+                let _ = unmounter
+                    .unmount(dev.as_fd(), mountpoint.as_ref(), opts.as_ref())
+                    .await;
+                return Err(err);
+            }
+        };
+        devs.push(dev);
+    }
+    devs.push(dev);
+
+    Ok(HandleIter {
+        devs: devs.into_iter(),
+        fs: ManuallyDrop::new(fs),
+        minor_ver: ver.1,
+        flags,
+        max_readahead,
+        config,
+        once: Some(Once {
+            unmount: unmounter,
+            path: mountpoint,
+            opts,
+        }),
+    })
+}
+
+impl<F, U> Iterator for HandleIter<F, U>
+where
+    F: Clone,
+    U: Unmount,
+{
+    type Item = Handle<F, U>;
+
+    fn next(&mut self) -> Option<Self::Item> {
+        let dev = self.devs.next()?;
+
+        let fs = if self.devs.len() == 0 {
+            unsafe { ManuallyDrop::take(&mut self.fs) }
+        } else {
+            (*self.fs).clone()
+        };
+
+        Some(Handle {
+            dev,
+            fs,
+            minor_ver: self.minor_ver,
+            flags: self.flags,
+            max_readahead: self.max_readahead,
+            config: self.config,
+            once: self.once.take(),
+        })
+    }
+
+    fn size_hint(&self) -> (usize, Option<usize>) {
+        self.devs.size_hint()
     }
 }
 
-impl MountHandle {
-    pub fn is_mounted(&self) -> bool {
-        !self.task.is_finished()
-    }
-
-    pub fn is_unmounting(&self) -> bool {
-        self.unmount_notifier.is_none()
-    }
-
-    pub fn request_unmount(&mut self) {
-        if let Some(notifier) = self.unmount_notifier.take() {
-            notifier.notify();
-        }
-    }
-
-    pub async fn unmount(mut self) -> Result<()> {
-        self.request_unmount();
-        self.wait().await
-    }
-
-    pub async fn wait(self) -> Result<()> {
-        let mut this = ManuallyDrop::new(self);
-        let _ = this.unmount_notifier.take();
-
-        // SAFETY: Since `this` is wrapped in `ManuallyDrop`, `Drop::drop`
-        //         won't be called. And since we don't access `this` again
-        //         here, `this.task` is never accessed again.
-        let task = unsafe { ManuallyDrop::take(&mut this.task) };
-
-        match task.await {
-            Ok(res) => res,
-            Err(panic) => std::panic::resume_unwind(panic),
-        }
+impl<F, U> ExactSizeIterator for HandleIter<F, U>
+where
+    F: Clone,
+    U: Unmount,
+{
+    fn len(&self) -> usize {
+        self.devs.len()
     }
 }
 
-impl std::fmt::Debug for MountHandle {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.write_str("MountHandle { .. }")
-    }
+impl<F, U> std::iter::FusedIterator for HandleIter<F, U>
+where
+    F: Clone,
+    U: Unmount,
+{
 }
 
-impl Drop for MountHandle {
+impl<F, U> Drop for HandleIter<F, U>
+where
+    U: Unmount,
+{
     fn drop(&mut self) {
-        // SAFETY: Since this is in `Drop::drop`, we know that `self.task`
-        //         will never be accessed again.
-        let task = unsafe { ManuallyDrop::take(&mut self.task) };
+        if let Some(dev) = self.devs.next() {
+            unsafe {
+                ManuallyDrop::drop(&mut self.fs);
+            }
 
-        // If the handle is ignored or otherwise dropped without calling
-        // `.wait()` or `.unmount()`, we want the filesystem loop to keep
-        // running in the background. Don't stop the filesystem loop
-        // unless explicitly asked to do so.
-        task.detach();
+            if let Some(once) = self.once.take() {
+                compio::runtime::spawn(async move {
+                    let _ = once
+                        .unmount
+                        .unmount(dev.as_fd(), &once.path, &once.opts)
+                        .await;
+                })
+                .detach();
+            }
+        }
     }
 }

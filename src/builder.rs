@@ -51,6 +51,8 @@ bitflags::bitflags! {
 
 pub(crate) const MAX_OPTS: usize = 19;
 
+pub(crate) type MountOptList = ArrayVec<MountOpt, MAX_OPTS>;
+
 impl Builder {
     pub const fn new() -> Self {
         Self::with_mount_method(DefaultMount)
@@ -78,6 +80,7 @@ impl<M: Mount> Builder<M> {
         }
     }
 
+    #[cfg(todo)]
     pub async fn mount<F, P>(self, fs: F, mountpoint: P) -> std::io::Result<crate::MountHandle>
     where
         F: crate::Filesystem,
@@ -86,7 +89,7 @@ impl<M: Mount> Builder<M> {
         crate::serve::mount(self, fs, mountpoint).await
     }
 
-    pub(crate) fn into_args(self) -> (M, Cow<'static, Path>, ArrayVec<MountOpt, MAX_OPTS>) {
+    pub(crate) fn into_args(self) -> (M, Cow<'static, Path>, MountOptList) {
         struct Arg(Flags, MountOpt, Option<MountOpt>);
 
         const ARGS: [Arg; 15] = [
@@ -312,7 +315,7 @@ impl<M> Builder<M> {
         self
     }
 
-    pub fn option(mut self, opt: MountOpt) -> Self {
+    pub fn option(self, opt: MountOpt) -> Self {
         match opt {
             MountOpt::Rw => self.write(true),
             MountOpt::Ro => self.write(false),

@@ -310,6 +310,21 @@ impl From<std::io::ErrorKind> for Error {
     }
 }
 
+/// `Errno::UnknownErrno` (0) has no corresponding error and converts to
+/// [`Error::EIO`].
+impl From<nix::errno::Errno> for Error {
+    fn from(errno: nix::errno::Errno) -> Self {
+        Self::from_raw_os_error(errno as i32).unwrap_or(Self::EIO)
+    }
+}
+
+/// Error codes unknown to `nix` convert to `Errno::UnknownErrno`.
+impl From<Error> for nix::errno::Errno {
+    fn from(err: Error) -> Self {
+        Self::from_raw(err.raw_os_error())
+    }
+}
+
 impl std::fmt::Display for Error {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         std::fmt::Display::fmt(&std::io::Error::from(*self), f)
@@ -317,3 +332,9 @@ impl std::fmt::Display for Error {
 }
 
 impl std::error::Error for Error {}
+
+impl From<std::convert::Infallible> for Error {
+    fn from(_: std::convert::Infallible) -> Self {
+        unreachable!()
+    }
+}

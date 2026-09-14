@@ -21,6 +21,10 @@ pub enum IoBuffer<B, V> {
     VecBuf(V),
 }
 
+pub struct IoBufferWithNul<B, V> {
+    buf: IoBuffer<B, V>,
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub enum BufferPlaceholder {}
 
@@ -69,7 +73,17 @@ where
     }
 }
 
-pub trait IntoIoBuf: sealed::Sealed {
+impl<B, V> IoBufferWithNul<B, V>
+where
+    B: compio::buf::IoBuf,
+    V: compio::buf::IoVectoredBuf,
+{
+    fn new(buf: IoBuffer<B, V>) -> Self {
+        Self { buf }
+    }
+}
+
+pub trait IntoIoBuf: sealed::Sealed + Sized {
     #[doc(hidden)]
     type Buffer: compio::buf::IoBuf;
 
@@ -78,6 +92,11 @@ pub trait IntoIoBuf: sealed::Sealed {
 
     #[doc(hidden)]
     fn into_io_buf(self) -> IoBuffer<Self::Buffer, Self::VecBuffer>;
+
+    #[doc(hidden)]
+    fn into_io_buf_with_nul(self) -> IoBufferWithNul<Self::Buffer, Self::VecBuffer> {
+        IoBufferWithNul::new(self.into_io_buf())
+    }
 }
 
 impl compio::buf::IoBuf for BufferPlaceholder {
@@ -123,5 +142,78 @@ impl<V: compio::buf::IoVectoredBuf> IntoIoBuf for Vectored<V> {
 
     fn into_io_buf(self) -> IoBuffer<BufferPlaceholder, V> {
         IoBuffer::VecBuf(self.0)
+    }
+}
+
+impl<B, V> compio::buf::IoVectoredBuf for IoBuffer<B, V>
+where
+    B: compio::buf::IoBuf,
+    V: compio::buf::IoVectoredBuf,
+{
+    fn iter_slice(&self) -> impl Iterator<Item = &[u8]> {
+        match self {
+            Self::Buf(buf) => either::Left(std::iter::once(buf.as_init())),
+            Self::VecBuf(buf) => either::Right(buf.iter_slice()),
+        }
+    }
+
+    fn total_len(&self) -> usize {
+        match self {
+            Self::Buf(buf) => buf.buf_len(),
+            Self::VecBuf(buf) => buf.total_len(),
+        }
+    }
+}
+
+impl<B, V> sealed::Sealed for IoBuffer<B, V> {}
+
+impl<B, V> IntoIoBuf for IoBuffer<B, V>
+where
+    B: compio::buf::IoBuf,
+    V: compio::buf::IoVectoredBuf,
+{
+    type Buffer = B;
+    type VecBuffer = V;
+
+    fn into_io_buf(self) -> Self {
+        self
+    }
+
+    fn into_io_buf_with_nul(self) -> IoBufferWithNul<Self::Buffer, Self::VecBuffer> {
+        IoBufferWithNul::new(self)
+    }
+}
+
+const NUL: &[u8] = &[0];
+
+impl<B, V> compio::buf::IoVectoredBuf for IoBufferWithNul<B, V>
+where
+    B: compio::buf::IoBuf,
+    V: compio::buf::IoVectoredBuf,
+{
+    fn iter_slice(&self) -> impl Iterator<Item = &[u8]> {
+        match &self.buf {
+            IoBuffer::Buf(buf) => either::Left([buf.as_init(), NUL].into_iter()),
+            IoBuffer::VecBuf(buf) => either::Right(buf.iter_slice().chain(std::iter::once(NUL))),
+        }
+    }
+
+    fn total_len(&self) -> usize {
+        self.buf.total_len() + 1
+    }
+}
+
+impl<B, V> sealed::Sealed for IoBufferWithNul<B, V> {}
+
+impl<B, V> IntoIoBuf for IoBufferWithNul<B, V>
+where
+    B: compio::buf::IoBuf,
+    V: compio::buf::IoVectoredBuf,
+{
+    type Buffer = BufferPlaceholder;
+    type VecBuffer = Self;
+
+    fn into_io_buf(self) -> IoBuffer<Self::Buffer, Self> {
+        IoBuffer::VecBuf(self)
     }
 }

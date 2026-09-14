@@ -1,13 +1,15 @@
 use crate::{Buf, BufPool};
 
 use compio::BufResult;
-use compio::driver::{OwnedFd, op::OpenFile};
-use compio::fs::AsyncFd;
+use compio::buf::IntoInner;
+use compio::driver::OwnedFd;
+use compio::driver::op::{CurrentDir, Mode, OFlags, OpenFile};
 use compio::io::{AsyncRead, AsyncWriteExt};
+use compio::runtime::fd::AsyncFd;
 use compio::runtime::submit;
 
 use std::io::Result;
-use std::os::fd::{AsFd, AsRawFd, BorrowedFd, FromRawFd, RawFd};
+use std::os::fd::{AsFd, AsRawFd, BorrowedFd, RawFd};
 use std::path::Path;
 
 const BUF_SIZE: usize = crate::MAX_WRITE_SIZE + 4096;
@@ -27,16 +29,17 @@ pub async fn channel<P>(path: P) -> Result<(Sender, Receiver)>
 where
     P: AsRef<Path>,
 {
-    let op = OpenFile::new(path_string(path)?, nix::libc::O_RDWR, 0o666);
+    let op = OpenFile::new(
+        CurrentDir,
+        path_string(path)?,
+        OFlags::RDWR,
+        Mode::from_bits_truncate(0o666),
+    );
 
-    let fd = submit(op).await.0? as RawFd;
+    let BufResult(res, op) = submit(op).await;
+    res?;
 
-    // SAFETY: The above call to the `open` syscall (via compio) has returned
-    //         a valid file descriptor, so it is safe to take ownership, and
-    //         necessary to ensure the FD is closed on drop.
-    let fd = unsafe { OwnedFd::from_raw_fd(fd) };
-
-    let fd = AsyncFd::new(fd)?;
+    let fd = AsyncFd::new(op.into_inner())?;
 
     let tx = Sender { dev: fd.clone() };
     let rx = Receiver {

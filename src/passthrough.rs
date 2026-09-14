@@ -1,5 +1,5 @@
-use crate::channel::Sender;
-use crate::layout::{BackingMap, passthrough_close, passthrough_open};
+use crate::dev_fuse::FuseChannel;
+use crate::ioctl::{BackingMap, passthrough_close, passthrough_open};
 
 use std::mem::ManuallyDrop;
 use std::os::fd::{AsFd, AsRawFd, BorrowedFd, RawFd};
@@ -8,18 +8,18 @@ use std::os::fd::{AsFd, AsRawFd, BorrowedFd, RawFd};
 pub struct PassthroughFd<T: AsFd> {
     backing_id: u32,
     fd: T,
-    dev: Sender,
+    dev: FuseChannel,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct BackingId(pub(crate) u32);
 
 impl<T: AsFd> PassthroughFd<T> {
-    pub(crate) fn open(fd: T, dev: Sender) -> crate::Result<Self> {
+    pub(crate) fn open(fd: T, dev: &FuseChannel) -> crate::Result<Self> {
         let map = BackingMap {
             fd: fd.as_fd().as_raw_fd(),
             flags: 0,
-            padding: 0,
+            _unused: 0,
         };
 
         let res = unsafe { passthrough_open(dev.as_raw_fd(), &map) };
@@ -36,7 +36,7 @@ impl<T: AsFd> PassthroughFd<T> {
         Ok(Self {
             backing_id,
             fd,
-            dev,
+            dev: dev.clone(),
         })
     }
 
