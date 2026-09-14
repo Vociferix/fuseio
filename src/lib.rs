@@ -1,8 +1,6 @@
 mod async_arc;
-mod async_rc;
 mod buf;
 mod builder;
-mod channel;
 mod dev_fuse;
 mod error;
 mod fs;
@@ -28,13 +26,3 @@ pub use options::{MountOpt, ParseMountOptError};
 pub use passthrough::{BackingId, PassthroughFd};
 
 pub type Result<T> = std::result::Result<T, Error>;
-
-#[cfg(todo)]
-pub async fn mount<F, P, I>(fs: F, mountpoint: P, options: I) -> std::io::Result<MountHandle>
-where
-    F: Filesystem,
-    P: AsRef<std::path::Path>,
-    I: IntoIterator<Item = MountOpt>,
-{
-    Builder::new().options(options).mount(fs, mountpoint).await
-}

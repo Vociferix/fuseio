@@ -80,15 +80,6 @@ impl<M: Mount> Builder<M> {
         }
     }
 
-    #[cfg(todo)]
-    pub async fn mount<F, P>(self, fs: F, mountpoint: P) -> std::io::Result<crate::MountHandle>
-    where
-        F: crate::Filesystem,
-        P: AsRef<std::path::Path>,
-    {
-        crate::serve::mount(self, fs, mountpoint).await
-    }
-
     pub(crate) fn into_args(self) -> (M, Cow<'static, Path>, MountOptList) {
         struct Arg(Flags, MountOpt, Option<MountOpt>);
 
