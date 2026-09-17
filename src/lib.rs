@@ -1,4 +1,5 @@
 mod async_arc;
+mod async_rc;
 mod buf;
 mod builder;
 mod dev_fuse;

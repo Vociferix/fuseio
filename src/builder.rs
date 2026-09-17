@@ -16,6 +16,7 @@ pub struct Builder<M = DefaultMount> {
     subtype: Option<OsString>,
     max_read: Option<usize>,
     blksize: Option<usize>,
+    workers: usize,
 }
 
 bitflags::bitflags! {
@@ -54,13 +55,13 @@ pub(crate) const MAX_OPTS: usize = 19;
 pub(crate) type MountOptList = ArrayVec<MountOpt, MAX_OPTS>;
 
 impl Builder {
-    pub const fn new() -> Self {
+    pub fn new() -> Self {
         Self::with_mount_method(DefaultMount)
     }
 }
 
 impl<M: Mount> Builder<M> {
-    pub const fn with_mount_method(mount_method: M) -> Self {
+    pub fn with_mount_method(mount_method: M) -> Self {
         // SAFETY: On UNIX-like platforms, `Path` is just an arbitrary
         //         byte slice, and `str` is represented as a byte slice
         //         on all platforms. This crate only supports UNIX-like
@@ -77,10 +78,11 @@ impl<M: Mount> Builder<M> {
             subtype: None,
             max_read: None,
             blksize: None,
+            workers: std::thread::available_parallelism().map_or(1, std::num::NonZeroUsize::get),
         }
     }
 
-    pub(crate) fn into_args(self) -> (M, Cow<'static, Path>, MountOptList) {
+    pub(crate) fn into_args(self) -> (M, Cow<'static, Path>, MountOptList, usize) {
         struct Arg(Flags, MountOpt, Option<MountOpt>);
 
         const ARGS: [Arg; 15] = [
@@ -129,6 +131,7 @@ impl<M: Mount> Builder<M> {
             subtype,
             max_read,
             blksize,
+            workers,
         } = self;
 
         let mut opts = ArrayVec::new();
@@ -163,11 +166,27 @@ impl<M: Mount> Builder<M> {
             opts.push(MountOpt::BlockSize(blksize));
         }
 
-        (mount, dev, opts)
+        (mount, dev, opts, workers)
+    }
+
+    pub async fn mount<F>(
+        self,
+        fs: F,
+        mountpoint: impl AsRef<Path>,
+    ) -> std::io::Result<crate::handle::HandleIter<F::Fs, M::Unmount>>
+    where
+        F: crate::fs::MountFs,
+    {
+        crate::handle::multi_mount(self, fs, mountpoint.as_ref().into()).await
     }
 }
 
 impl<M> Builder<M> {
+    pub fn workers(mut self, num_workers: usize) -> Self {
+        self.workers = num_workers;
+        self
+    }
+
     pub fn mount_method<T>(self, mount_method: T) -> Builder<T>
     where
         T: Mount,
@@ -179,6 +198,7 @@ impl<M> Builder<M> {
             subtype,
             max_read,
             blksize,
+            workers,
             ..
         } = self;
 
@@ -190,6 +210,7 @@ impl<M> Builder<M> {
             subtype,
             max_read,
             blksize,
+            workers,
         }
     }
 

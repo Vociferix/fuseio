@@ -69,6 +69,37 @@ impl From<std::ops::RangeToInclusive<u64>> for FileRange {
     }
 }
 
+impl From<std::ops::RangeFull> for FileRange {
+    fn from(range: std::ops::RangeFull) -> Self {
+        let _ = range;
+        Self::Open(0..)
+    }
+}
+
+impl From<std::range::Range<u64>> for FileRange {
+    fn from(range: std::range::Range<u64>) -> Self {
+        Self::Closed(range.start..=range.end.saturating_sub(1))
+    }
+}
+
+impl From<std::range::RangeFrom<u64>> for FileRange {
+    fn from(range: std::range::RangeFrom<u64>) -> Self {
+        Self::Open(range.into())
+    }
+}
+
+impl From<std::range::RangeInclusive<u64>> for FileRange {
+    fn from(range: std::range::RangeInclusive<u64>) -> Self {
+        Self::Closed(range.into())
+    }
+}
+
+impl From<std::range::RangeToInclusive<u64>> for FileRange {
+    fn from(range: std::range::RangeToInclusive<u64>) -> Self {
+        Self::Closed(0..=range.last)
+    }
+}
+
 impl std::ops::RangeBounds<u64> for FileRange {
     fn start_bound(&self) -> std::ops::Bound<&u64> {
         match self {

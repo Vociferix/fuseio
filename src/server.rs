@@ -1,5 +1,9 @@
+use crate::async_rc::AsyncRc;
 use crate::buf::{Buf, BufPool};
 use crate::dev_fuse::FuseChannel;
+use crate::fs::{BindFs, Fs};
+use crate::handle::{Handle, Once};
+use crate::mount::Unmount;
 
 use compio::BufResult;
 use compio::runtime::JoinHandle;
@@ -7,60 +11,75 @@ use crossfire::{AsyncRx, MAsyncTx, mpsc::Array};
 
 use std::cell::RefCell;
 use std::collections::HashMap;
+use std::io::Result;
 use std::rc::Rc;
 use std::sync::Arc;
 
-pub struct Server {
+pub struct Server<F, U> {
     id: usize,
     dev: FuseChannel,
+    fs: F,
     buf_pool: BufPool,
     buf_size: usize,
     open_reqs: RefCell<HashMap<u64, JoinHandle<()>>>,
     mesh_rx: AsyncRx<Array<Message>>,
-    shared: Arc<SharedServer>,
+    mesh_tx: Arc<[MAsyncTx<Array<Message>>]>,
+    once: Option<Once<U>>,
 }
 
 pub(crate) struct SharedServer {
     mesh_tx: Vec<MAsyncTx<Array<Message>>>,
 }
 
-enum Message {
+pub(crate) enum Message {
     Shutdown,
     Interrupt(u64),
     Reply(u64, Vec<u8>),
 }
 
-impl Server {
-    async fn serve_requests(self: &Rc<Self>) {
-        while self.serve_one().await {}
+impl<F, U> Server<F, U> {
+    pub(crate) fn new<B>(h: Handle<B, U>) -> AsyncRc<Self>
+    where
+        B: BindFs<BoundFs = F>,
+        F: Fs,
+    {
+        todo!()
     }
 
-    async fn serve_one(self: &Rc<Self>) -> bool {
+    pub(crate) async fn serve_requests(this: &AsyncRc<Self>) {
+        while Self::serve_one(this).await {}
+    }
+
+    pub(crate) async fn unmount(this: AsyncRc<Self>) -> Result<()> {
+        todo!()
+    }
+
+    async fn serve_one(this: &AsyncRc<Self>) -> bool {
         match select_biased(
-            self.mesh_rx.recv(),
-            self.dev
-                .read(self.buf_pool.checkout_with_capacity(self.buf_size)),
+            this.mesh_rx.recv(),
+            this.dev
+                .read(this.buf_pool.checkout_with_capacity(this.buf_size)),
         )
         .await
         {
             either::Left(Ok(Message::Shutdown) | Err(_)) => return false,
             either::Left(Ok(Message::Interrupt(id))) => {
-                if let Some(task) = self.open_reqs.borrow_mut().remove(&id) {
+                if let Some(task) = this.open_reqs.borrow_mut().remove(&id) {
                     let _ = task.cancel();
                 }
             }
             either::Left(Ok(Message::Reply(id, data))) => {
-                self.handle_reply(id, data);
+                Self::handle_reply(this, id, data);
             }
             either::Right(BufResult(Ok(len), mut buf)) => {
                 unsafe {
                     buf.set_len(len);
                 }
 
-                return self.handle_req(buf);
+                return Self::handle_req(this, buf);
             }
             either::Right(BufResult(Err(err), _)) => {
-                self.handle_error(err);
+                Self::handle_error(this, err);
             }
         }
 
@@ -71,7 +90,7 @@ impl Server {
         todo!()
     }
 
-    fn handle_error(self: &Rc<Self>, err: std::io::Error) {
+    fn handle_error(this: &AsyncRc<Self>, err: std::io::Error) {
         todo!()
     }
 
@@ -82,7 +101,7 @@ impl Server {
     // (ENOSYS). Also translate ENOSYS returned for a non-`Replace` rename to
     // the same errno, since ENOSYS on RENAME2 makes Linux disable all flagged
     // renames for the mount.
-    fn handle_req(self: &Rc<Self>, buf: Buf) -> bool {
+    fn handle_req(this: &AsyncRc<Self>, buf: Buf) -> bool {
         todo!()
     }
 }

@@ -2,38 +2,55 @@ use crate::async_arc::AsyncArc;
 use crate::builder::MountOptList;
 use crate::dev_fuse::{DevFuse, FuseChannel};
 use crate::handshake::{Config, Init, handshake};
+use crate::server::{Message, Server};
 use crate::types::{ReplyInitFlags, Version};
 use crate::{
     BindFs, Builder, Fs, MountFs, MountOpt,
     mount::{Mount, Unmount},
 };
 
+use crossfire::{
+    AsyncRx, MAsyncTx,
+    mpsc::{Array, bounded_async},
+};
+
 use std::io::Result;
 use std::mem::ManuallyDrop;
 use std::os::fd::AsFd;
 use std::path::{Path, PathBuf};
+use std::sync::Arc;
 
 pub struct Handle<F, U> {
-    dev: DevFuse,
-    fs: F,
-    minor_ver: u32,
-    flags: ReplyInitFlags,
-    max_readahead: usize,
-    config: Config,
-    once: Option<Once<U>>,
+    pub(crate) id: usize,
+    pub(crate) dev: DevFuse,
+    pub(crate) fs: F,
+    pub(crate) minor_ver: u32,
+    pub(crate) flags: ReplyInitFlags,
+    pub(crate) max_readahead: usize,
+    pub(crate) mesh_rx: AsyncRx<Array<Message>>,
+    pub(crate) mesh_tx: Arc<[MAsyncTx<Array<Message>>]>,
+    pub(crate) config: Config,
+    pub(crate) once: Option<Once<U>>,
+}
+
+#[derive(Clone)]
+pub struct UnmountHandle {
+    mesh_tx: Arc<[MAsyncTx<Array<Message>>]>,
 }
 
 pub struct HandleIter<F, U: Unmount> {
-    devs: std::vec::IntoIter<DevFuse>,
+    id: usize,
+    devs: std::vec::IntoIter<(DevFuse, AsyncRx<Array<Message>>)>,
     fs: ManuallyDrop<F>,
     minor_ver: u32,
     flags: ReplyInitFlags,
     max_readahead: usize,
+    mesh_tx: Arc<[MAsyncTx<Array<Message>>]>,
     config: Config,
     once: Option<Once<U>>,
 }
 
-struct Once<U> {
+pub(crate) struct Once<U> {
     unmount: U,
     path: PathBuf,
     opts: MountOptList,
@@ -43,20 +60,19 @@ pub async fn multi_mount<M, F>(
     builder: Builder<M>,
     fs: F,
     mountpoint: PathBuf,
-    workers: usize,
 ) -> Result<HandleIter<F::Fs, M::Unmount>>
 where
     M: Mount,
     F: MountFs,
 {
+    let (mounter, dev, opts, workers) = builder.into_args();
+
     if workers == 0 {
         return Err(std::io::Error::new(
             std::io::ErrorKind::InvalidInput,
             "cannot mount with zero workers",
         ));
     }
-
-    let (mounter, dev, opts) = builder.into_args();
 
     let dev = AsyncArc::new(DevFuse::open(dev).await?);
 
@@ -83,6 +99,7 @@ where
     let dev = AsyncArc::unwrap(dev).await;
 
     let mut devs = Vec::with_capacity(workers);
+    let mut mesh_tx = Vec::with_capacity(workers);
     for _ in 1..workers {
         let dev = match dev.try_clone().await {
             Ok(dev) => dev,
@@ -93,16 +110,22 @@ where
                 return Err(err);
             }
         };
-        devs.push(dev);
+        let (tx, rx) = bounded_async(workers * 4);
+        devs.push((dev, rx));
+        mesh_tx.push(tx);
     }
-    devs.push(dev);
+    let (tx, rx) = bounded_async(workers * 4);
+    devs.push((dev, rx));
+    mesh_tx.push(tx);
 
     Ok(HandleIter {
+        id: 0,
         devs: devs.into_iter(),
         fs: ManuallyDrop::new(fs),
         minor_ver: ver.1,
         flags,
         max_readahead,
+        mesh_tx: mesh_tx.into(),
         config,
         once: Some(Once {
             unmount: unmounter,
@@ -110,6 +133,32 @@ where
             opts,
         }),
     })
+}
+
+impl<F, U> Handle<F, U>
+where
+    F: BindFs,
+    U: Unmount,
+{
+    pub async fn bind_and_serve(self) -> Result<()> {
+        let server = Server::new(self);
+        Server::serve_requests(&server).await;
+        Server::unmount(server).await
+    }
+
+    pub fn unmount_handle(&self) -> UnmountHandle {
+        UnmountHandle {
+            mesh_tx: self.mesh_tx.clone(),
+        }
+    }
+}
+
+impl UnmountHandle {
+    pub async fn unmount(&self) {
+        for tx in self.mesh_tx.iter() {
+            let _ = tx.send(Message::Shutdown).await;
+        }
+    }
 }
 
 impl<F, U> Iterator for HandleIter<F, U>
@@ -120,7 +169,10 @@ where
     type Item = Handle<F, U>;
 
     fn next(&mut self) -> Option<Self::Item> {
-        let dev = self.devs.next()?;
+        let id = self.id;
+        self.id += 1;
+
+        let (dev, rx) = self.devs.next()?;
 
         let fs = if self.devs.len() == 0 {
             unsafe { ManuallyDrop::take(&mut self.fs) }
@@ -129,11 +181,14 @@ where
         };
 
         Some(Handle {
+            id,
             dev,
             fs,
             minor_ver: self.minor_ver,
             flags: self.flags,
             max_readahead: self.max_readahead,
+            mesh_rx: rx,
+            mesh_tx: self.mesh_tx.clone(),
             config: self.config,
             once: self.once.take(),
         })
@@ -166,7 +221,7 @@ where
     U: Unmount,
 {
     fn drop(&mut self) {
-        if let Some(dev) = self.devs.next() {
+        if let Some((dev, _)) = self.devs.next() {
             unsafe {
                 ManuallyDrop::drop(&mut self.fs);
             }

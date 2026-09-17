@@ -1,3 +1,4 @@
+use crate::handshake::{Config, KernelConfig};
 use crate::types::PollFlags;
 use crate::{Error, IntoIoBuf, MountOpt, Result};
 
@@ -5,7 +6,6 @@ use futures_util::Stream;
 
 use std::marker::PhantomData;
 
-pub struct KernelConfig;
 pub struct LookupReq<'a>(&'a ());
 pub struct ForgetReq<'a>(&'a ());
 pub struct GetAttrsReq<'a>(&'a ());
@@ -54,7 +54,6 @@ pub struct XattrKeyBuf<T>(PhantomData<T>);
 pub struct IoctlBuf<T>(PhantomData<T>);
 pub struct DirPlusEntries<T>(PhantomData<T>);
 
-pub struct Config;
 pub struct Entry;
 pub struct Attrs;
 pub struct Opened;
