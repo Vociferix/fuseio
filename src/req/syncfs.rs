@@ -3,13 +3,13 @@ use crate::proto::request::SyncFs;
 use crate::types::Ino;
 
 #[derive(Debug)]
-pub struct SyncFsReq<'a> {
-    req: Req<'a>,
+pub struct SyncFsReq {
+    req: Req,
     syncfs: SyncFs,
 }
 
-impl<'a> SyncFsReq<'a> {
-    pub(crate) fn new(req: Req<'a>, syncfs: SyncFs) -> Self {
+impl SyncFsReq {
+    pub(crate) fn new(req: Req, syncfs: SyncFs) -> Self {
         Self { req, syncfs }
     }
 
@@ -18,8 +18,8 @@ impl<'a> SyncFsReq<'a> {
     }
 }
 
-impl<'a> std::ops::Deref for SyncFsReq<'a> {
-    type Target = Req<'a>;
+impl std::ops::Deref for SyncFsReq {
+    type Target = Req;
 
     fn deref(&self) -> &Self::Target {
         &self.req

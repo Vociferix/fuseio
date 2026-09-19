@@ -3,13 +3,13 @@ use crate::proto::request::TmpFile;
 use crate::types::{Ino, Mode, OFlag, OpenFlags};
 
 #[derive(Debug)]
-pub struct TmpFileReq<'a> {
-    req: Req<'a>,
+pub struct TmpFileReq {
+    req: Req,
     create: TmpFile,
 }
 
-impl<'a> TmpFileReq<'a> {
-    pub(crate) fn new(req: Req<'a>, create: TmpFile) -> Self {
+impl TmpFileReq {
+    pub(crate) fn new(req: Req, create: TmpFile) -> Self {
         Self { req, create }
     }
 
@@ -34,8 +34,8 @@ impl<'a> TmpFileReq<'a> {
     }
 }
 
-impl<'a> std::ops::Deref for TmpFileReq<'a> {
-    type Target = Req<'a>;
+impl std::ops::Deref for TmpFileReq {
+    type Target = Req;
 
     fn deref(&self) -> &Self::Target {
         &self.req

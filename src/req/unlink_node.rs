@@ -5,13 +5,13 @@ use crate::types::Ino;
 use std::ffi::OsStr;
 
 #[derive(Debug)]
-pub struct UnlinkNodeReq<'a> {
-    req: Req<'a>,
+pub struct UnlinkNodeReq {
+    req: Req,
     unlink: Unlink,
 }
 
-impl<'a> UnlinkNodeReq<'a> {
-    pub(crate) fn new(req: Req<'a>, unlink: Unlink) -> Self {
+impl UnlinkNodeReq {
+    pub(crate) fn new(req: Req, unlink: Unlink) -> Self {
         Self { req, unlink }
     }
 
@@ -24,8 +24,8 @@ impl<'a> UnlinkNodeReq<'a> {
     }
 }
 
-impl<'a> std::ops::Deref for UnlinkNodeReq<'a> {
-    type Target = Req<'a>;
+impl std::ops::Deref for UnlinkNodeReq {
+    type Target = Req;
 
     fn deref(&self) -> &Self::Target {
         &self.req

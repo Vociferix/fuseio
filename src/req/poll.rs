@@ -1,4 +1,5 @@
 use super::Req;
+use crate::context::Context;
 use crate::dev_fuse::FuseChannel;
 use crate::proto::{Cfg, notify::EncodeNotify, request::Poll};
 use crate::types::{FileHandle, Ino, PollFlags};
@@ -7,8 +8,8 @@ use std::cell::Cell;
 use std::rc::Rc;
 
 #[derive(Debug)]
-pub struct PollReq<'a> {
-    req: Req<'a>,
+pub struct PollReq {
+    req: Req,
     poll: Poll,
     handle_taken: Cell<bool>,
 }
@@ -16,12 +17,11 @@ pub struct PollReq<'a> {
 #[derive(Debug)]
 pub struct PollNotify {
     id: u64,
-    dev: Rc<FuseChannel>,
-    cfg: Cfg,
+    ctx: Context,
 }
 
-impl<'a> PollReq<'a> {
-    pub(crate) fn new(req: Req<'a>, poll: Poll) -> Self {
+impl PollReq {
+    pub(crate) fn new(req: Req, poll: Poll) -> Self {
         Self {
             req,
             poll,
@@ -49,8 +49,8 @@ impl<'a> PollReq<'a> {
     }
 }
 
-impl<'a> std::ops::Deref for PollReq<'a> {
-    type Target = Req<'a>;
+impl std::ops::Deref for PollReq {
+    type Target = Req;
 
     fn deref(&self) -> &Self::Target {
         &self.req
@@ -58,21 +58,18 @@ impl<'a> std::ops::Deref for PollReq<'a> {
 }
 
 impl PollNotify {
-    pub(crate) fn new(req: &PollReq<'_>, id: u64) -> Self {
+    pub(crate) fn new(req: &PollReq, id: u64) -> Self {
         Self {
             id,
-            dev: req.req.server.dev.clone(),
-            cfg: Cfg {
-                minor_ver: req.req.server.minor_ver,
-                flags: req.req.server.flags,
-            },
+            ctx: req.ctx.clone(),
         }
     }
 
     pub async fn notify(self) -> crate::Result<()> {
-        let Self { id, dev, cfg } = self;
+        let Self { id, ctx } = self;
 
-        dev.write_buf(crate::proto::notify::Poll::new(id).encode(cfg)?)
+        ctx.dev()
+            .write_buf(crate::proto::notify::Poll::new(id).encode(ctx.cfg())?)
             .await
             .0?;
 

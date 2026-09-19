@@ -3,13 +3,13 @@ use crate::proto::request::GetAttr;
 use crate::types::{FileHandle, Ino};
 
 #[derive(Debug)]
-pub struct GetAttrsReq<'a> {
-    req: Req<'a>,
+pub struct GetAttrsReq {
+    req: Req,
     get_attr: GetAttr,
 }
 
-impl<'a> GetAttrsReq<'a> {
-    pub(crate) fn new(req: Req<'a>, get_attr: GetAttr) -> Self {
+impl GetAttrsReq {
+    pub(crate) fn new(req: Req, get_attr: GetAttr) -> Self {
         Self { req, get_attr }
     }
 
@@ -22,8 +22,8 @@ impl<'a> GetAttrsReq<'a> {
     }
 }
 
-impl<'a> std::ops::Deref for GetAttrsReq<'a> {
-    type Target = Req<'a>;
+impl std::ops::Deref for GetAttrsReq {
+    type Target = Req;
 
     fn deref(&self) -> &Self::Target {
         &self.req

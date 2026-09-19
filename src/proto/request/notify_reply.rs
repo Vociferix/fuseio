@@ -1,5 +1,8 @@
 use super::{Cfg, HDR_LEN, Ino};
-use crate::{Buf, Error, Result};
+use crate::buf::{Buf, BufPool};
+use crate::{Error, Result};
+
+use aligned_vec::{AVec, ConstAlign};
 
 // NOTE: This is the response to a retrieve notification. It is
 //       possible that notification types added in the future
@@ -10,6 +13,12 @@ use crate::{Buf, Error, Result};
 pub struct NotifyReply {
     offset: u64,
     buf: Buf,
+}
+
+#[derive(Debug)]
+pub struct SharedNotifyReply {
+    offset: u64,
+    buf: AVec<u8, ConstAlign<{ crate::buf::ALIGN }>>,
 }
 
 #[repr(C)]
@@ -31,6 +40,13 @@ impl NotifyReply {
 
     pub fn data(&self) -> &[u8] {
         &self.buf[DATA_OFFSET..]
+    }
+
+    pub(crate) fn share(self) -> SharedNotifyReply {
+        SharedNotifyReply {
+            offset: self.offset,
+            buf: self.buf.steal(),
+        }
     }
 }
 
@@ -58,5 +74,14 @@ impl NotifyReply {
             offset: raw.offset,
             buf,
         })
+    }
+}
+
+impl SharedNotifyReply {
+    pub fn bind(self, pool: &BufPool) -> NotifyReply {
+        NotifyReply {
+            offset: self.offset,
+            buf: Buf::from_avec(self.buf, pool.clone()),
+        }
     }
 }

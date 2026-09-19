@@ -26,7 +26,7 @@ pub mod types {
 
     pub use crate::passthrough::{BackingId, PassthroughFd};
 
-    pub use crate::req::{CacheData, Notify};
+    pub use crate::context::{CacheData, Context};
 
     pub use futures_util::Stream;
 }
@@ -42,129 +42,123 @@ pub trait Fs: Sized + 'static {
         let _ = self;
     }
 
-    async fn lookup(&self, req: req::LookupReq<'_>) -> Result<types::Entry> {
+    async fn lookup(&self, req: req::LookupReq) -> Result<types::Entry> {
         let _ = (self, req);
         Err(Error::ENOSYS)
     }
 
-    async fn forget(&self, req: req::ForgetReq<'_>) {
+    async fn forget(&self, req: req::ForgetReq) {
         let _ = (self, req);
     }
 
-    async fn get_attrs(&self, req: req::GetAttrsReq<'_>) -> Result<types::Attrs> {
-        let _ = (self, req);
-        Err(Error::ENOSYS)
-    }
-
-    async fn set_attrs(&self, req: req::SetAttrsReq<'_>) -> Result<types::Attrs> {
+    async fn get_attrs(&self, req: req::GetAttrsReq) -> Result<types::Attrs> {
         let _ = (self, req);
         Err(Error::ENOSYS)
     }
 
-    async fn read_link(
-        &self,
-        req: req::ReadLinkReq<'_>,
-    ) -> Result<types::ReadLinkBuf<impl IntoIoBuf>> {
+    async fn set_attrs(&self, req: req::SetAttrsReq) -> Result<types::Attrs> {
+        let _ = (self, req);
+        Err(Error::ENOSYS)
+    }
+
+    async fn read_link(&self, req: req::ReadLinkReq) -> Result<types::ReadLinkBuf<impl IntoIoBuf>> {
         let _ = (self, req);
         Err::<types::ReadLinkBuf<[u8; 0]>, _>(Error::ENOSYS)
     }
 
-    async fn make_node(&self, req: req::MakeNodeReq<'_>) -> Result<types::Entry> {
+    async fn make_node(&self, req: req::MakeNodeReq) -> Result<types::Entry> {
         let _ = (self, req);
         Err(Error::ENOSYS)
     }
 
-    async fn unlink_node(&self, req: req::UnlinkNodeReq<'_>) -> Result<()> {
+    async fn unlink_node(&self, req: req::UnlinkNodeReq) -> Result<()> {
         let _ = (self, req);
         Err(Error::ENOSYS)
     }
 
-    async fn make_dir(&self, req: req::MakeDirReq<'_>) -> Result<types::Entry> {
+    async fn make_dir(&self, req: req::MakeDirReq) -> Result<types::Entry> {
         let _ = (self, req);
         Err(Error::ENOSYS)
     }
 
-    async fn remove_dir(&self, req: req::RemoveDirReq<'_>) -> Result<()> {
+    async fn remove_dir(&self, req: req::RemoveDirReq) -> Result<()> {
         let _ = (self, req);
         Err(Error::ENOSYS)
     }
 
-    async fn symlink(&self, req: req::SymlinkReq<'_>) -> Result<types::Entry> {
+    async fn symlink(&self, req: req::SymlinkReq) -> Result<types::Entry> {
         let _ = (self, req);
         Err(Error::ENOSYS)
     }
 
-    async fn rename(&self, req: req::RenameReq<'_>) -> Result<()> {
+    async fn rename(&self, req: req::RenameReq) -> Result<()> {
         let _ = (self, req);
         Err(Error::ENOSYS)
     }
 
-    async fn link(&self, req: req::LinkReq<'_>) -> Result<types::Entry> {
+    async fn link(&self, req: req::LinkReq) -> Result<types::Entry> {
         let _ = (self, req);
         Err(Error::ENOSYS)
     }
 
-    async fn open(&self, req: req::OpenReq<'_>) -> Result<types::Opened> {
+    async fn open(&self, req: req::OpenReq) -> Result<types::Opened> {
         let _ = (self, req);
         Err(Error::ENOSYS)
     }
 
-    async fn read(&self, req: req::ReadReq<'_>) -> Result<impl IntoIoBuf> {
+    async fn read(&self, req: req::ReadReq) -> Result<impl IntoIoBuf> {
         let _ = (self, req);
         Err::<[u8; 0], _>(Error::ENOSYS)
     }
 
-    async fn write(&self, req: req::WriteReq<'_>) -> Result<usize> {
+    async fn write(&self, req: req::WriteReq) -> Result<usize> {
         let _ = (self, req);
         Err(Error::ENOSYS)
     }
 
-    async fn flush(&self, req: req::FlushReq<'_>) -> Result<()> {
+    async fn flush(&self, req: req::FlushReq) -> Result<()> {
         let _ = (self, req);
         Err(Error::ENOSYS)
     }
 
-    async fn close(&self, req: req::CloseReq<'_>) -> Result<()> {
+    async fn close(&self, req: req::CloseReq) -> Result<()> {
         let _ = (self, req);
         Err(Error::ENOSYS)
     }
 
-    async fn fsync(&self, req: req::FsyncReq<'_>) -> Result<()> {
+    async fn fsync(&self, req: req::FsyncReq) -> Result<()> {
         let _ = (self, req);
         Err(Error::ENOSYS)
     }
 
-    async fn read_dir(
-        &self,
-        req: req::ReadDirReq<'_>,
-    ) -> Result<types::DirEntries<impl IntoIoBuf>> {
+    async fn read_dir(&self, req: req::ReadDirReq) -> Result<types::DirEntries<impl IntoIoBuf>> {
         let _ = (self, req);
         Err::<types::DirEntries<[u8; 0]>, _>(Error::ENOSYS)
     }
 
-    async fn statfs(&self, req: req::StatFsReq<'_>) -> Result<types::FsAttrs> {
+    async fn statfs(&self, req: req::StatFsReq) -> Result<types::FsAttrs> {
         let _ = (self, req);
         Err(Error::ENOSYS)
     }
 
-    async fn get_xattr_len(&self, req: req::GetXattrLenReq<'_>) -> Result<usize> {
+    async fn get_xattr_len(&self, req: req::GetXattrLenReq) -> Result<usize> {
         let _ = (self, req);
         Err(Error::ENOSYS)
     }
 
-    async fn get_xattr(&self, req: req::GetXattrReq<'_>) -> Result<impl IntoIoBuf> {
+    async fn get_xattr(&self, req: req::GetXattrReq) -> Result<impl IntoIoBuf> {
         let _ = (self, req);
         Err::<[u8; 0], _>(Error::ENOSYS)
     }
 
-    async fn set_xattr(&self, req: req::SetXattrReq<'_>) -> Result<()> {
+    async fn set_xattr(&self, req: req::SetXattrReq) -> Result<()> {
         let _ = (self, req);
         Err(Error::ENOSYS)
     }
 
     async fn xattr_keys_len(
         &self,
-        req: req::XattrKeysLenReq<'_>,
+        req: req::XattrKeysLenReq,
     ) -> Result<impl types::Stream<Item = usize>> {
         let _ = (self, req);
         Err::<futures_util::stream::Empty<usize>, _>(Error::ENOSYS)
@@ -172,101 +166,101 @@ pub trait Fs: Sized + 'static {
 
     async fn xattr_keys(
         &self,
-        req: req::XattrKeysReq<'_>,
+        req: req::XattrKeysReq,
     ) -> Result<types::XattrKeyBuf<impl IntoIoBuf>> {
         let _ = (self, req);
         Err::<types::XattrKeyBuf<[u8; 0]>, _>(Error::ENOSYS)
     }
 
-    async fn remove_xattr(&self, req: req::RemoveXattrReq<'_>) -> Result<()> {
+    async fn remove_xattr(&self, req: req::RemoveXattrReq) -> Result<()> {
         let _ = (self, req);
         Err(Error::ENOSYS)
     }
 
-    async fn access(&self, req: req::AccessReq<'_>) -> Result<()> {
+    async fn access(&self, req: req::AccessReq) -> Result<()> {
         let _ = (self, req);
         Err(Error::ENOSYS)
     }
 
-    async fn create_file(&self, req: req::CreateFileReq<'_>) -> Result<types::Created> {
+    async fn create_file(&self, req: req::CreateFileReq) -> Result<types::Created> {
         let _ = (self, req);
         Err(Error::ENOSYS)
     }
 
-    async fn test_posix_lock(&self, req: req::TestPosixLockReq<'_>) -> Result<types::PosixLock> {
+    async fn test_posix_lock(&self, req: req::TestPosixLockReq) -> Result<types::PosixLock> {
         let _ = (self, req);
         Err(Error::ENOSYS)
     }
 
-    async fn try_posix_lock(&self, req: req::PosixLockReq<'_>) -> Result<()> {
+    async fn try_posix_lock(&self, req: req::PosixLockReq) -> Result<()> {
         let _ = (self, req);
         Err(Error::ENOSYS)
     }
 
-    async fn posix_lock(&self, req: req::PosixLockReq<'_>) -> Result<()> {
+    async fn posix_lock(&self, req: req::PosixLockReq) -> Result<()> {
         let _ = (self, req);
         Err(Error::ENOSYS)
     }
 
-    async fn map_block(&self, req: req::MapBlockReq<'_>) -> Result<u64> {
+    async fn map_block(&self, req: req::MapBlockReq) -> Result<u64> {
         let _ = (self, req);
         Err(Error::ENOSYS)
     }
 
-    async fn ioctl(&self, req: req::IoctlReq<'_>) -> Result<types::IoctlBuf<impl IntoIoBuf>> {
+    async fn ioctl(&self, req: req::IoctlReq) -> Result<types::IoctlBuf<impl IntoIoBuf>> {
         let _ = (self, req);
         Err::<types::IoctlBuf<[u8; 0]>, _>(Error::ENOSYS)
     }
 
-    async fn poll(&self, req: req::PollReq<'_>) -> Result<PollFlags> {
+    async fn poll(&self, req: req::PollReq) -> Result<PollFlags> {
         let _ = (self, req);
         Err(Error::ENOSYS)
     }
 
-    async fn try_flock(&self, req: req::FlockReq<'_>) -> Result<()> {
+    async fn try_flock(&self, req: req::FlockReq) -> Result<()> {
         let _ = (self, req);
         Err(Error::ENOSYS)
     }
 
-    async fn flock(&self, req: req::FlockReq<'_>) -> Result<()> {
+    async fn flock(&self, req: req::FlockReq) -> Result<()> {
         let _ = (self, req);
         Err(Error::ENOSYS)
     }
 
-    async fn fallocate(&self, req: req::FallocateReq<'_>) -> Result<()> {
+    async fn fallocate(&self, req: req::FallocateReq) -> Result<()> {
         let _ = (self, req);
         Err(Error::ENOSYS)
     }
 
     async fn read_dir_plus(
         &self,
-        req: req::ReadDirReq<'_>,
+        req: req::ReadDirReq,
     ) -> Result<types::DirPlusEntries<impl IntoIoBuf>> {
         let _ = (self, req);
         Err::<types::DirPlusEntries<[u8; 0]>, _>(Error::ENOSYS)
     }
 
-    async fn copy_file_range(&self, req: req::CopyFileRangeReq<'_>) -> Result<u64> {
+    async fn copy_file_range(&self, req: req::CopyFileRangeReq) -> Result<u64> {
         let _ = (self, req);
         Err(Error::ENOSYS)
     }
 
-    async fn lseek(&self, req: req::LseekReq<'_>) -> Result<u64> {
+    async fn lseek(&self, req: req::LseekReq) -> Result<u64> {
         let _ = (self, req);
         Err(Error::ENOSYS)
     }
 
-    async fn tmpfile(&self, req: req::TmpFileReq<'_>) -> Result<types::Created> {
+    async fn tmpfile(&self, req: req::TmpFileReq) -> Result<types::Created> {
         let _ = (self, req);
         Err(Error::ENOSYS)
     }
 
-    async fn statx(&self, req: req::StatXReq<'_>) -> Result<types::StatX> {
+    async fn statx(&self, req: req::StatXReq) -> Result<types::StatX> {
         let _ = (self, req);
         Err(Error::ENOSYS)
     }
 
-    async fn syncfs(&self, req: req::SyncFsReq<'_>) -> Result<()> {
+    async fn syncfs(&self, req: req::SyncFsReq) -> Result<()> {
         let _ = (self, req);
         Err(Error::ENOSYS)
     }

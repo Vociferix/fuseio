@@ -3,13 +3,13 @@ use crate::proto::request::Read;
 use crate::types::{FileHandle, Ino, LockOwner, OFlag};
 
 #[derive(Debug)]
-pub struct ReadReq<'a> {
-    req: Req<'a>,
+pub struct ReadReq {
+    req: Req,
     read: Read,
 }
 
-impl<'a> ReadReq<'a> {
-    pub(crate) fn new(req: Req<'a>, read: Read) -> Self {
+impl ReadReq {
+    pub(crate) fn new(req: Req, read: Read) -> Self {
         Self { req, read }
     }
 
@@ -38,8 +38,8 @@ impl<'a> ReadReq<'a> {
     }
 }
 
-impl<'a> std::ops::Deref for ReadReq<'a> {
-    type Target = Req<'a>;
+impl std::ops::Deref for ReadReq {
+    type Target = Req;
 
     fn deref(&self) -> &Self::Target {
         &self.req

@@ -3,13 +3,13 @@ use crate::proto::request::ListXattr;
 use crate::types::Ino;
 
 #[derive(Debug)]
-pub struct XattrKeysLenReq<'a> {
-    req: Req<'a>,
+pub struct XattrKeysLenReq {
+    req: Req,
     listxattr: ListXattr,
 }
 
-impl<'a> XattrKeysLenReq<'a> {
-    pub(crate) fn new(req: Req<'a>, listxattr: ListXattr) -> Self {
+impl XattrKeysLenReq {
+    pub(crate) fn new(req: Req, listxattr: ListXattr) -> Self {
         Self { req, listxattr }
     }
 
@@ -18,8 +18,8 @@ impl<'a> XattrKeysLenReq<'a> {
     }
 }
 
-impl<'a> std::ops::Deref for XattrKeysLenReq<'a> {
-    type Target = Req<'a>;
+impl std::ops::Deref for XattrKeysLenReq {
+    type Target = Req;
 
     fn deref(&self) -> &Self::Target {
         &self.req

@@ -3,13 +3,13 @@ use crate::proto::request::StatX;
 use crate::types::{FileHandle, Ino, StatXMask, StatXSync};
 
 #[derive(Debug)]
-pub struct StatXReq<'a> {
-    req: Req<'a>,
+pub struct StatXReq {
+    req: Req,
     statx: StatX,
 }
 
-impl<'a> StatXReq<'a> {
-    pub(crate) fn new(req: Req<'a>, statx: StatX) -> Self {
+impl StatXReq {
+    pub(crate) fn new(req: Req, statx: StatX) -> Self {
         Self { req, statx }
     }
 
@@ -30,8 +30,8 @@ impl<'a> StatXReq<'a> {
     }
 }
 
-impl<'a> std::ops::Deref for StatXReq<'a> {
-    type Target = Req<'a>;
+impl std::ops::Deref for StatXReq {
+    type Target = Req;
 
     fn deref(&self) -> &Self::Target {
         &self.req

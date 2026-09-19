@@ -3,13 +3,13 @@ use crate::proto::request::Flush;
 use crate::types::{FileHandle, Ino, LockOwner};
 
 #[derive(Debug)]
-pub struct FlushReq<'a> {
-    req: Req<'a>,
+pub struct FlushReq {
+    req: Req,
     flush: Flush,
 }
 
-impl<'a> FlushReq<'a> {
-    pub(crate) fn new(req: Req<'a>, flush: Flush) -> Self {
+impl FlushReq {
+    pub(crate) fn new(req: Req, flush: Flush) -> Self {
         Self { req, flush }
     }
 
@@ -26,8 +26,8 @@ impl<'a> FlushReq<'a> {
     }
 }
 
-impl<'a> std::ops::Deref for FlushReq<'a> {
-    type Target = Req<'a>;
+impl std::ops::Deref for FlushReq {
+    type Target = Req;
 
     fn deref(&self) -> &Self::Target {
         &self.req

@@ -5,13 +5,13 @@ use crate::types::{Ino, XattrMode};
 use std::ffi::OsStr;
 
 #[derive(Debug)]
-pub struct SetXattrReq<'a> {
-    req: Req<'a>,
+pub struct SetXattrReq {
+    req: Req,
     setxattr: SetXattr,
 }
 
-impl<'a> SetXattrReq<'a> {
-    pub(crate) fn new(req: Req<'a>, setxattr: SetXattr) -> Self {
+impl SetXattrReq {
+    pub(crate) fn new(req: Req, setxattr: SetXattr) -> Self {
         Self { req, setxattr }
     }
 
@@ -36,8 +36,8 @@ impl<'a> SetXattrReq<'a> {
     }
 }
 
-impl<'a> std::ops::Deref for SetXattrReq<'a> {
-    type Target = Req<'a>;
+impl std::ops::Deref for SetXattrReq {
+    type Target = Req;
 
     fn deref(&self) -> &Self::Target {
         &self.req

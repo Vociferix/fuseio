@@ -1,18 +1,10 @@
 use crate::Result;
 use crate::buf::{BufPool, IntoIoBuf};
-use crate::dev_fuse::FuseChannel;
+use crate::context::{CacheData, Context};
 use crate::passthrough::PassthroughFd;
-use crate::proto::Cfg;
-use crate::proto::notify::{
-    Delete, EncodeNotify, ExpireEntry, IncrementEpoch, InvalEntry, InvalInode, Retrieve, Store,
-};
-use crate::proto::request::NotifyReply;
-use crate::server::{ReplyState, ServerInner};
 use crate::types::{FileRange, Gid, Ino, Pid, Request, Uid, Version};
 
 use std::ffi::OsStr;
-use std::os::unix::ffi::OsStrExt;
-use std::rc::Rc;
 
 mod access;
 mod close;
@@ -96,162 +88,84 @@ pub use write::WriteReq;
 pub use xattr_keys::XattrKeysReq;
 pub use xattr_keys_len::XattrKeysLenReq;
 
-#[derive(Clone, Copy)]
-pub struct Req<'a> {
-    server: &'a ServerInner,
+#[derive(Clone)]
+pub struct Req {
+    ctx: Context,
     req: Request,
 }
 
-#[derive(Clone)]
-pub struct Notify {
-    id: usize,
-    dev: Rc<FuseChannel>,
-    cfg: Cfg,
-    pool: BufPool,
-    replies: Rc<ReplyState>,
-}
-
-#[derive(Debug, Clone)]
-pub struct CacheData {
-    reply: NotifyReply,
-}
-
-trait NotifyOps {
-    fn id(&self) -> usize;
-
-    fn dev(&self) -> &FuseChannel;
-
-    fn cfg(&self) -> Cfg;
-
-    fn pool(&self) -> &BufPool;
-
-    fn replies(&self) -> &ReplyState;
-
-    async fn invalidate_inode(&self, ino: Ino) -> Result<()> {
-        self.dev()
-            .write_buf(InvalInode::new(ino).encode(self.cfg())?)
-            .await
-            .0?;
-        Ok(())
-    }
-
-    async fn invalidate_inode_range<R>(&self, ino: Ino, range: R) -> Result<()>
-    where
-        R: Into<FileRange>,
-    {
-        self.dev()
-            .write_buf(InvalInode::new(ino).range(range).encode(self.cfg())?)
-            .await
-            .0?;
-        Ok(())
-    }
-
-    async fn delete_inode<N>(&self, parent: Ino, child: Ino, name: N) -> Result<()>
-    where
-        N: AsRef<OsStr>,
-    {
-        let name = name.as_ref().as_bytes();
-        let mut name_buf = self.pool().checkout_with_capacity(name.len());
-        name_buf.extend_from_slice(name);
-
-        self.dev()
-            .write_buf(Delete::new(parent, child, name_buf).encode(self.cfg())?)
-            .await
-            .0?;
-        Ok(())
-    }
-
-    async fn invalidate_entry<N>(&self, parent: Ino, name: N) -> Result<()>
-    where
-        N: AsRef<OsStr>,
-    {
-        let name = name.as_ref().as_bytes();
-        let mut name_buf = self.pool().checkout_with_capacity(name.len());
-        name_buf.extend_from_slice(name);
-
-        self.dev()
-            .write_buf(InvalEntry::new(parent, name_buf).encode(self.cfg())?)
-            .await
-            .0?;
-        Ok(())
-    }
-
-    async fn expire_entry<N>(&self, parent: Ino, name: N) -> Result<()>
-    where
-        N: AsRef<OsStr>,
-    {
-        let name = name.as_ref().as_bytes();
-        let mut name_buf = self.pool().checkout_with_capacity(name.len());
-        name_buf.extend_from_slice(name);
-
-        self.dev()
-            .write_buf(ExpireEntry::new(parent, name_buf).encode(self.cfg())?)
-            .await
-            .0?;
-        Ok(())
-    }
-
-    async fn increment_epoch(&self) -> Result<()> {
-        self.dev()
-            .write_buf(IncrementEpoch::new().encode(self.cfg())?)
-            .await
-            .0?;
-        Ok(())
-    }
-
-    async fn set_cache<B>(&self, ino: Ino, offset: u64, data: B) -> Result<()>
-    where
-        B: IntoIoBuf,
-    {
-        self.dev()
-            .write_buf(Store::new(ino, offset, data).encode(self.cfg())?)
-            .await
-            .0?;
-        Ok(())
-    }
-
-    async fn get_cache(&self, ino: Ino, offset: u64, len: usize) -> Result<CacheData> {
-        let (id, rx) = self.replies().channel();
-
-        let id = ((self.id() as u64) << 32) | (id as u64);
-
-        let res = self
-            .dev()
-            .write_buf(Retrieve::new(id, ino, offset, len).encode(self.cfg())?)
-            .await
-            .0;
-
-        if let Err(err) = res {
-            self.replies().pending.borrow_mut().remove(&(id as u32));
-            return Err(err.into());
+impl Req {
+    pub(crate) fn new<F, U>(server: &crate::server::Server<F, U>, req: Request) -> Self {
+        Self {
+            ctx: Context::new(server.inner.clone()),
+            req,
         }
-
-        let Some(reply) = rx.await else {
-            return Err(crate::Error::EIO);
-        };
-
-        Ok(CacheData::new(reply))
     }
-}
 
-impl<'a> Req<'a> {
-    pub(crate) fn new<F, U>(server: &'a crate::server::Server<F, U>, req: Request) -> Self {
-        Self { server, req }
+    pub fn context(&self) -> &Context {
+        &self.ctx
+    }
+
+    pub fn proto_version(&self) -> Version {
+        self.ctx.proto_version()
     }
 
     pub fn open_passthrough<T>(&self, fd: T) -> Result<PassthroughFd<T>>
     where
         T: std::os::fd::AsFd,
     {
-        PassthroughFd::open(fd, &self.server.dev)
+        self.ctx.open_passthrough(fd)
     }
 
-    pub fn buffer_pool(&self) -> &'a BufPool {
-        &self.server.buf_pool
+    pub fn buffer_pool(&self) -> &BufPool {
+        self.ctx.buffer_pool()
     }
 
-    pub fn version(&self) -> Version {
-        Version(crate::handshake::MAJOR_VER, self.server.minor_ver)
+    pub async fn invalidate_inode(&self, ino: Ino) -> Result<()> {
+        self.ctx.invalidate_inode(ino).await
+    }
+
+    pub async fn invalidate_inode_range<R>(&self, ino: Ino, range: R) -> Result<()>
+    where
+        R: Into<FileRange>,
+    {
+        self.ctx.invalidate_inode_range(ino, range).await
+    }
+
+    pub async fn delete_inode<N>(&self, parent: Ino, child: Ino, name: N) -> Result<()>
+    where
+        N: AsRef<OsStr>,
+    {
+        self.ctx.delete_inode(parent, child, name).await
+    }
+
+    pub async fn invalidate_entry<N>(&self, parent: Ino, name: N) -> Result<()>
+    where
+        N: AsRef<OsStr>,
+    {
+        self.ctx.invalidate_entry(parent, name).await
+    }
+
+    pub async fn expire_entry<N>(&self, parent: Ino, name: N) -> Result<()>
+    where
+        N: AsRef<OsStr>,
+    {
+        self.ctx.expire_entry(parent, name).await
+    }
+
+    pub async fn increment_epoch(&self) -> Result<()> {
+        self.ctx.increment_epoch().await
+    }
+
+    pub async fn set_cache<B>(&self, ino: Ino, offset: u64, data: B) -> Result<()>
+    where
+        B: IntoIoBuf,
+    {
+        self.ctx.set_cache(ino, offset, data).await
+    }
+
+    pub async fn get_cache(&self, ino: Ino, offset: u64, len: usize) -> Result<CacheData> {
+        self.ctx.get_cache(ino, offset, len).await
     }
 
     pub fn id(&self) -> u64 {
@@ -269,183 +183,10 @@ impl<'a> Req<'a> {
     pub fn pid(&self) -> Pid {
         self.req.pid()
     }
-
-    pub fn notify_handle(&self) -> Notify {
-        Notify {
-            id: self.server.id,
-            dev: self.server.dev.clone(),
-            cfg: self.cfg(),
-            pool: self.buffer_pool().clone(),
-            replies: self.server.replies.clone(),
-        }
-    }
-
-    pub async fn invalidate_inode(&self, ino: Ino) -> Result<()> {
-        NotifyOps::invalidate_inode(self, ino).await
-    }
-
-    pub async fn invalidate_inode_range<R>(&self, ino: Ino, range: R) -> Result<()>
-    where
-        R: Into<FileRange>,
-    {
-        NotifyOps::invalidate_inode_range(self, ino, range).await
-    }
-
-    pub async fn delete_inode<N>(&self, parent: Ino, child: Ino, name: N) -> Result<()>
-    where
-        N: AsRef<OsStr>,
-    {
-        NotifyOps::delete_inode(self, parent, child, name).await
-    }
-
-    pub async fn invalidate_entry<N>(&self, parent: Ino, name: N) -> Result<()>
-    where
-        N: AsRef<OsStr>,
-    {
-        NotifyOps::invalidate_entry(self, parent, name).await
-    }
-
-    pub async fn expire_entry<N>(&self, parent: Ino, name: N) -> Result<()>
-    where
-        N: AsRef<OsStr>,
-    {
-        NotifyOps::expire_entry(self, parent, name).await
-    }
-
-    pub async fn increment_epoch(&self) -> Result<()> {
-        NotifyOps::increment_epoch(self).await
-    }
-
-    pub async fn set_cache<B>(&self, ino: Ino, offset: u64, data: B) -> Result<()>
-    where
-        B: IntoIoBuf,
-    {
-        NotifyOps::set_cache(self, ino, offset, data).await
-    }
-
-    pub async fn get_cache(&self, ino: Ino, offset: u64, len: usize) -> Result<CacheData> {
-        NotifyOps::get_cache(self, ino, offset, len).await
-    }
 }
 
-impl std::fmt::Debug for Req<'_> {
+impl std::fmt::Debug for Req {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         std::fmt::Debug::fmt(&self.req, f)
-    }
-}
-
-impl NotifyOps for Req<'_> {
-    fn id(&self) -> usize {
-        self.server.id
-    }
-
-    fn dev(&self) -> &FuseChannel {
-        &self.server.dev
-    }
-
-    fn cfg(&self) -> Cfg {
-        Cfg {
-            minor_ver: self.server.minor_ver,
-            flags: self.server.flags,
-        }
-    }
-
-    fn pool(&self) -> &BufPool {
-        &self.server.buf_pool
-    }
-
-    fn replies(&self) -> &ReplyState {
-        &self.server.replies
-    }
-}
-
-impl Notify {
-    pub async fn invalidate_inode(&self, ino: Ino) -> Result<()> {
-        NotifyOps::invalidate_inode(self, ino).await
-    }
-
-    pub async fn invalidate_inode_range<R>(&self, ino: Ino, range: R) -> Result<()>
-    where
-        R: Into<FileRange>,
-    {
-        NotifyOps::invalidate_inode_range(self, ino, range).await
-    }
-
-    pub async fn delete_inode<N>(&self, parent: Ino, child: Ino, name: N) -> Result<()>
-    where
-        N: AsRef<OsStr>,
-    {
-        NotifyOps::delete_inode(self, parent, child, name).await
-    }
-
-    pub async fn invalidate_entry<N>(&self, parent: Ino, name: N) -> Result<()>
-    where
-        N: AsRef<OsStr>,
-    {
-        NotifyOps::invalidate_entry(self, parent, name).await
-    }
-
-    pub async fn expire_entry<N>(&self, parent: Ino, name: N) -> Result<()>
-    where
-        N: AsRef<OsStr>,
-    {
-        NotifyOps::expire_entry(self, parent, name).await
-    }
-
-    pub async fn increment_epoch(&self) -> Result<()> {
-        NotifyOps::increment_epoch(self).await
-    }
-
-    pub async fn set_cache<B>(&self, ino: Ino, offset: u64, data: B) -> Result<()>
-    where
-        B: IntoIoBuf,
-    {
-        NotifyOps::set_cache(self, ino, offset, data).await
-    }
-
-    pub async fn get_cache(&self, ino: Ino, offset: u64, len: usize) -> Result<CacheData> {
-        NotifyOps::get_cache(self, ino, offset, len).await
-    }
-}
-
-impl std::fmt::Debug for Notify {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.debug_struct("Notify").finish()
-    }
-}
-
-impl NotifyOps for Notify {
-    fn id(&self) -> usize {
-        self.id
-    }
-
-    fn dev(&self) -> &FuseChannel {
-        &self.dev
-    }
-
-    fn cfg(&self) -> Cfg {
-        self.cfg
-    }
-
-    fn pool(&self) -> &BufPool {
-        &self.pool
-    }
-
-    fn replies(&self) -> &ReplyState {
-        &self.replies
-    }
-}
-
-impl CacheData {
-    pub(crate) fn new(reply: NotifyReply) -> Self {
-        Self { reply }
-    }
-
-    pub fn offset(&self) -> u64 {
-        self.reply.offset()
-    }
-
-    pub fn data(&self) -> &[u8] {
-        self.reply.data()
     }
 }

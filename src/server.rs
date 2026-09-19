@@ -4,10 +4,9 @@ use crate::dev_fuse::FuseChannel;
 use crate::fs::{BindFs, Fs};
 use crate::handle::{Handle, Once};
 use crate::mount::Unmount;
-use crate::proto::request::{AnyRequest, Body, NotifyReply};
+use crate::proto::request::{AnyRequest, Body, NotifyReply, SharedNotifyReply};
 use crate::types::ReplyInitFlags;
 
-use aligned_vec::{AVec, ConstAlign};
 use compio::BufResult;
 use compio::runtime::JoinHandle;
 use crossfire::{AsyncRx, MAsyncTx, mpsc::Array};
@@ -20,20 +19,20 @@ use std::rc::Rc;
 use std::sync::Arc;
 
 pub struct Server<F, U> {
-    pub inner: ServerInner,
+    pub inner: Rc<ServerInner>,
     pub fs: F,
     pub once: Option<Once<U>>,
 }
 
 pub struct ServerInner {
     pub id: usize,
-    pub dev: Rc<FuseChannel>,
+    pub dev: FuseChannel,
     pub minor_ver: u32,
     pub flags: ReplyInitFlags,
     pub buf_pool: BufPool,
     pub buf_size: usize,
     pub open_reqs: RefCell<HashMap<u64, JoinHandle<()>>>,
-    pub replies: Rc<ReplyState>,
+    pub replies: ReplyState,
     pub mesh_rx: AsyncRx<Array<Message>>,
     pub mesh_tx: Arc<[MAsyncTx<Array<Message>>]>,
 }
@@ -46,7 +45,7 @@ pub struct ReplyState {
 pub(crate) enum Message {
     Shutdown,
     Interrupt(u64),
-    Reply(u64, AVec<u8, ConstAlign<8>>),
+    Reply(u32, SharedNotifyReply),
 }
 
 impl<F, U> std::ops::Deref for Server<F, U> {
@@ -68,21 +67,21 @@ where
         F: Fs,
     {
         Ok(AsyncRc::new(Self {
-            inner: ServerInner {
+            inner: Rc::new(ServerInner {
                 id: h.id,
-                dev: Rc::new(h.dev.bind()?),
+                dev: h.dev.bind()?,
                 minor_ver: h.minor_ver,
                 flags: h.flags,
                 buf_pool: BufPool::new(),
                 buf_size: crate::MAX_WRITE_SIZE,
                 open_reqs: RefCell::new(HashMap::new()),
-                replies: Rc::new(ReplyState {
+                replies: ReplyState {
                     pending: RefCell::new(HashMap::new()),
                     next_id: Cell::new(0),
-                }),
+                },
                 mesh_rx: h.mesh_rx,
                 mesh_tx: h.mesh_tx,
-            },
+            }),
             fs: h.fs.bind().await?,
             once: h.once,
         }))
@@ -94,17 +93,14 @@ where
 
     pub(crate) async fn unmount(this: AsyncRc<Self>) -> Result<()> {
         let Self {
-            inner: ServerInner { dev, .. },
-            fs,
-            once,
-            ..
+            inner, fs, once, ..
         } = this.unwrap().await;
 
         fs.unmount().await;
 
         if let Some(once) = once {
             once.unmount
-                .unmount(dev.as_fd(), &once.path, &once.opts)
+                .unmount(inner.dev.as_fd(), &once.path, &once.opts)
                 .await?;
         }
 
@@ -113,38 +109,49 @@ where
 
     async fn serve_one(this: &AsyncRc<Self>) -> bool {
         match select_biased(
-            this.mesh_rx.recv(),
+            Self::serve_messages(this),
             this.dev
                 .read(this.buf_pool.checkout_with_capacity(this.buf_size)),
         )
         .await
         {
-            either::Left(Ok(Message::Shutdown) | Err(_)) => return false,
-            either::Left(Ok(Message::Interrupt(id))) => {
-                if let Some(task) = this.open_reqs.borrow_mut().remove(&id) {
-                    drop(task.cancel());
-                }
-            }
-            either::Left(Ok(Message::Reply(id, data))) => {
-                Self::handle_reply(this, id, data);
-            }
+            either::Left(()) => false,
             either::Right(BufResult(Ok(len), mut buf)) => {
                 unsafe {
                     buf.set_len(len);
                 }
 
-                return Self::handle_req(this, buf);
+                Self::handle_req(this, buf)
             }
             either::Right(BufResult(Err(err), _)) => {
                 Self::handle_error(this, err);
+                true
             }
         }
-
-        true
     }
 
-    fn handle_reply(&self, id: u64, data: AVec<u8, ConstAlign<8>>) {
-        todo!()
+    async fn serve_messages(this: &AsyncRc<Self>) {
+        loop {
+            match this.mesh_rx.recv().await {
+                Ok(Message::Shutdown) | Err(_) => return,
+                Ok(Message::Interrupt(id)) => {
+                    if let Some(task) = this.open_reqs.borrow_mut().remove(&id) {
+                        drop(task.cancel());
+                    }
+                }
+                Ok(Message::Reply(id, reply)) => {
+                    let reply = reply.bind(&this.inner.buf_pool);
+                    drop(this.inner.buf_pool.checkout::<u8>().steal());
+                    Self::handle_reply(this, id, reply);
+                }
+            }
+        }
+    }
+
+    fn handle_reply(&self, id: u32, reply: NotifyReply) {
+        if let Some(tx) = self.inner.replies.pending.borrow_mut().remove(&id) {
+            let _ = tx.send(reply);
+        }
     }
 
     fn handle_error(this: &AsyncRc<Self>, err: std::io::Error) {
@@ -198,7 +205,20 @@ where
                 }
             }
             Body::NotifyReply(notify) => {
-                todo!()
+                let id = req.id();
+                let worker = (id >> 32) as usize;
+                let id = id as u32;
+                if worker == this.inner.id {
+                    Self::handle_reply(this, id, notify);
+                } else {
+                    let this = this.clone();
+                    compio::runtime::spawn(async move {
+                        let _ = this.mesh_tx[worker]
+                            .send(Message::Reply(id, notify.share()))
+                            .await;
+                    })
+                    .detach();
+                }
             }
             body => {
                 let this = this.clone();

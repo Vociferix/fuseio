@@ -5,13 +5,13 @@ use crate::types::{Ino, RenameMode};
 use std::ffi::OsStr;
 
 #[derive(Debug)]
-pub struct RenameReq<'a> {
-    req: Req<'a>,
+pub struct RenameReq {
+    req: Req,
     rename: Rename,
 }
 
-impl<'a> RenameReq<'a> {
-    pub(crate) fn new(req: Req<'a>, rename: Rename) -> Self {
+impl RenameReq {
+    pub(crate) fn new(req: Req, rename: Rename) -> Self {
         Self { req, rename }
     }
 
@@ -36,8 +36,8 @@ impl<'a> RenameReq<'a> {
     }
 }
 
-impl<'a> std::ops::Deref for RenameReq<'a> {
-    type Target = Req<'a>;
+impl std::ops::Deref for RenameReq {
+    type Target = Req;
 
     fn deref(&self) -> &Self::Target {
         &self.req

@@ -5,13 +5,13 @@ use crate::types::Ino;
 use std::ffi::OsStr;
 
 #[derive(Debug)]
-pub struct RemoveXattrReq<'a> {
-    req: Req<'a>,
+pub struct RemoveXattrReq {
+    req: Req,
     removexattr: RemoveXattr,
 }
 
-impl<'a> RemoveXattrReq<'a> {
-    pub(crate) fn new(req: Req<'a>, removexattr: RemoveXattr) -> Self {
+impl RemoveXattrReq {
+    pub(crate) fn new(req: Req, removexattr: RemoveXattr) -> Self {
         Self { req, removexattr }
     }
 
@@ -24,8 +24,8 @@ impl<'a> RemoveXattrReq<'a> {
     }
 }
 
-impl<'a> std::ops::Deref for RemoveXattrReq<'a> {
-    type Target = Req<'a>;
+impl std::ops::Deref for RemoveXattrReq {
+    type Target = Req;
 
     fn deref(&self) -> &Self::Target {
         &self.req

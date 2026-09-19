@@ -2,6 +2,7 @@ mod async_arc;
 mod async_rc;
 mod buf;
 mod builder;
+mod context;
 mod dev_fuse;
 mod error;
 mod handle;

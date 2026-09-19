@@ -3,13 +3,13 @@ use crate::proto::request::Open;
 use crate::types::{Ino, OFlag, OpenFlags};
 
 #[derive(Debug)]
-pub struct OpenReq<'a> {
-    req: Req<'a>,
+pub struct OpenReq {
+    req: Req,
     open: Open,
 }
 
-impl<'a> OpenReq<'a> {
-    pub(crate) fn new(req: Req<'a>, open: Open) -> Self {
+impl OpenReq {
+    pub(crate) fn new(req: Req, open: Open) -> Self {
         Self { req, open }
     }
 
@@ -26,8 +26,8 @@ impl<'a> OpenReq<'a> {
     }
 }
 
-impl<'a> std::ops::Deref for OpenReq<'a> {
-    type Target = Req<'a>;
+impl std::ops::Deref for OpenReq {
+    type Target = Req;
 
     fn deref(&self) -> &Self::Target {
         &self.req

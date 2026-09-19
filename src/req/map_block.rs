@@ -3,13 +3,13 @@ use crate::proto::request::Bmap;
 use crate::types::Ino;
 
 #[derive(Debug)]
-pub struct MapBlockReq<'a> {
-    req: Req<'a>,
+pub struct MapBlockReq {
+    req: Req,
     bmap: Bmap,
 }
 
-impl<'a> MapBlockReq<'a> {
-    pub(crate) fn new(req: Req<'a>, bmap: Bmap) -> Self {
+impl MapBlockReq {
+    pub(crate) fn new(req: Req, bmap: Bmap) -> Self {
         Self { req, bmap }
     }
 
@@ -26,8 +26,8 @@ impl<'a> MapBlockReq<'a> {
     }
 }
 
-impl<'a> std::ops::Deref for MapBlockReq<'a> {
-    type Target = Req<'a>;
+impl std::ops::Deref for MapBlockReq {
+    type Target = Req;
 
     fn deref(&self) -> &Self::Target {
         &self.req

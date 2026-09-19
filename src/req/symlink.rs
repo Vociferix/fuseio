@@ -6,13 +6,13 @@ use std::ffi::OsStr;
 use std::path::Path;
 
 #[derive(Debug)]
-pub struct SymlinkReq<'a> {
-    req: Req<'a>,
+pub struct SymlinkReq {
+    req: Req,
     symlink: Symlink,
 }
 
-impl<'a> SymlinkReq<'a> {
-    pub(crate) fn new(req: Req<'a>, symlink: Symlink) -> Self {
+impl SymlinkReq {
+    pub(crate) fn new(req: Req, symlink: Symlink) -> Self {
         Self { req, symlink }
     }
 
@@ -29,8 +29,8 @@ impl<'a> SymlinkReq<'a> {
     }
 }
 
-impl<'a> std::ops::Deref for SymlinkReq<'a> {
-    type Target = Req<'a>;
+impl std::ops::Deref for SymlinkReq {
+    type Target = Req;
 
     fn deref(&self) -> &Self::Target {
         &self.req

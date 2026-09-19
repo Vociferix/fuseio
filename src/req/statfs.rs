@@ -3,13 +3,13 @@ use crate::proto::request::StatFs;
 use crate::types::Ino;
 
 #[derive(Debug)]
-pub struct StatFsReq<'a> {
-    req: Req<'a>,
+pub struct StatFsReq {
+    req: Req,
     statfs: StatFs,
 }
 
-impl<'a> StatFsReq<'a> {
-    pub(crate) fn new(req: Req<'a>, statfs: StatFs) -> Self {
+impl StatFsReq {
+    pub(crate) fn new(req: Req, statfs: StatFs) -> Self {
         Self { req, statfs }
     }
 
@@ -18,8 +18,8 @@ impl<'a> StatFsReq<'a> {
     }
 }
 
-impl<'a> std::ops::Deref for StatFsReq<'a> {
-    type Target = Req<'a>;
+impl std::ops::Deref for StatFsReq {
+    type Target = Req;
 
     fn deref(&self) -> &Self::Target {
         &self.req

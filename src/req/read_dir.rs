@@ -3,13 +3,13 @@ use crate::proto::request::ReadDir;
 use crate::types::{FileHandle, Ino, LockOwner, OFlag};
 
 #[derive(Debug)]
-pub struct ReadDirReq<'a> {
-    req: Req<'a>,
+pub struct ReadDirReq {
+    req: Req,
     readdir: ReadDir,
 }
 
-impl<'a> ReadDirReq<'a> {
-    pub(crate) fn new(req: Req<'a>, readdir: ReadDir) -> Self {
+impl ReadDirReq {
+    pub(crate) fn new(req: Req, readdir: ReadDir) -> Self {
         Self { req, readdir }
     }
 
@@ -38,8 +38,8 @@ impl<'a> ReadDirReq<'a> {
     }
 }
 
-impl<'a> std::ops::Deref for ReadDirReq<'a> {
-    type Target = Req<'a>;
+impl std::ops::Deref for ReadDirReq {
+    type Target = Req;
 
     fn deref(&self) -> &Self::Target {
         &self.req

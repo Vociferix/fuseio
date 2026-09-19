@@ -3,13 +3,13 @@ use crate::proto::request::Fsync;
 use crate::types::{FileHandle, Ino};
 
 #[derive(Debug)]
-pub struct FsyncReq<'a> {
-    req: Req<'a>,
+pub struct FsyncReq {
+    req: Req,
     fsync: Fsync,
 }
 
-impl<'a> FsyncReq<'a> {
-    pub(crate) fn new(req: Req<'a>, fsync: Fsync) -> Self {
+impl FsyncReq {
+    pub(crate) fn new(req: Req, fsync: Fsync) -> Self {
         Self { req, fsync }
     }
 
@@ -26,8 +26,8 @@ impl<'a> FsyncReq<'a> {
     }
 }
 
-impl<'a> std::ops::Deref for FsyncReq<'a> {
-    type Target = Req<'a>;
+impl std::ops::Deref for FsyncReq {
+    type Target = Req;
 
     fn deref(&self) -> &Self::Target {
         &self.req

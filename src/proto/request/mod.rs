@@ -75,7 +75,7 @@ pub use lookup::Lookup;
 pub use lseek::Lseek;
 pub use mkdir::MkDir;
 pub use mknod::MkNod;
-pub use notify_reply::NotifyReply;
+pub use notify_reply::{NotifyReply, SharedNotifyReply};
 pub use open::Open;
 pub use opendir::OpenDir;
 pub use poll::Poll;

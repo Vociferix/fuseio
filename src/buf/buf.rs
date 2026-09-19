@@ -24,6 +24,19 @@ impl<T> Buf<T> {
         pool.checkout_owned()
     }
 
+    pub(crate) fn from_avec(avec: AVec<T, ConstAlign<ALIGN>>, pool: BufPool) -> Self {
+        let mut buf = std::mem::ManuallyDrop::new(avec);
+        let ptr = buf.as_mut_ptr();
+        let len = buf.len() * std::mem::size_of::<T>();
+        let cap = buf.capacity() * std::mem::size_of::<T>();
+        let buf = unsafe { AVec::from_raw_parts(ptr.cast(), ALIGN, len, cap) };
+        Buf {
+            buf,
+            pool,
+            _phantom: PhantomData,
+        }
+    }
+
     pub fn with_capacity(capacity: usize, pool: BufPool) -> Self {
         pool.checkout_with_capacity_owned(capacity)
     }
@@ -215,6 +228,18 @@ impl<T> Buf<T> {
         unsafe {
             self.buf.set_len(0);
         }
+    }
+
+    pub(crate) fn steal(self) -> AVec<T, ConstAlign<ALIGN>> {
+        let mut this = std::mem::ManuallyDrop::new(self);
+        let mut buf =
+            std::mem::ManuallyDrop::new(std::mem::replace(&mut this.buf, AVec::new(ALIGN)));
+        unsafe { std::ptr::drop_in_place(&mut this.pool) };
+
+        let ptr = buf.as_mut_ptr();
+        let len = buf.len() / std::mem::size_of::<T>();
+        let cap = buf.capacity() / std::mem::size_of::<T>();
+        unsafe { AVec::from_raw_parts(ptr.cast(), ALIGN, len, cap) }
     }
 }
 

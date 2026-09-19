@@ -3,13 +3,13 @@ use crate::proto::request::Fallocate;
 use crate::types::{FallocateFlags, FileHandle, Ino};
 
 #[derive(Debug)]
-pub struct FallocateReq<'a> {
-    req: Req<'a>,
+pub struct FallocateReq {
+    req: Req,
     fallocate: Fallocate,
 }
 
-impl<'a> FallocateReq<'a> {
-    pub(crate) fn new(req: Req<'a>, fallocate: Fallocate) -> Self {
+impl FallocateReq {
+    pub(crate) fn new(req: Req, fallocate: Fallocate) -> Self {
         Self { req, fallocate }
     }
 
@@ -34,8 +34,8 @@ impl<'a> FallocateReq<'a> {
     }
 }
 
-impl<'a> std::ops::Deref for FallocateReq<'a> {
-    type Target = Req<'a>;
+impl std::ops::Deref for FallocateReq {
+    type Target = Req;
 
     fn deref(&self) -> &Self::Target {
         &self.req
