@@ -13,6 +13,10 @@ impl ReadReq {
         Self { req, read }
     }
 
+    pub fn req(&self) -> &Req {
+        &self.req
+    }
+
     pub fn ino(&self) -> Ino {
         self.read.ino()
     }

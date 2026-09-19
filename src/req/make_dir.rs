@@ -15,6 +15,10 @@ impl MakeDirReq {
         Self { req, mkdir }
     }
 
+    pub fn req(&self) -> &Req {
+        &self.req
+    }
+
     pub fn parent(&self) -> Ino {
         self.mkdir.parent()
     }

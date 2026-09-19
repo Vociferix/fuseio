@@ -15,6 +15,10 @@ impl LookupReq {
         Self { req, lookup }
     }
 
+    pub fn req(&self) -> &Req {
+        &self.req
+    }
+
     pub fn parent(&self) -> Ino {
         self.lookup.parent()
     }

@@ -13,6 +13,10 @@ impl FlushReq {
         Self { req, flush }
     }
 
+    pub fn req(&self) -> &Req {
+        &self.req
+    }
+
     pub fn ino(&self) -> Ino {
         self.flush.ino()
     }

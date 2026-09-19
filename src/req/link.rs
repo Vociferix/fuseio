@@ -15,6 +15,10 @@ impl LinkReq {
         Self { req, link }
     }
 
+    pub fn req(&self) -> &Req {
+        &self.req
+    }
+
     pub fn dst(&self) -> Ino {
         self.link.dst()
     }

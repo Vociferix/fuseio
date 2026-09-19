@@ -13,6 +13,10 @@ impl StatXReq {
         Self { req, statx }
     }
 
+    pub fn req(&self) -> &Req {
+        &self.req
+    }
+
     pub fn ino(&self) -> Ino {
         self.statx.ino()
     }

@@ -13,6 +13,10 @@ impl FallocateReq {
         Self { req, fallocate }
     }
 
+    pub fn req(&self) -> &Req {
+        &self.req
+    }
+
     pub fn ino(&self) -> Ino {
         self.fallocate.ino()
     }

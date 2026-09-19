@@ -36,6 +36,7 @@ pub use ioctl::Ioctl;
 pub use ioctl_retry::{IoctlLookup, IoctlRetry};
 pub use lseek::Lseek;
 pub use open::Opened;
+pub use poll::Poll;
 pub use posix_lock::PosixLock;
 pub use statfs::FsAttrs;
 pub use statx::StatX;
@@ -57,6 +58,30 @@ where
     type Error;
 
     fn encode(self, id: u64, cfg: Cfg) -> std::result::Result<impl IntoIoBuf, Self::Error>;
+}
+
+impl<T> EncodeResp for Result<T>
+where
+    T: EncodeResp,
+    crate::Error: From<T::Error>,
+{
+    type Error = std::convert::Infallible;
+
+    fn encode(self, id: u64, cfg: Cfg) -> std::result::Result<impl IntoIoBuf, Self::Error> {
+        match self {
+            Ok(resp) => match resp.encode(id, cfg) {
+                Ok(buf) => Ok(buf.left_buf()),
+                Err(err) => {
+                    let Ok(buf) = crate::Error::from(err).encode(id, cfg);
+                    Ok(buf.right_buf())
+                }
+            },
+            Err(err) => {
+                let Ok(buf) = err.encode(id, cfg);
+                Ok(buf.right_buf())
+            }
+        }
+    }
 }
 
 impl IoBuf for RawHeader {

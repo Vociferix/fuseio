@@ -13,6 +13,10 @@ impl IoctlReq {
         Self { req, ioctl }
     }
 
+    pub fn req(&self) -> &Req {
+        &self.req
+    }
+
     pub fn ino(&self) -> Ino {
         self.ioctl.ino()
     }

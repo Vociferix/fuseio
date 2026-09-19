@@ -15,6 +15,10 @@ impl SetAttrsReq {
         Self { req, set_attr }
     }
 
+    pub fn req(&self) -> &Req {
+        &self.req
+    }
+
     pub fn ino(&self) -> Ino {
         self.set_attr.ino()
     }

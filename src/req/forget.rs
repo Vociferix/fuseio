@@ -27,6 +27,10 @@ impl ForgetReq {
         }
     }
 
+    pub fn req(&self) -> &Req {
+        &self.req
+    }
+
     pub fn inos(&self) -> &[ForgetIno] {
         match &self.inner {
             Inner::Single(single) => unsafe { std::slice::from_raw_parts(single, 1) },

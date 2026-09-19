@@ -28,6 +28,12 @@ pub struct IoBufferWithNul<B, V> {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub enum BufferPlaceholder {}
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub struct EitherBuf<L, R>(either::Either<L, R>);
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub struct EitherIntoIoBuf<L, R>(either::Either<L, R>);
+
 impl<B, V> IoBuffer<B, V>
 where
     B: compio::buf::IoBuf,
@@ -96,6 +102,14 @@ pub trait IntoIoBuf: sealed::Sealed + Sized {
     #[doc(hidden)]
     fn into_io_buf_with_nul(self) -> IoBufferWithNul<Self::Buffer, Self::VecBuffer> {
         IoBufferWithNul::new(self.into_io_buf())
+    }
+
+    fn left_buf<R>(self) -> EitherIntoIoBuf<Self, R> {
+        EitherIntoIoBuf(either::Left(self))
+    }
+
+    fn right_buf<L>(self) -> EitherIntoIoBuf<L, Self> {
+        EitherIntoIoBuf(either::Right(self))
     }
 }
 
@@ -215,5 +229,83 @@ where
 
     fn into_io_buf(self) -> IoBuffer<Self::Buffer, Self> {
         IoBuffer::VecBuf(self)
+    }
+}
+
+impl<L, R> compio::buf::IoBuf for EitherBuf<L, R>
+where
+    L: compio::buf::IoBuf,
+    R: compio::buf::IoBuf,
+{
+    fn as_init(&self) -> &[u8] {
+        match &self.0 {
+            either::Left(l) => l.as_init(),
+            either::Right(r) => r.as_init(),
+        }
+    }
+
+    fn buf_len(&self) -> usize {
+        match &self.0 {
+            either::Left(l) => l.buf_len(),
+            either::Right(r) => r.buf_len(),
+        }
+    }
+
+    fn buf_ptr(&self) -> *const u8 {
+        match &self.0 {
+            either::Left(l) => l.buf_ptr(),
+            either::Right(r) => r.buf_ptr(),
+        }
+    }
+
+    fn is_empty(&self) -> bool {
+        match &self.0 {
+            either::Left(l) => l.is_empty(),
+            either::Right(r) => r.is_empty(),
+        }
+    }
+}
+
+impl<L, R> compio::buf::IoVectoredBuf for EitherBuf<L, R>
+where
+    L: compio::buf::IoVectoredBuf,
+    R: compio::buf::IoVectoredBuf,
+{
+    fn iter_slice(&self) -> impl Iterator<Item = &[u8]> {
+        match &self.0 {
+            either::Left(l) => either::Left(l.iter_slice()),
+            either::Right(r) => either::Right(r.iter_slice()),
+        }
+    }
+
+    fn total_len(&self) -> usize {
+        match &self.0 {
+            either::Left(l) => l.total_len(),
+            either::Right(r) => r.total_len(),
+        }
+    }
+}
+
+impl<L, R> sealed::Sealed for EitherIntoIoBuf<L, R> {}
+
+impl<L, R> IntoIoBuf for EitherIntoIoBuf<L, R>
+where
+    L: IntoIoBuf,
+    R: IntoIoBuf,
+{
+    type Buffer = EitherBuf<L::Buffer, R::Buffer>;
+    type VecBuffer = EitherBuf<L::VecBuffer, R::VecBuffer>;
+
+    fn into_io_buf(self) -> IoBuffer<Self::Buffer, Self::VecBuffer> {
+        match self.0 {
+            either::Left(l) => match l.into_io_buf() {
+                IoBuffer::Buf(buf) => IoBuffer::Buf(EitherBuf(either::Left(buf))),
+                IoBuffer::VecBuf(buf) => IoBuffer::VecBuf(EitherBuf(either::Left(buf))),
+            },
+            either::Right(r) => match r.into_io_buf() {
+                IoBuffer::Buf(buf) => IoBuffer::Buf(EitherBuf(either::Right(buf))),
+                IoBuffer::VecBuf(buf) => IoBuffer::VecBuf(EitherBuf(either::Right(buf))),
+            },
+        }
     }
 }

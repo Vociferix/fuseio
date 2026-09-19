@@ -1,19 +1,28 @@
+use crate::Error;
 use crate::async_rc::AsyncRc;
-use crate::buf::{Buf, BufPool, IntoIoBuf};
+use crate::buf::{Buf, BufPool, IntoIoBuf, IoBuffer};
 use crate::dev_fuse::FuseChannel;
+use crate::fs::req::{self, Req};
 use crate::fs::{BindFs, Fs};
 use crate::handle::{Handle, Once};
 use crate::mount::Unmount;
-use crate::proto::request::{AnyRequest, Body, NotifyReply, SharedNotifyReply};
-use crate::types::ReplyInitFlags;
+use crate::proto::request::{self, AnyRequest, Body, NotifyReply, SharedNotifyReply};
+use crate::proto::response::EncodeResp;
+use crate::proto::response::{Bmap, CopyFileRange, Data, Lseek, Poll, Write, XattrLen};
+use crate::types::{ReplyInitFlags, Request};
 
-use compio::BufResult;
 use compio::runtime::JoinHandle;
+use compio::{
+    BufResult,
+    buf::{IoBuf, IoVectoredBuf},
+};
 use crossfire::{AsyncRx, MAsyncTx, mpsc::Array};
+use futures_util::StreamExt;
 
 use std::cell::{Cell, RefCell};
 use std::collections::HashMap;
 use std::io::Result;
+use std::ops::ControlFlow;
 use std::os::fd::AsFd;
 use std::rc::Rc;
 use std::sync::Arc;
@@ -88,7 +97,23 @@ where
     }
 
     pub(crate) async fn serve_requests(this: &AsyncRc<Self>) {
-        while Self::serve_one(this).await {}
+        loop {
+            match Self::serve_one(this).await {
+                ControlFlow::Break(true) => {
+                    for tx in this
+                        .inner
+                        .mesh_tx
+                        .iter()
+                        .enumerate()
+                        .filter_map(|(id, tx)| (id != this.inner.id).then_some(tx))
+                    {
+                        let _ = tx.send(Message::Shutdown).await;
+                    }
+                }
+                ControlFlow::Break(false) => return,
+                ControlFlow::Continue(()) => {}
+            }
+        }
     }
 
     pub(crate) async fn unmount(this: AsyncRc<Self>) -> Result<()> {
@@ -107,7 +132,7 @@ where
         Ok(())
     }
 
-    async fn serve_one(this: &AsyncRc<Self>) -> bool {
+    async fn serve_one(this: &AsyncRc<Self>) -> ControlFlow<bool> {
         match select_biased(
             Self::serve_messages(this),
             this.dev
@@ -115,7 +140,7 @@ where
         )
         .await
         {
-            either::Left(()) => false,
+            either::Left(()) => ControlFlow::Break(false),
             either::Right(BufResult(Ok(len), mut buf)) => {
                 unsafe {
                     buf.set_len(len);
@@ -125,7 +150,7 @@ where
             }
             either::Right(BufResult(Err(err), _)) => {
                 Self::handle_error(this, err);
-                true
+                ControlFlow::Continue(())
             }
         }
     }
@@ -155,7 +180,7 @@ where
     }
 
     fn handle_error(this: &AsyncRc<Self>, err: std::io::Error) {
-        todo!()
+        // TODO: log error
     }
 
     // TODO: enforce operation-gating `FsCaps` on every platform before
@@ -165,22 +190,22 @@ where
     // (ENOSYS). Also translate ENOSYS returned for a non-`Replace` rename to
     // the same errno, since ENOSYS on RENAME2 makes Linux disable all flagged
     // renames for the mount.
-    fn handle_req(this: &AsyncRc<Self>, buf: Buf) -> bool {
+    fn handle_req(this: &AsyncRc<Self>, buf: Buf) -> ControlFlow<bool> {
         if buf.len() < std::mem::size_of::<crate::proto::request::RawHeader>() {
-            return true;
+            return ControlFlow::Continue(());
         }
 
-        let unique = unsafe { (*(buf.as_ptr() as *const crate::proto::request::RawHeader)).unique };
+        let id = unsafe { (*(buf.as_ptr() as *const crate::proto::request::RawHeader)).unique };
 
         let AnyRequest { req, body } = match AnyRequest::decode(buf, this.minor_ver, this.flags) {
             Ok(req) => req,
             Err(err) => {
                 let this = this.clone();
                 compio::runtime::spawn(async move {
-                    let _ = this.dev.write_buf(err.into_reply(unique)).await;
+                    let _ = this.dev.write_buf(err.into_reply(id)).await;
                 })
                 .detach();
-                return true;
+                return ControlFlow::Continue(());
             }
         };
 
@@ -220,20 +245,426 @@ where
                     .detach();
                 }
             }
+            Body::Destroy(_) => return ControlFlow::Break(true),
             body => {
-                let this = this.clone();
-                compio::runtime::spawn(async move {
-                    this.handle_fs_op(req, body).await;
-                })
-                .detach();
+                let task = compio::runtime::spawn(Self::handle_fs_op(this.clone(), req, body));
+                this.inner.open_reqs.borrow_mut().insert(id, task);
             }
         }
 
-        true
+        ControlFlow::Continue(())
     }
 
-    async fn handle_fs_op(&self, req: crate::types::Request, body: Body) {
+    async fn handle_fs_op(this: AsyncRc<Self>, req: crate::types::Request, body: Body) {
+        match body {
+            Body::Lookup(body) => Self::lookup(this, req, body).await,
+            Body::Forget(body) => Self::forget(this, req, body).await,
+            Body::GetAttr(body) => Self::getattr(this, req, body).await,
+            Body::SetAttr(body) => Self::setattr(this, req, body).await,
+            Body::ReadLink(body) => Self::readlink(this, req, body).await,
+            Body::Symlink(body) => Self::symlink(this, req, body).await,
+            Body::MkNod(body) => Self::mknod(this, req, body).await,
+            Body::MkDir(body) => Self::mkdir(this, req, body).await,
+            Body::Unlink(body) => Self::unlink(this, req, body).await,
+            Body::RmDir(body) => Self::rmdir(this, req, body).await,
+            Body::Rename(body) => Self::rename(this, req, body).await,
+            Body::Link(body) => Self::link(this, req, body).await,
+            Body::Open(body) => Self::open(this, req, body).await,
+            Body::Read(body) => Self::read(this, req, body).await,
+            Body::Write(body) => Self::write(this, req, body).await,
+            Body::StatFs(body) => Self::statfs(this, req, body).await,
+            Body::Release(body) => Self::release(this, req, body).await,
+            Body::Fsync(body) => Self::fsync(this, req, body).await,
+            Body::SetXattr(body) => Self::setxattr(this, req, body).await,
+            Body::GetXattr(body) => Self::getxattr(this, req, body).await,
+            Body::ListXattr(body) => Self::listxattr(this, req, body).await,
+            Body::RemoveXattr(body) => Self::removexattr(this, req, body).await,
+            Body::Flush(body) => Self::flush(this, req, body).await,
+            Body::OpenDir(body) => Self::opendir(this, req, body).await,
+            Body::ReadDir(body) => Self::readdir(this, req, body).await,
+            Body::ReleaseDir(body) => Self::releasedir(this, req, body).await,
+            Body::FsyncDir(body) => Self::fsyncdir(this, req, body).await,
+            Body::GetLk(body) => Self::getlk(this, req, body).await,
+            Body::SetLk(body) => Self::setlk(this, req, body).await,
+            Body::SetLkW(body) => Self::setlkw(this, req, body).await,
+            Body::Access(body) => Self::access(this, req, body).await,
+            Body::Create(body) => Self::create(this, req, body).await,
+            Body::Bmap(body) => Self::bmap(this, req, body).await,
+            Body::Ioctl(body) => Self::ioctl(this, req, body).await,
+            Body::Poll(body) => Self::poll(this, req, body).await,
+            Body::BatchForget(body) => Self::batchforget(this, req, body).await,
+            Body::Fallocate(body) => Self::fallocate(this, req, body).await,
+            Body::ReadDirPlus(body) => Self::readdirplus(this, req, body).await,
+            Body::Lseek(body) => Self::lseek(this, req, body).await,
+            Body::CopyFileRange(body) => Self::copy_file_range(this, req, body).await,
+            Body::SyncFs(body) => Self::syncfs(this, req, body).await,
+            Body::TmpFile(body) => Self::tmpfile(this, req, body).await,
+            Body::StatX(body) => Self::statx(this, req, body).await,
+            Body::CopyFileRange64(body) => Self::copy_file_range64(this, req, body).await,
+            #[cfg(target_os = "macos")]
+            Body::SetVolName(body) => Self::setvolname(this, req, body).await,
+            #[cfg(target_os = "macos")]
+            Body::GetXtimes(body) => Self::getxtimes(this, req, body).await,
+            _ => {}
+        }
+    }
+
+    async fn lookup(this: AsyncRc<Self>, req: Request, body: request::Lookup) {
+        let id = req.id;
+        let req = req::LookupReq::new(Req::new(&this, req), body);
+        this.send(id, this.fs.lookup(req).await).await;
+    }
+
+    async fn forget(this: AsyncRc<Self>, req: Request, body: request::Forget) {
+        let req = req::ForgetReq::from_single(Req::new(&this, req), body);
+        this.fs.forget(req).await;
+    }
+
+    async fn getattr(this: AsyncRc<Self>, req: Request, body: request::GetAttr) {
+        let id = req.id;
+        let req = req::GetAttrsReq::new(Req::new(&this, req), body);
+        this.send(id, this.fs.get_attrs(req).await).await;
+    }
+
+    async fn setattr(this: AsyncRc<Self>, req: Request, body: request::SetAttr) {
+        let id = req.id;
+        let req = req::SetAttrsReq::new(Req::new(&this, req), body);
+        this.send(id, this.fs.set_attrs(req).await).await;
+    }
+
+    async fn readlink(this: AsyncRc<Self>, req: Request, body: request::ReadLink) {
         todo!()
+    }
+
+    async fn symlink(this: AsyncRc<Self>, req: Request, body: request::Symlink) {
+        let id = req.id;
+        let req = req::SymlinkReq::new(Req::new(&this, req), body);
+        this.send(id, this.fs.symlink(req).await).await;
+    }
+
+    async fn mknod(this: AsyncRc<Self>, req: Request, body: request::MkNod) {
+        let id = req.id;
+        let req = req::MakeNodeReq::new(Req::new(&this, req), body);
+        this.send(id, this.fs.make_node(req).await).await;
+    }
+
+    async fn mkdir(this: AsyncRc<Self>, req: Request, body: request::MkDir) {
+        let id = req.id;
+        let req = req::MakeDirReq::new(Req::new(&this, req), body);
+        this.send(id, this.fs.make_dir(req).await).await;
+    }
+
+    async fn unlink(this: AsyncRc<Self>, req: Request, body: request::Unlink) {
+        let id = req.id;
+        let req = req::UnlinkNodeReq::new(Req::new(&this, req), body);
+        this.send(id, this.fs.unlink_node(req).await).await;
+    }
+
+    async fn rmdir(this: AsyncRc<Self>, req: Request, body: request::RmDir) {
+        let id = req.id;
+        let req = req::RemoveDirReq::new(Req::new(&this, req), body);
+        this.send(id, this.fs.remove_dir(req).await).await;
+    }
+
+    async fn rename(this: AsyncRc<Self>, req: Request, body: request::Rename) {
+        let id = req.id;
+        let req = req::RenameReq::new(Req::new(&this, req), body);
+        this.send(id, this.fs.rename(req).await).await;
+    }
+
+    async fn link(this: AsyncRc<Self>, req: Request, body: request::Link) {
+        let id = req.id;
+        let req = req::LinkReq::new(Req::new(&this, req), body);
+        this.send(id, this.fs.link(req).await).await;
+    }
+
+    async fn open(this: AsyncRc<Self>, req: Request, body: request::Open) {
+        let id = req.id;
+        let req = req::OpenReq::new(Req::new(&this, req), body);
+        this.send(id, this.fs.open(req).await).await;
+    }
+
+    async fn read(this: AsyncRc<Self>, req: Request, body: request::Read) {
+        let id = req.id;
+        let req = req::ReadReq::new(Req::new(&this, req), body);
+        let data = this.fs.read(req).await.map(Data::new);
+        this.send(id, data).await;
+    }
+
+    async fn write(this: AsyncRc<Self>, req: Request, body: request::Write) {
+        let id = req.id;
+        let req = req::WriteReq::new(Req::new(&this, req), body);
+        let resp = this.fs.write(req).await.map(Write::new);
+        this.send(id, resp).await;
+    }
+
+    async fn statfs(this: AsyncRc<Self>, req: Request, body: request::StatFs) {
+        let id = req.id;
+        let req = req::StatFsReq::new(Req::new(&this, req), body);
+        this.send(id, this.fs.statfs(req).await).await;
+    }
+
+    async fn release(this: AsyncRc<Self>, req: Request, body: request::Release) {
+        let id = req.id;
+        let req = req::CloseReq::new(Req::new(&this, req), body);
+        this.send(id, this.fs.close(req).await).await;
+    }
+
+    async fn fsync(this: AsyncRc<Self>, req: Request, body: request::Fsync) {
+        let id = req.id;
+        let req = req::FsyncReq::new(Req::new(&this, req), body);
+        this.send(id, this.fs.fsync(req).await).await;
+    }
+
+    async fn setxattr(this: AsyncRc<Self>, req: Request, body: request::SetXattr) {
+        let id = req.id;
+        let req = req::SetXattrReq::new(Req::new(&this, req), body);
+        this.send(id, this.fs.set_xattr(req).await).await;
+    }
+
+    async fn getxattr(this: AsyncRc<Self>, req: Request, body: request::GetXattr) {
+        let id = req.id;
+        let len = body.len();
+        if len == 0 {
+            let req = req::GetXattrLenReq::new(Req::new(&this, req), body);
+            this.send(id, this.fs.get_xattr_len(req).await.map(XattrLen::new))
+                .await;
+        } else {
+            let req = req::GetXattrReq::new(Req::new(&this, req), body);
+            let data = match this.fs.get_xattr(req).await {
+                Ok(data) => data.into_io_buf(),
+                Err(err) => {
+                    this.send(id, err).await;
+                    return;
+                }
+            };
+
+            if data.total_len() > len {
+                this.send(id, Error::ERANGE).await;
+                return;
+            }
+
+            this.send(id, Data::new(data)).await;
+        }
+    }
+
+    async fn listxattr(this: AsyncRc<Self>, req: Request, body: request::ListXattr) {
+        let id = req.id;
+        let len = body.len();
+        if len == 0 {
+            let req = req::XattrKeysLenReq::new(Req::new(&this, req), body);
+            let mut lens = std::pin::pin!(match this.fs.xattr_keys_len(req).await {
+                Ok(lens) => lens,
+                Err(err) => {
+                    this.send(id, err).await;
+                    return;
+                }
+            });
+
+            let mut count = 0usize;
+            let mut total = 0usize;
+            while let Some(len) = StreamExt::next(&mut lens).await {
+                let Some(tmp) = total.checked_add(len) else {
+                    this.send(id, Error::E2BIG).await;
+                    return;
+                };
+                total = tmp;
+                count += 1;
+            }
+
+            let Some(total) = total.checked_add(count.saturating_sub(1)) else {
+                this.send(id, Error::E2BIG).await;
+                return;
+            };
+
+            this.send(id, XattrLen::new(total)).await;
+        } else {
+            let req = req::XattrKeysReq::new(Req::new(&this, req), body);
+            todo!();
+        }
+    }
+
+    async fn removexattr(this: AsyncRc<Self>, req: Request, body: request::RemoveXattr) {
+        let id = req.id;
+        let req = req::RemoveXattrReq::new(Req::new(&this, req), body);
+        this.send(id, this.fs.remove_xattr(req).await).await;
+    }
+
+    async fn flush(this: AsyncRc<Self>, req: Request, body: request::Flush) {
+        let id = req.id;
+        let req = req::FlushReq::new(Req::new(&this, req), body);
+        this.send(id, this.fs.flush(req).await).await;
+    }
+
+    async fn opendir(this: AsyncRc<Self>, req: Request, body: request::OpenDir) {
+        let id = req.id;
+        let req = req::OpenReq::new(Req::new(&this, req), body);
+        this.send(id, this.fs.open(req).await).await;
+    }
+
+    async fn readdir(this: AsyncRc<Self>, req: Request, body: request::ReadDir) {
+        todo!()
+    }
+
+    async fn releasedir(this: AsyncRc<Self>, req: Request, body: request::ReleaseDir) {
+        let id = req.id;
+        let req = req::CloseReq::new(Req::new(&this, req), body);
+        this.send(id, this.fs.close(req).await).await;
+    }
+
+    async fn fsyncdir(this: AsyncRc<Self>, req: Request, body: request::FsyncDir) {
+        let id = req.id;
+        let req = req::FsyncReq::new(Req::new(&this, req), body);
+        this.send(id, this.fs.fsync(req).await).await;
+    }
+
+    async fn getlk(this: AsyncRc<Self>, req: Request, body: request::GetLk) {
+        let id = req.id;
+        let req = req::TestPosixLockReq::new(Req::new(&this, req), body);
+        this.send(id, this.fs.test_posix_lock(req).await).await;
+    }
+
+    async fn setlk(this: AsyncRc<Self>, req: Request, body: request::SetLk) {
+        let id = req.id;
+        if body.is_flock() {
+            let req = req::FlockReq::new(Req::new(&this, req), body);
+            this.send(id, this.fs.try_flock(req).await).await;
+        } else {
+            let req = req::PosixLockReq::new(Req::new(&this, req), body);
+            this.send(id, this.fs.try_posix_lock(req).await).await;
+        }
+    }
+
+    async fn setlkw(this: AsyncRc<Self>, req: Request, body: request::SetLkW) {
+        let id = req.id;
+        if body.is_flock() {
+            let req = req::FlockReq::new(Req::new(&this, req), body);
+            this.send(id, this.fs.flock(req).await).await;
+        } else {
+            let req = req::PosixLockReq::new(Req::new(&this, req), body);
+            this.send(id, this.fs.posix_lock(req).await).await;
+        }
+    }
+
+    async fn access(this: AsyncRc<Self>, req: Request, body: request::Access) {
+        let id = req.id;
+        let req = req::AccessReq::new(Req::new(&this, req), body);
+        this.send(id, this.fs.access(req).await).await;
+    }
+
+    async fn create(this: AsyncRc<Self>, req: Request, body: request::Create) {
+        let id = req.id;
+        let req = req::CreateFileReq::new(Req::new(&this, req), body);
+        this.send(id, this.fs.create_file(req).await).await;
+    }
+
+    async fn bmap(this: AsyncRc<Self>, req: Request, body: request::Bmap) {
+        let id = req.id;
+        let req = req::MapBlockReq::new(Req::new(&this, req), body);
+        this.send(id, this.fs.map_block(req).await.map(Bmap::new))
+            .await;
+    }
+
+    async fn ioctl(this: AsyncRc<Self>, req: Request, body: request::Ioctl) {
+        todo!()
+    }
+
+    async fn poll(this: AsyncRc<Self>, req: Request, body: request::Poll) {
+        let id = req.id;
+        let req = req::PollReq::new(Req::new(&this, req), body);
+        this.send(id, this.fs.poll(req).await.map(Poll::new)).await;
+    }
+
+    async fn batchforget(this: AsyncRc<Self>, req: Request, body: request::BatchForget) {
+        let req = req::ForgetReq::from_batch(Req::new(&this, req), body);
+        this.fs.forget(req).await;
+    }
+
+    async fn fallocate(this: AsyncRc<Self>, req: Request, body: request::Fallocate) {
+        let id = req.id;
+        let req = req::FallocateReq::new(Req::new(&this, req), body);
+        this.send(id, this.fs.fallocate(req).await).await;
+    }
+
+    async fn readdirplus(this: AsyncRc<Self>, req: Request, body: request::ReadDirPlus) {
+        todo!()
+    }
+
+    async fn lseek(this: AsyncRc<Self>, req: Request, body: request::Lseek) {
+        let id = req.id;
+        let req = req::LseekReq::new(Req::new(&this, req), body);
+        this.send(id, this.fs.lseek(req).await.map(Lseek::new))
+            .await;
+    }
+
+    async fn copy_file_range(this: AsyncRc<Self>, req: Request, body: request::CopyFileRange) {
+        let id = req.id;
+        let req = req::CopyFileRangeReq::new(Req::new(&this, req), body);
+        this.send(
+            id,
+            this.fs.copy_file_range(req).await.map(CopyFileRange::new),
+        )
+        .await;
+    }
+
+    async fn syncfs(this: AsyncRc<Self>, req: Request, body: request::SyncFs) {
+        let id = req.id;
+        let req = req::SyncFsReq::new(Req::new(&this, req), body);
+        this.send(id, this.fs.syncfs(req).await).await;
+    }
+
+    async fn tmpfile(this: AsyncRc<Self>, req: Request, body: request::TmpFile) {
+        let id = req.id;
+        let req = req::TmpFileReq::new(Req::new(&this, req), body);
+        this.send(id, this.fs.tmpfile(req).await).await;
+    }
+
+    async fn statx(this: AsyncRc<Self>, req: Request, body: request::StatX) {
+        let id = req.id;
+        let req = req::StatXReq::new(Req::new(&this, req), body);
+        this.send(id, this.fs.statx(req).await).await;
+    }
+
+    async fn copy_file_range64(this: AsyncRc<Self>, req: Request, body: request::CopyFileRange64) {
+        let id = req.id;
+        let req = req::CopyFileRangeReq::new(Req::new(&this, req), body);
+        this.send(
+            id,
+            this.fs.copy_file_range(req).await.map(CopyFileRange::new),
+        )
+        .await;
+    }
+
+    #[cfg(target_os = "macos")]
+    async fn setvolname(this: AsyncRc<Self>, req: Request, body: request::SetVolName) {
+        todo!()
+    }
+
+    #[cfg(target_os = "macos")]
+    async fn getxtimes(this: AsyncRc<Self>, req: Request, body: request::GetXtimes) {
+        todo!()
+    }
+
+    async fn send<T>(&self, id: u64, resp: T)
+    where
+        T: EncodeResp,
+        Error: From<T::Error>,
+    {
+        let cfg = crate::proto::Cfg {
+            minor_ver: self.inner.minor_ver,
+            flags: self.inner.flags,
+        };
+
+        let buf = match resp.encode(id, cfg) {
+            Ok(buf) => buf.left_buf(),
+            Err(err) => {
+                let Ok(buf) = Error::from(err).encode(id, cfg);
+                buf.right_buf()
+            }
+        };
+
+        // TODO: log error
+        let _ = self.inner.dev.write_buf(buf).await;
     }
 }
 

@@ -13,6 +13,10 @@ impl TmpFileReq {
         Self { req, create }
     }
 
+    pub fn req(&self) -> &Req {
+        &self.req
+    }
+
     pub fn parent(&self) -> Ino {
         self.create.parent()
     }

@@ -13,6 +13,10 @@ impl SyncFsReq {
         Self { req, syncfs }
     }
 
+    pub fn req(&self) -> &Req {
+        &self.req
+    }
+
     pub fn ino(&self) -> Ino {
         self.syncfs.ino()
     }

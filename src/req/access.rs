@@ -13,6 +13,10 @@ impl AccessReq {
         Self { req, access }
     }
 
+    pub fn req(&self) -> &Req {
+        &self.req
+    }
+
     pub fn ino(&self) -> Ino {
         self.access.ino()
     }

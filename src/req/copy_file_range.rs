@@ -16,6 +16,10 @@ impl CopyFileRangeReq {
         }
     }
 
+    pub fn req(&self) -> &Req {
+        &self.req
+    }
+
     pub fn src(&self) -> &CopyFileRangePos {
         self.copy_file_range.src()
     }

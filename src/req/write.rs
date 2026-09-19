@@ -13,6 +13,10 @@ impl WriteReq {
         Self { req, write }
     }
 
+    pub fn req(&self) -> &Req {
+        &self.req
+    }
+
     pub fn ino(&self) -> Ino {
         self.write.ino()
     }

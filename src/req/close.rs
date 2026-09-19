@@ -13,6 +13,10 @@ impl CloseReq {
         Self { req, release }
     }
 
+    pub fn req(&self) -> &Req {
+        &self.req
+    }
+
     pub fn ino(&self) -> Ino {
         self.release.ino()
     }

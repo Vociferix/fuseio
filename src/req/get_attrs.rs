@@ -13,6 +13,10 @@ impl GetAttrsReq {
         Self { req, get_attr }
     }
 
+    pub fn req(&self) -> &Req {
+        &self.req
+    }
+
     pub fn ino(&self) -> Ino {
         self.get_attr.ino()
     }

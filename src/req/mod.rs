@@ -106,68 +106,6 @@ impl Req {
         &self.ctx
     }
 
-    pub fn proto_version(&self) -> Version {
-        self.ctx.proto_version()
-    }
-
-    pub fn open_passthrough<T>(&self, fd: T) -> Result<PassthroughFd<T>>
-    where
-        T: std::os::fd::AsFd,
-    {
-        self.ctx.open_passthrough(fd)
-    }
-
-    pub fn buffer_pool(&self) -> &BufPool {
-        self.ctx.buffer_pool()
-    }
-
-    pub async fn invalidate_inode(&self, ino: Ino) -> Result<()> {
-        self.ctx.invalidate_inode(ino).await
-    }
-
-    pub async fn invalidate_inode_range<R>(&self, ino: Ino, range: R) -> Result<()>
-    where
-        R: Into<FileRange>,
-    {
-        self.ctx.invalidate_inode_range(ino, range).await
-    }
-
-    pub async fn delete_inode<N>(&self, parent: Ino, child: Ino, name: N) -> Result<()>
-    where
-        N: AsRef<OsStr>,
-    {
-        self.ctx.delete_inode(parent, child, name).await
-    }
-
-    pub async fn invalidate_entry<N>(&self, parent: Ino, name: N) -> Result<()>
-    where
-        N: AsRef<OsStr>,
-    {
-        self.ctx.invalidate_entry(parent, name).await
-    }
-
-    pub async fn expire_entry<N>(&self, parent: Ino, name: N) -> Result<()>
-    where
-        N: AsRef<OsStr>,
-    {
-        self.ctx.expire_entry(parent, name).await
-    }
-
-    pub async fn increment_epoch(&self) -> Result<()> {
-        self.ctx.increment_epoch().await
-    }
-
-    pub async fn set_cache<B>(&self, ino: Ino, offset: u64, data: B) -> Result<()>
-    where
-        B: IntoIoBuf,
-    {
-        self.ctx.set_cache(ino, offset, data).await
-    }
-
-    pub async fn get_cache(&self, ino: Ino, offset: u64, len: usize) -> Result<CacheData> {
-        self.ctx.get_cache(ino, offset, len).await
-    }
-
     pub fn id(&self) -> u64 {
         self.req.id()
     }
@@ -188,5 +126,13 @@ impl Req {
 impl std::fmt::Debug for Req {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         std::fmt::Debug::fmt(&self.req, f)
+    }
+}
+
+impl std::ops::Deref for Req {
+    type Target = Context;
+
+    fn deref(&self) -> &Self::Target {
+        &self.ctx
     }
 }

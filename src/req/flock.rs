@@ -13,6 +13,10 @@ impl FlockReq {
         Self { req, setlk }
     }
 
+    pub fn req(&self) -> &Req {
+        &self.req
+    }
+
     pub fn ino(&self) -> Ino {
         self.setlk.ino()
     }

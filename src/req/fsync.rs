@@ -13,6 +13,10 @@ impl FsyncReq {
         Self { req, fsync }
     }
 
+    pub fn req(&self) -> &Req {
+        &self.req
+    }
+
     pub fn ino(&self) -> Ino {
         self.fsync.ino()
     }

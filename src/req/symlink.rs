@@ -16,6 +16,10 @@ impl SymlinkReq {
         Self { req, symlink }
     }
 
+    pub fn req(&self) -> &Req {
+        &self.req
+    }
+
     pub fn ino(&self) -> Ino {
         self.symlink.ino()
     }

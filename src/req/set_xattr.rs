@@ -15,6 +15,10 @@ impl SetXattrReq {
         Self { req, setxattr }
     }
 
+    pub fn req(&self) -> &Req {
+        &self.req
+    }
+
     pub fn ino(&self) -> Ino {
         self.setxattr.ino()
     }

@@ -15,6 +15,10 @@ impl MakeNodeReq {
         Self { req, mknod }
     }
 
+    pub fn req(&self) -> &Req {
+        &self.req
+    }
+
     pub fn parent(&self) -> Ino {
         self.mknod.parent()
     }

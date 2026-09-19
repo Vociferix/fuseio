@@ -13,6 +13,10 @@ impl XattrKeysLenReq {
         Self { req, listxattr }
     }
 
+    pub fn req(&self) -> &Req {
+        &self.req
+    }
+
     pub fn ino(&self) -> Ino {
         self.listxattr.ino()
     }

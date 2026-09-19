@@ -13,6 +13,10 @@ impl ReadDirReq {
         Self { req, readdir }
     }
 
+    pub fn req(&self) -> &Req {
+        &self.req
+    }
+
     pub fn ino(&self) -> Ino {
         self.readdir.ino()
     }

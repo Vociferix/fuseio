@@ -15,6 +15,10 @@ impl RemoveXattrReq {
         Self { req, removexattr }
     }
 
+    pub fn req(&self) -> &Req {
+        &self.req
+    }
+
     pub fn ino(&self) -> Ino {
         self.removexattr.ino()
     }

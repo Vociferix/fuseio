@@ -13,6 +13,10 @@ impl OpenReq {
         Self { req, open }
     }
 
+    pub fn req(&self) -> &Req {
+        &self.req
+    }
+
     pub fn ino(&self) -> Ino {
         self.open.ino()
     }

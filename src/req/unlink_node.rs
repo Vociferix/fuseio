@@ -15,6 +15,10 @@ impl UnlinkNodeReq {
         Self { req, unlink }
     }
 
+    pub fn req(&self) -> &Req {
+        &self.req
+    }
+
     pub fn ino(&self) -> Ino {
         self.unlink.ino()
     }

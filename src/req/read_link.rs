@@ -13,6 +13,10 @@ impl ReadLinkReq {
         Self { req, read_link }
     }
 
+    pub fn req(&self) -> &Req {
+        &self.req
+    }
+
     pub fn ino(&self) -> Ino {
         self.read_link.ino()
     }

@@ -1,20 +1,6 @@
 use super::{Cfg, EncodeResp, IntoIoBuf, RawHeader};
 
-#[repr(C)]
-#[derive(Debug, Default)]
-pub struct Empty {
-    _priv: (),
-}
-
-const _: () = {
-    assert!(std::mem::size_of::<Empty>() == 0);
-};
-
-impl Empty {
-    pub fn new() -> Self {
-        Self { _priv: () }
-    }
-}
+pub type Empty = ();
 
 impl EncodeResp for Empty {
     type Error = std::convert::Infallible;
