@@ -63,3 +63,5 @@ pub use statx_sync::StatXSync;
 pub use version::Version;
 pub use whence::Whence;
 pub use xattr_mode::XattrMode;
+
+pub use crate::req::poll::PollNotify;

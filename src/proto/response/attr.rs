@@ -5,7 +5,7 @@ use std::time::{Duration, SystemTime};
 
 #[repr(C)]
 #[derive(Debug, Default)]
-pub struct Attr {
+pub struct Attrs {
     attr_valid: u64,
     attr_valid_nsec: u32,
     _unused: u32,
@@ -13,7 +13,7 @@ pub struct Attr {
 }
 
 #[repr(C)]
-struct AttrCompat {
+struct AttrsCompat {
     attr_valid: u64,
     attr_valid_nsec: u32,
     _unused: u32,
@@ -38,7 +38,7 @@ pub struct InodeAttrs {
     gid: u32,
     rdev: u32,
     blksize: u32,
-    flags: AttrFlags,
+    flags: AttrsFlags,
 }
 
 #[repr(C)]
@@ -58,7 +58,7 @@ pub(super) struct InodeAttrsCompat {
 bitflags::bitflags! {
     #[repr(C)]
     #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Default)]
-    struct AttrFlags: u32 {
+    struct AttrsFlags: u32 {
         const SUBMOUNT = 1 << 0;
         const DAX = 1 << 1;
     }
@@ -139,12 +139,12 @@ impl InodeAttrs {
     }
 
     pub fn submount_root(mut self, is_submount_root: bool) -> Self {
-        self.flags.set(AttrFlags::SUBMOUNT, is_submount_root);
+        self.flags.set(AttrsFlags::SUBMOUNT, is_submount_root);
         self
     }
 }
 
-impl Attr {
+impl Attrs {
     pub fn new() -> Self {
         Self::default()
     }
@@ -161,20 +161,20 @@ impl Attr {
     }
 }
 
-impl EncodeResp for Attr {
+impl EncodeResp for Attrs {
     type Error = std::convert::Infallible;
 
     fn encode(self, id: u64, cfg: Cfg) -> Result<impl IntoIoBuf, Self::Error> {
         #[repr(C)]
         struct Out {
             hdr: RawHeader,
-            attr: Attr,
+            attr: Attrs,
         }
 
         #[repr(C)]
         struct OutCompat {
             hdr: RawHeader,
-            attr: AttrCompat,
+            attr: AttrsCompat,
         }
 
         impl IoBuf for Out {

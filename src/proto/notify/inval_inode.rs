@@ -1,5 +1,5 @@
 use super::{Cfg, EncodeNotify, IntoIoBuf, NotifyCode, RawHeader};
-use crate::types::Ino;
+use crate::types::{FileRange, Ino};
 
 use compio::buf::IoBuf;
 
@@ -24,8 +24,10 @@ impl InvalInode {
 
     pub fn range<R>(mut self, range: R) -> Self
     where
-        R: RangeBounds<u64>,
+        R: Into<FileRange>,
     {
+        let range = range.into();
+
         let start = match range.start_bound() {
             Bound::Unbounded => 0,
             Bound::Included(start) => *start,

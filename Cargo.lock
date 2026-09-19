@@ -334,6 +334,7 @@ dependencies = [
  "nix",
  "page_size",
  "scc",
+ "unsync",
 ]
 
 [[package]]
@@ -897,6 +898,15 @@ name = "unicode-ident"
 version = "1.0.24"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "e6e4313cd5fcd3dad5cafa179702e2b244f760991f45397d14d4ebf38247da75"
+
+[[package]]
+name = "unsync"
+version = "0.2.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "bcfe31ca5328ff203a4e75fbe5c4af4982e5038107c02021809b533047a498f9"
+dependencies = [
+ "slab",
+]
 
 [[package]]
 name = "valuable"

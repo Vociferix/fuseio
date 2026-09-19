@@ -1,5 +1,5 @@
 use super::{Cfg, HDR_LEN, Ino};
-use crate::types::{Mode, SFlag};
+use crate::types::{InodeKind, Mode, SFlag};
 use crate::{Buf, Error, Result};
 
 use std::ffi::OsStr;
@@ -13,16 +13,6 @@ pub struct MkNod {
     rdev: u32,
     buf: Buf,
     name_start: usize,
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
-pub enum InodeKind {
-    File,
-    Dir,
-    CharDev,
-    BlockDev,
-    Fifo,
-    Socket,
 }
 
 impl MkNod {

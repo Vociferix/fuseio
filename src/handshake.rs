@@ -92,8 +92,8 @@ const _: () = assert!(size_of::<InitReqRaw>() == 64);
 const _: () = assert!(size_of::<RespHdr>() == 16);
 const _: () = assert!(size_of::<InitRespRaw>() == 80);
 
-const MAJOR_VER: u32 = 7;
-const MINOR_VER: u32 = 45;
+pub const MAJOR_VER: u32 = 7;
+pub const MINOR_VER: u32 = 45;
 const INIT_OPCODE: u32 = 26;
 
 /// `FUSE_MIN_READ_BUFFER`: the kernel rejects device reads into smaller buffers.

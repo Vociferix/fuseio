@@ -14,6 +14,15 @@ pub struct ForgetIno {
 }
 
 impl ForgetIno {
+    pub(crate) fn new(nodeid: Ino, nlookup: u64) -> Self {
+        Self {
+            inner: ForgetOne {
+                nodeid: nodeid.as_raw(),
+                nlookup,
+            },
+        }
+    }
+
     pub fn ino(&self) -> Ino {
         unsafe { Ino::from_raw_unchecked(self.inner.nodeid) }
     }

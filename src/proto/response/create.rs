@@ -1,26 +1,27 @@
 use super::entry::EntryCompat;
-use super::{Cfg, EncodeResp, Entry, InodeAttrs, IntoIoBuf, IoBuf, Open, RawHeader};
+use super::{Cfg, EncodeResp, Entry, InodeAttrs, IntoIoBuf, IoBuf, Opened, RawHeader};
+use crate::buf::Vectored;
+use crate::fs::types::PassthroughFd;
 use crate::types::{FileHandle, Ino, OpenedFlags};
-use crate::{PassthroughFd, Vectored};
 
 use std::os::fd::AsFd;
 use std::time::Duration;
 
 #[derive(Debug)]
-pub struct Create {
+pub struct Created {
     entry: Entry,
-    open: Open,
+    open: Opened,
 }
 
-impl Create {
+impl Created {
     pub fn new(ino: Ino, fh: FileHandle) -> Self {
         Self {
             entry: Entry::new(ino),
-            open: Open::new(fh),
+            open: Opened::new(fh),
         }
     }
 
-    pub fn from_parts(entry: Entry, open: Open) -> Self {
+    pub fn from_parts(entry: Entry, open: Opened) -> Self {
         Self { entry, open }
     }
 
@@ -74,20 +75,20 @@ impl Create {
     }
 }
 
-impl From<(Entry, Open)> for Create {
-    fn from((entry, open): (Entry, Open)) -> Self {
+impl From<(Entry, Opened)> for Created {
+    fn from((entry, open): (Entry, Opened)) -> Self {
         Self::from_parts(entry, open)
     }
 }
 
-impl EncodeResp for Create {
+impl EncodeResp for Created {
     type Error = std::convert::Infallible;
 
     fn encode(self, id: u64, cfg: Cfg) -> Result<impl IntoIoBuf, Self::Error> {
         let Self { entry, open } = self;
 
         #[repr(transparent)]
-        struct OpenOut(Open);
+        struct OpenedOut(Opened);
 
         #[repr(C)]
         struct EntryOut {
@@ -101,7 +102,7 @@ impl EncodeResp for Create {
             entry: EntryCompat,
         }
 
-        impl IoBuf for OpenOut {
+        impl IoBuf for OpenedOut {
             fn as_init(&self) -> &[u8] {
                 unsafe { std::slice::from_raw_parts(self.buf_ptr(), self.buf_len()) }
             }
@@ -111,7 +112,7 @@ impl EncodeResp for Create {
             }
 
             fn buf_len(&self) -> usize {
-                const { std::mem::size_of::<OpenOut>() }
+                const { std::mem::size_of::<OpenedOut>() }
             }
         }
 
@@ -125,14 +126,14 @@ impl EncodeResp for Create {
             }
 
             fn buf_len(&self) -> usize {
-                self.hdr.len as usize - std::mem::size_of::<OpenOut>()
+                self.hdr.len as usize - std::mem::size_of::<OpenedOut>()
             }
         }
 
         let len = if cfg.minor_ver < 9 {
-            const { (std::mem::size_of::<EntryOutCompat>() + std::mem::size_of::<OpenOut>()) as u32 }
+            const { (std::mem::size_of::<EntryOutCompat>() + std::mem::size_of::<OpenedOut>()) as u32 }
         } else {
-            const { (std::mem::size_of::<EntryOut>() + std::mem::size_of::<OpenOut>()) as u32 }
+            const { (std::mem::size_of::<EntryOut>() + std::mem::size_of::<OpenedOut>()) as u32 }
         };
 
         Ok(Vectored((
@@ -140,7 +141,7 @@ impl EncodeResp for Create {
                 hdr: RawHeader { len, err: 0, id },
                 entry,
             },
-            (OpenOut(open),),
+            (OpenedOut(open),),
         )))
     }
 }

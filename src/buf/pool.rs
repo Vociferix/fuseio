@@ -66,3 +66,9 @@ impl BufPool {
         }
     }
 }
+
+impl Default for BufPool {
+    fn default() -> Self {
+        Self::new()
+    }
+}

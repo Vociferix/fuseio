@@ -1,3 +1,4 @@
+use crate::buf::{IntoIoBuf, IoBuffer};
 use crate::ioctl::clone_fd;
 use crate::types::{Mode, OFlag};
 
@@ -125,6 +126,16 @@ impl FuseChannel {
         B: IoVectoredBuf,
     {
         (&self.dev).write_vectored(buf).await
+    }
+
+    pub async fn write_buf<B>(&self, buf: B) -> BufResult<usize, IoBuffer<B::Buffer, B::VecBuffer>>
+    where
+        B: IntoIoBuf,
+    {
+        match buf.into_io_buf() {
+            IoBuffer::Buf(buf) => self.write(buf).await.map_buffer(IoBuffer::Buf),
+            IoBuffer::VecBuf(buf) => self.write_vectored(buf).await.map_buffer(IoBuffer::VecBuf),
+        }
     }
 }
 

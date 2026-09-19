@@ -5,7 +5,8 @@ use crate::handshake::{Config, Init, handshake};
 use crate::server::{Message, Server};
 use crate::types::{ReplyInitFlags, Version};
 use crate::{
-    BindFs, Builder, Fs, MountFs, MountOpt,
+    Builder, MountOpt,
+    fs::{BindFs, Fs, MountFs},
     mount::{Mount, Unmount},
 };
 
@@ -51,9 +52,9 @@ pub struct HandleIter<F, U: Unmount> {
 }
 
 pub(crate) struct Once<U> {
-    unmount: U,
-    path: PathBuf,
-    opts: MountOptList,
+    pub(crate) unmount: U,
+    pub(crate) path: PathBuf,
+    pub(crate) opts: MountOptList,
 }
 
 pub async fn multi_mount<M, F>(
@@ -141,7 +142,7 @@ where
     U: Unmount,
 {
     pub async fn bind_and_serve(self) -> Result<()> {
-        let server = Server::new(self);
+        let server = Server::new(self).await?;
         Server::serve_requests(&server).await;
         Server::unmount(server).await
     }

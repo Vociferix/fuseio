@@ -35,7 +35,7 @@ impl Create {
     }
 
     pub fn umask(&self) -> Mode {
-        self.mode
+        self.umask
     }
 
     pub fn flags(&self) -> OFlag {

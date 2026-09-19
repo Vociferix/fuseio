@@ -1,12 +1,12 @@
 use super::{Cfg, EncodeResp, IntoIoBuf, IoBuf, RawHeader};
-use crate::PassthroughFd;
+use crate::fs::types::PassthroughFd;
 use crate::types::{FileHandle, OpenedFlags};
 
 use std::os::fd::AsFd;
 
 #[repr(C)]
 #[derive(Debug)]
-pub struct Open {
+pub struct Opened {
     fh: u64,
     open_flags: u32,
     backing_id: u32,
@@ -14,7 +14,7 @@ pub struct Open {
 
 const PASSTHROUGH: u32 = 1u32 << 7;
 
-impl Open {
+impl Opened {
     pub fn new(fh: FileHandle) -> Self {
         Self {
             fh: fh.0,
@@ -40,14 +40,14 @@ impl Open {
     }
 }
 
-impl EncodeResp for Open {
+impl EncodeResp for Opened {
     type Error = std::convert::Infallible;
 
     fn encode(self, id: u64, _: Cfg) -> Result<impl IntoIoBuf, Self::Error> {
         #[repr(C)]
         struct Out {
             hdr: RawHeader,
-            open: Open,
+            open: Opened,
         }
 
         impl IoBuf for Out {

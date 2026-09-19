@@ -17,7 +17,6 @@ mod getattr;
 mod getlk;
 mod getxattr;
 mod getxtimes;
-mod init;
 mod interrupt;
 mod ioctl;
 mod link;
@@ -68,7 +67,6 @@ pub use getattr::GetAttr;
 pub use getlk::GetLk;
 pub use getxattr::GetXattr;
 pub use getxtimes::GetXtimes;
-pub use init::Init;
 pub use interrupt::Interrupt;
 pub use ioctl::Ioctl;
 pub use link::Link;
@@ -103,7 +101,7 @@ pub use tmpfile::TmpFile;
 pub use unlink::Unlink;
 pub use write::Write;
 
-#[derive(Debug)]
+#[derive(Debug, Clone, Copy)]
 pub struct Cfg {
     pub minor_ver: u32,
     /// Flags negotiated in the INIT reply.
@@ -135,7 +133,6 @@ pub enum Body {
     ListXattr(ListXattr),
     RemoveXattr(RemoveXattr),
     Flush(Flush),
-    Init(Init),
     OpenDir(OpenDir),
     ReadDir(ReadDir),
     ReleaseDir(ReleaseDir),
@@ -176,15 +173,15 @@ pub struct AnyRequest {
 }
 
 #[repr(C)]
-struct RawHeader {
-    len: u32,
-    opcode: Opcode,
-    unique: u64,
-    nodeid: u64,
-    uid: u32,
-    gid: u32,
-    pid: u32,
-    _unused: u32,
+pub struct RawHeader {
+    pub len: u32,
+    pub opcode: Opcode,
+    pub unique: u64,
+    pub nodeid: u64,
+    pub uid: u32,
+    pub gid: u32,
+    pub pid: u32,
+    pub _unused: u32,
 }
 
 const HDR_LEN: usize = std::mem::size_of::<RawHeader>();
@@ -263,37 +260,6 @@ opcodes! {
     EXCHANGE: 63,
 
     CUSE_INIT: 4096,
-}
-
-pub fn decode_init(mut buf: Buf) -> Result<(Request, Init)> {
-    if buf.len() < HDR_LEN {
-        return Err(Error::EPROTO);
-    }
-
-    let hdr = unsafe { std::ptr::read(buf.as_ptr() as *const RawHeader) };
-
-    let len = hdr.len as usize;
-    if len < HDR_LEN {
-        return Err(Error::EPROTO);
-    }
-
-    if hdr.opcode != Opcode::INIT {
-        return Err(Error::EPROTO);
-    }
-
-    buf.truncate(len);
-
-    let body = Init::decode(buf)?;
-
-    Ok((
-        Request {
-            id: hdr.unique,
-            uid: Uid::from_raw(hdr.uid),
-            gid: Gid::from_raw(hdr.gid),
-            pid: Pid::from_raw(hdr.pid.cast_signed()),
-        },
-        body,
-    ))
 }
 
 impl AnyRequest {

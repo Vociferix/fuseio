@@ -2,7 +2,7 @@ use super::{Cfg, EncodeResp, IntoIoBuf, IoBuf, RawHeader};
 
 #[repr(C)]
 #[derive(Debug)]
-pub struct StatFs {
+pub struct FsAttrs {
     blocks: u64,
     bfree: u64,
     bavail: u64,
@@ -15,7 +15,7 @@ pub struct StatFs {
 }
 
 #[repr(C)]
-struct StatFsCompat {
+struct FsAttrsCompat {
     blocks: u64,
     bfree: u64,
     bavail: u64,
@@ -25,9 +25,9 @@ struct StatFsCompat {
     namelen: u32,
 }
 
-impl StatFs {
+impl FsAttrs {
     pub const fn new() -> Self {
-        StatFs {
+        FsAttrs {
             blocks: 0,
             bfree: 0,
             bavail: 0,
@@ -81,27 +81,27 @@ impl StatFs {
     }
 }
 
-impl Default for StatFs {
+impl Default for FsAttrs {
     fn default() -> Self {
         const { Self::new() }
     }
 }
 
-impl EncodeResp for StatFs {
+impl EncodeResp for FsAttrs {
     type Error = std::convert::Infallible;
 
     fn encode(self, id: u64, cfg: Cfg) -> Result<impl IntoIoBuf, Self::Error> {
         #[repr(C)]
         struct Out {
             hdr: RawHeader,
-            statfs: StatFs,
+            statfs: FsAttrs,
             _unused: [u32; 6],
         }
 
         #[repr(C)]
         struct OutCompat {
             hdr: RawHeader,
-            statfs: StatFsCompat,
+            statfs: FsAttrsCompat,
         }
 
         impl IoBuf for Out {

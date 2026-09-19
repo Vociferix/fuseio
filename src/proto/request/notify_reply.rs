@@ -6,7 +6,7 @@ use crate::{Buf, Error, Result};
 //       will also have a response, in which case this opcode
 //       would be used for that also. If that happens, this
 //       type will need to support multiple reply types.
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct NotifyReply {
     offset: u64,
     buf: Buf,

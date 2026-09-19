@@ -1,49 +1,91 @@
 use crate::async_rc::AsyncRc;
-use crate::buf::{Buf, BufPool};
+use crate::buf::{Buf, BufPool, IntoIoBuf};
 use crate::dev_fuse::FuseChannel;
 use crate::fs::{BindFs, Fs};
 use crate::handle::{Handle, Once};
 use crate::mount::Unmount;
+use crate::proto::request::{AnyRequest, Body, NotifyReply};
+use crate::types::ReplyInitFlags;
 
+use aligned_vec::{AVec, ConstAlign};
 use compio::BufResult;
 use compio::runtime::JoinHandle;
 use crossfire::{AsyncRx, MAsyncTx, mpsc::Array};
 
-use std::cell::RefCell;
+use std::cell::{Cell, RefCell};
 use std::collections::HashMap;
 use std::io::Result;
+use std::os::fd::AsFd;
 use std::rc::Rc;
 use std::sync::Arc;
 
 pub struct Server<F, U> {
-    id: usize,
-    dev: FuseChannel,
-    fs: F,
-    buf_pool: BufPool,
-    buf_size: usize,
-    open_reqs: RefCell<HashMap<u64, JoinHandle<()>>>,
-    mesh_rx: AsyncRx<Array<Message>>,
-    mesh_tx: Arc<[MAsyncTx<Array<Message>>]>,
-    once: Option<Once<U>>,
+    pub inner: ServerInner,
+    pub fs: F,
+    pub once: Option<Once<U>>,
 }
 
-pub(crate) struct SharedServer {
-    mesh_tx: Vec<MAsyncTx<Array<Message>>>,
+pub struct ServerInner {
+    pub id: usize,
+    pub dev: Rc<FuseChannel>,
+    pub minor_ver: u32,
+    pub flags: ReplyInitFlags,
+    pub buf_pool: BufPool,
+    pub buf_size: usize,
+    pub open_reqs: RefCell<HashMap<u64, JoinHandle<()>>>,
+    pub replies: Rc<ReplyState>,
+    pub mesh_rx: AsyncRx<Array<Message>>,
+    pub mesh_tx: Arc<[MAsyncTx<Array<Message>>]>,
+}
+
+pub struct ReplyState {
+    pub pending: RefCell<HashMap<u32, unsync::oneshot::Sender<NotifyReply>>>,
+    pub next_id: Cell<u32>,
 }
 
 pub(crate) enum Message {
     Shutdown,
     Interrupt(u64),
-    Reply(u64, Vec<u8>),
+    Reply(u64, AVec<u8, ConstAlign<8>>),
 }
 
-impl<F, U> Server<F, U> {
-    pub(crate) fn new<B>(h: Handle<B, U>) -> AsyncRc<Self>
+impl<F, U> std::ops::Deref for Server<F, U> {
+    type Target = ServerInner;
+
+    fn deref(&self) -> &Self::Target {
+        &self.inner
+    }
+}
+
+impl<F, U> Server<F, U>
+where
+    F: crate::fs::Fs,
+    U: Unmount,
+{
+    pub(crate) async fn new<B>(h: Handle<B, U>) -> std::io::Result<AsyncRc<Self>>
     where
         B: BindFs<BoundFs = F>,
         F: Fs,
     {
-        todo!()
+        Ok(AsyncRc::new(Self {
+            inner: ServerInner {
+                id: h.id,
+                dev: Rc::new(h.dev.bind()?),
+                minor_ver: h.minor_ver,
+                flags: h.flags,
+                buf_pool: BufPool::new(),
+                buf_size: crate::MAX_WRITE_SIZE,
+                open_reqs: RefCell::new(HashMap::new()),
+                replies: Rc::new(ReplyState {
+                    pending: RefCell::new(HashMap::new()),
+                    next_id: Cell::new(0),
+                }),
+                mesh_rx: h.mesh_rx,
+                mesh_tx: h.mesh_tx,
+            },
+            fs: h.fs.bind().await?,
+            once: h.once,
+        }))
     }
 
     pub(crate) async fn serve_requests(this: &AsyncRc<Self>) {
@@ -51,7 +93,22 @@ impl<F, U> Server<F, U> {
     }
 
     pub(crate) async fn unmount(this: AsyncRc<Self>) -> Result<()> {
-        todo!()
+        let Self {
+            inner: ServerInner { dev, .. },
+            fs,
+            once,
+            ..
+        } = this.unwrap().await;
+
+        fs.unmount().await;
+
+        if let Some(once) = once {
+            once.unmount
+                .unmount(dev.as_fd(), &once.path, &once.opts)
+                .await?;
+        }
+
+        Ok(())
     }
 
     async fn serve_one(this: &AsyncRc<Self>) -> bool {
@@ -65,7 +122,7 @@ impl<F, U> Server<F, U> {
             either::Left(Ok(Message::Shutdown) | Err(_)) => return false,
             either::Left(Ok(Message::Interrupt(id))) => {
                 if let Some(task) = this.open_reqs.borrow_mut().remove(&id) {
-                    let _ = task.cancel();
+                    drop(task.cancel());
                 }
             }
             either::Left(Ok(Message::Reply(id, data))) => {
@@ -86,7 +143,7 @@ impl<F, U> Server<F, U> {
         true
     }
 
-    fn handle_reply(&self, id: u64, data: Vec<u8>) {
+    fn handle_reply(&self, id: u64, data: AVec<u8, ConstAlign<8>>) {
         todo!()
     }
 
@@ -102,6 +159,60 @@ impl<F, U> Server<F, U> {
     // the same errno, since ENOSYS on RENAME2 makes Linux disable all flagged
     // renames for the mount.
     fn handle_req(this: &AsyncRc<Self>, buf: Buf) -> bool {
+        if buf.len() < std::mem::size_of::<crate::proto::request::RawHeader>() {
+            return true;
+        }
+
+        let unique = unsafe { (*(buf.as_ptr() as *const crate::proto::request::RawHeader)).unique };
+
+        let AnyRequest { req, body } = match AnyRequest::decode(buf, this.minor_ver, this.flags) {
+            Ok(req) => req,
+            Err(err) => {
+                let this = this.clone();
+                compio::runtime::spawn(async move {
+                    let _ = this.dev.write_buf(err.into_reply(unique)).await;
+                })
+                .detach();
+                return true;
+            }
+        };
+
+        match body {
+            Body::Interrupt(intr) => {
+                if let Some(task) = this.open_reqs.borrow_mut().remove(&intr.id()) {
+                    drop(task.cancel());
+                } else {
+                    let this = this.clone();
+                    let id = intr.id();
+                    compio::runtime::spawn(async move {
+                        for tx in this
+                            .mesh_tx
+                            .iter()
+                            .enumerate()
+                            .filter_map(|(idx, tx)| (idx != this.id).then_some(tx))
+                        {
+                            let _ = tx.send(Message::Interrupt(id)).await;
+                        }
+                    })
+                    .detach();
+                }
+            }
+            Body::NotifyReply(notify) => {
+                todo!()
+            }
+            body => {
+                let this = this.clone();
+                compio::runtime::spawn(async move {
+                    this.handle_fs_op(req, body).await;
+                })
+                .detach();
+            }
+        }
+
+        true
+    }
+
+    async fn handle_fs_op(&self, req: crate::types::Request, body: Body) {
         todo!()
     }
 }
@@ -145,4 +256,17 @@ where
     }
 
     SelectBiased { a, b }
+}
+
+impl ReplyState {
+    pub fn channel(&self) -> (u32, unsync::oneshot::Receiver<NotifyReply>) {
+        let id = self.next_id.get();
+        self.next_id.set(id.wrapping_add(1));
+
+        let (tx, rx) = unsync::oneshot::channel();
+
+        self.pending.borrow_mut().insert(id, tx);
+
+        (id, rx)
+    }
 }
