@@ -5,7 +5,7 @@ use super::{
 use crate::buf::Buf;
 use crate::proto::request::ReadDirPlus;
 use crate::proto::response::{Data, Entry};
-use crate::types::{FileHandle, Ino, InodeKind, LockOwner, OFlag, SFlag};
+use crate::types::{FileHandle, Ino, LockOwner, OFlag, SFlag};
 use crate::{Error, Result};
 
 use futures_util::{Stream, StreamExt};
@@ -131,17 +131,29 @@ impl DirEntryPlusBuf {
         DirEntryPlus::entry_size_for(&name) <= self.remaining_capacity()
     }
 
-    pub fn push<T>(&mut self, entry: &DirEntryPlus<T>) -> Result<bool>
+    // Document this better later: Error::EIO can be propagated or the
+    // filesystem can use it to be informed that the provided name is
+    // invalid. Error::EINVAL just means that the kernel didn't give a
+    // large enough buffer to write a single entry, and thus should
+    // always be propagated.
+    pub fn push<T>(&mut self, entry: DirEntryPlus<T>) -> Result<bool>
     where
         T: AsRef<OsStr>,
     {
         let name = entry.dirent.name.as_ref().as_bytes();
-        let namelen = u32::try_from(name.len()).map_err(|_| Error::E2BIG)?;
+        let namelen = u32::try_from(name.len()).map_err(|_| Error::EIO)?;
+
+        if namelen == 0 || memchr::memchr2(0, b'/', name).is_some() {
+            return Err(Error::EIO);
+        }
 
         let entry_len = (namelen as usize) + std::mem::size_of::<RawDirEntryPlus>();
         let padded_entry_len = entry_len.next_multiple_of(DIRENT_ALIGN);
         let padding_len = padded_entry_len - entry_len;
         if padded_entry_len > self.remaining_capacity() {
+            if self.buf.is_empty() {
+                return Err(Error::EINVAL);
+            }
             return Ok(false);
         }
 
@@ -152,7 +164,7 @@ impl DirEntryPlusBuf {
             kind: u32::from(SFlag::from(entry.dirent.kind).bits()) >> 12,
         };
         let raw = RawDirEntryPlus {
-            entry: unsafe { std::ptr::read(&entry.entry) },
+            entry: entry.entry,
             dirent,
         };
         let raw = unsafe {
@@ -179,7 +191,7 @@ impl DirEntryPlusBuf {
     {
         let start = self.count;
         for entry in iter {
-            if !self.push(&entry)? {
+            if !self.push(entry)? {
                 break;
             }
         }
@@ -194,7 +206,7 @@ impl DirEntryPlusBuf {
         let mut stream = std::pin::pin!(stream);
         let start = self.count;
         while let Some(entry) = stream.next().await
-            && self.push(&entry)?
+            && self.push(entry)?
         {}
         Ok(self.count - start)
     }
@@ -206,11 +218,8 @@ impl DirEntryPlusBuf {
 
 impl<T: AsRef<OsStr>> DirEntryPlus<T> {
     pub fn entry_size_for(name: &T) -> usize {
-        name.as_ref()
-            .as_bytes()
-            .len()
+        (name.as_ref().as_bytes().len() + std::mem::size_of::<RawDirEntryPlus>())
             .next_multiple_of(DIRENT_ALIGN)
-            + std::mem::size_of::<RawDirEntryPlus>()
     }
 
     pub fn entry_size(&self) -> usize {

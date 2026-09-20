@@ -19,6 +19,8 @@ pub mod types {
         StatXSync, Uid, Version, Whence, XattrMode,
     };
 
+    pub use crate::handshake::{Config, KernelConfig};
+
     pub use crate::req::{DirEntry, DirEntryBuf, DirEntryPlus, DirEntryPlusBuf, XattrKeyBuf};
 
     pub use crate::proto::response::{Attrs, Created, Entry, FsAttrs, Opened, PosixLock, StatX};

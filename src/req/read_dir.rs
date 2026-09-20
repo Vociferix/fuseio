@@ -33,17 +33,17 @@ pub struct DirEntry<T> {
     /// Arbitrary locator for the _next_ entry.
     ///
     /// Future [`Fs::read_dir`] or [`Fs::read_dir_plus`] calls may provide this
-    /// value from [`ReadDirReq::cookie`] or [`ReadDirPlus::cookie`] to resume
-    /// reading starting with the entry following this one.
+    /// value from [`ReadDirReq::cookie`] or [`ReadDirPlusReq::cookie`] to
+    /// resume reading starting with the entry following this one.
     ///
     /// Note that official FUSE documentation names this field `offset`, which
     /// can be misleading since the value can be arbitrary and need not be
     /// ordered across sequential entries. They only need to be usable by the
     /// filesystem to locate the initial entry on a new directory read.
     ///
-    /// [Fs::read_dir]: crate::fs::Fs::read_dir
-    /// [Fs::read_dir_plus]: crate::fs::Fs::read_dir_plus
-    /// [ReadDirPlus::cookie]: super::ReadDirPlus::cookie
+    /// [`Fs::read_dir`]: crate::fs::Fs::read_dir
+    /// [`Fs::read_dir_plus`]: crate::fs::Fs::read_dir_plus
+    /// [`ReadDirPlusReq::cookie`]: super::ReadDirPlusReq::cookie
     pub cookie: u64,
 
     pub name: T,
@@ -153,17 +153,29 @@ impl DirEntryBuf {
         DirEntry::entry_size_for(&name) <= self.remaining_capacity()
     }
 
-    pub fn push<T>(&mut self, entry: &DirEntry<T>) -> Result<bool>
+    // Document this better later: Error::EIO can be propagated or the
+    // filesystem can use it to be informed that the provided name is
+    // invalid. Error::EINVAL just means that the kernel didn't give a
+    // large enough buffer to write a single entry, and thus should
+    // always be propagated.
+    pub fn push<T>(&mut self, entry: DirEntry<T>) -> Result<bool>
     where
         T: AsRef<OsStr>,
     {
         let name = entry.name.as_ref().as_bytes();
-        let namelen = u32::try_from(name.len()).map_err(|_| Error::E2BIG)?;
+        let namelen = u32::try_from(name.len()).map_err(|_| Error::EIO)?;
+
+        if namelen == 0 || memchr::memchr2(0, b'/', name).is_some() {
+            return Err(Error::EIO);
+        }
 
         let entry_len = (namelen as usize) + std::mem::size_of::<RawDirEntry>();
         let padded_entry_len = entry_len.next_multiple_of(DIRENT_ALIGN);
         let padding_len = padded_entry_len - entry_len;
         if padded_entry_len > self.remaining_capacity() {
+            if self.buf.is_empty() {
+                return Err(Error::EINVAL);
+            }
             return Ok(false);
         }
 
@@ -197,7 +209,7 @@ impl DirEntryBuf {
     {
         let start = self.count;
         for entry in iter {
-            if !self.push(&entry)? {
+            if !self.push(entry)? {
                 break;
             }
         }
@@ -212,7 +224,7 @@ impl DirEntryBuf {
         let mut stream = std::pin::pin!(stream);
         let start = self.count;
         while let Some(entry) = stream.next().await
-            && self.push(&entry)?
+            && self.push(entry)?
         {}
         Ok(self.count - start)
     }
@@ -224,11 +236,8 @@ impl DirEntryBuf {
 
 impl<T: AsRef<OsStr>> DirEntry<T> {
     pub fn entry_size_for(name: &T) -> usize {
-        name.as_ref()
-            .as_bytes()
-            .len()
+        (name.as_ref().as_bytes().len() + std::mem::size_of::<RawDirEntry>())
             .next_multiple_of(DIRENT_ALIGN)
-            + std::mem::size_of::<RawDirEntry>()
     }
 
     pub fn entry_size(&self) -> usize {

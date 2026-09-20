@@ -87,7 +87,7 @@ where
                 caps: h.config.caps(),
                 buf_pool: BufPool::new(),
                 // A write request is a header plus up to `max_write` bytes.
-                buf_size: h.config.max_write() as usize + BUF_HEADER_SIZE,
+                buf_size: h.config.max_write() + BUF_HEADER_SIZE,
                 open_reqs: RefCell::new(HashMap::new()),
                 replies: ReplyState {
                     pending: RefCell::new(HashMap::new()),

@@ -2,11 +2,13 @@ use crate::MountOpt;
 use crate::async_arc::AsyncArc;
 use crate::dev_fuse::DevFuse;
 use crate::fs::{BindFs, MountFs};
+use crate::proto::request::Opcode;
 use crate::types::{FsCaps, KernelCaps, KernelInitFlags, ReplyInitFlags, Version};
 
 use std::io::{ErrorKind, Result};
 use std::mem::size_of;
 use std::os::fd::AsFd;
+use std::time::Duration;
 
 #[derive(Debug, Clone, Copy)]
 pub struct KernelConfig {
@@ -23,7 +25,6 @@ pub struct Config {
     congestion_threshold: u16,
     max_write: u32,
     time_gran: u32,
-    map_alignment: u16,
 }
 
 pub struct Init<F> {
@@ -37,7 +38,7 @@ pub struct Init<F> {
 #[repr(C)]
 struct ReqHdr {
     len: u32,
-    opcode: u32,
+    opcode: Opcode,
     unique: u64,
     _nodeid: u64,
     _uid: u32,
@@ -94,10 +95,15 @@ const _: () = assert!(size_of::<InitRespRaw>() == 80);
 
 pub const MAJOR_VER: u32 = 7;
 pub const MINOR_VER: u32 = 45;
-const INIT_OPCODE: u32 = 26;
 
 /// `FUSE_MIN_READ_BUFFER`: the kernel rejects device reads into smaller buffers.
 const MIN_READ_BUFFER: usize = 8192;
+
+/// The kernel raises anything smaller to this, so `max_write` is clamped to it.
+const MIN_MAX_WRITE: u32 = 4096;
+
+/// The kernel ignores a `time_gran` above one second.
+const MAX_TIME_GRAN: u32 = 1_000_000_000;
 
 /// `fuse_init_out` body sizes expected by kernels older than 7.5 and 7.23.
 const COMPAT_INIT_OUT_SIZE: usize = 8;
@@ -125,7 +131,6 @@ impl KernelConfig {
             congestion_threshold: 0,
             max_write: crate::server::MAX_WRITE_SIZE as u32,
             time_gran: 1,
-            map_alignment: 0,
         }
     }
 }
@@ -136,12 +141,109 @@ impl Config {
         self.caps
     }
 
-    /// Returns the largest write request the filesystem accepts.
-    pub fn max_write(&self) -> u32 {
-        self.max_write
+    /// Returns the maximum readahead, in bytes.
+    pub fn max_readahead(&self) -> usize {
+        self.max_readahead as usize
     }
 
-    // TODO: setters
+    /// Returns how many background requests the kernel may have in flight, or
+    /// zero if the kernel's own default applies.
+    pub fn max_background(&self) -> u16 {
+        self.max_background
+    }
+
+    /// Returns the number of background requests at which the kernel considers
+    /// the filesystem congested, or [`None`] if it follows
+    /// [`max_background`](Self::max_background).
+    pub fn congestion_threshold(&self) -> Option<u16> {
+        (self.congestion_threshold != 0).then_some(self.congestion_threshold)
+    }
+
+    /// Returns the largest write request the filesystem accepts, in bytes.
+    pub fn max_write(&self) -> usize {
+        self.max_write as usize
+    }
+
+    /// Returns the granularity of the filesystem's timestamps.
+    pub fn time_gran(&self) -> Duration {
+        Duration::from_nanos(self.time_gran.into())
+    }
+
+    /// Sets the features the filesystem enables, replacing the defaults.
+    ///
+    /// Enabling a feature the kernel didn't offer fails the mount, so mask the
+    /// wanted features with
+    /// [`FsCaps::supported`](crate::types::FsCaps::supported) when the
+    /// filesystem should run against kernels that may lack them.
+    pub fn with_caps(mut self, caps: FsCaps) -> Self {
+        self.caps = caps;
+        self
+    }
+
+    /// Enables features in addition to those already set.
+    pub fn enable(mut self, caps: FsCaps) -> Self {
+        self.caps = self.caps.union(caps);
+        self
+    }
+
+    /// Disables features, including any enabled by default.
+    pub fn disable(mut self, caps: FsCaps) -> Self {
+        self.caps = self.caps.difference(caps);
+        self
+    }
+
+    /// Sets the maximum readahead, in bytes.
+    ///
+    /// The kernel uses the smaller of this and its own value, so this can only
+    /// lower readahead below what
+    /// [`KernelConfig::max_readahead`] reported.
+    pub fn with_max_readahead(mut self, max_readahead: usize) -> Self {
+        self.max_readahead = max_readahead.try_into().unwrap_or(u32::MAX);
+        self
+    }
+
+    /// Sets how many background requests the kernel may have in flight.
+    ///
+    /// Zero leaves the kernel's own default in place.
+    pub fn with_max_background(mut self, max_background: u16) -> Self {
+        self.max_background = max_background;
+        self
+    }
+
+    /// Sets the number of background requests at which the kernel considers the
+    /// filesystem congested.
+    ///
+    /// [`None`] selects three quarters of
+    /// [`with_max_background`](Self::with_max_background), as libfuse does. The
+    /// kernel caps this at the background limit.
+    pub fn with_congestion_threshold(mut self, threshold: impl Into<Option<u16>>) -> Self {
+        self.congestion_threshold = threshold.into().unwrap_or(0);
+        self
+    }
+
+    /// Sets the largest write request the filesystem accepts, in bytes.
+    ///
+    /// Clamped to at least 4 KiB, which the kernel enforces anyway, and to
+    /// [`u32::MAX`]. Each worker allocates a receive buffer of this size plus
+    /// room for a request header.
+    pub fn with_max_write(mut self, max_write: usize) -> Self {
+        let max_write = u32::try_from(max_write).unwrap_or(u32::MAX);
+        self.max_write = max_write.max(MIN_MAX_WRITE);
+        self
+    }
+
+    /// Sets the granularity of the filesystem's timestamps.
+    ///
+    /// Clamped to between one nanosecond and one second. The kernel rounds
+    /// timestamps it assigns down to a multiple of this.
+    pub fn with_time_gran(mut self, time_gran: Duration) -> Self {
+        self.time_gran = time_gran
+            .as_nanos()
+            .clamp(1, u128::from(MAX_TIME_GRAN))
+            .try_into()
+            .unwrap_or(MAX_TIME_GRAN);
+        self
+    }
 }
 
 pub async fn handshake<F: MountFs>(
@@ -155,14 +257,29 @@ pub async fn handshake<F: MountFs>(
         // `max_readahead` and `flags` only exist from 7.6.
         let min_len = size_of::<ReqHdr>() + if msg.minor >= 6 { 16 } else { 8 };
 
-        if msg.hdr.opcode != INIT_OPCODE
+        if msg.hdr.opcode != Opcode::INIT
             || (msg.hdr.len as usize) < min_len
             || msg.major < MAJOR_VER
         {
             let _ = write_init_err(dev.clone(), msg.hdr.unique, crate::Error::EPROTO).await;
 
-            if msg.hdr.opcode != INIT_OPCODE {
-                todo!();
+            if msg.hdr.opcode != Opcode::INIT {
+                log::error!(
+                    "expected INIT opcode from kernel, received {}",
+                    msg.hdr.opcode
+                );
+            } else if (msg.hdr.len as usize) < min_len {
+                log::error!(
+                    "invalid INIT request received from kernel: message length too small ({})",
+                    msg.hdr.len
+                );
+            } else {
+                log::error!(
+                    "kernel FUSE version unsupported: {}.{} (minimum supported {}.0)",
+                    msg.major,
+                    msg.minor,
+                    MAJOR_VER
+                );
             }
 
             return Err(std::io::Error::new(
@@ -213,6 +330,7 @@ pub async fn handshake<F: MountFs>(
     let fs = match fs.mount(kconf, opts).await {
         Ok(fs) => fs,
         Err(err) => {
+            log::error!("failed to initialize filesystem: {err}");
             let _ = write_init_err(dev.clone(), unique, err).await;
             return Err(err.into());
         }
@@ -228,6 +346,8 @@ pub async fn handshake<F: MountFs>(
     let unsupported = config.caps.unsupported(kconf.caps);
     if !unsupported.is_empty() {
         let _ = write_init_err(dev.clone(), unique, crate::Error::EPROTO).await;
+
+        log::error!("filsystem enabled capabilities the kernel didn't offer: {unsupported:?}");
 
         return Err(std::io::Error::new(
             ErrorKind::InvalidInput,
@@ -249,7 +369,8 @@ pub async fn handshake<F: MountFs>(
         max_readahead,
         flags1,
         max_write: config.max_write,
-        map_alignment: config.map_alignment,
+        // Only read by the kernel when the reply sets MAP_ALIGNMENT, which this
+        // crate never negotiates (DAX is virtio-fs only), so it stays zero.
         flags2,
         ..InitRespRaw::default()
     };
@@ -290,9 +411,13 @@ pub async fn handshake<F: MountFs>(
 
     write_init_resp(dev, resp).await?;
 
+    let ver = Version(MAJOR_VER, msg.minor.min(MINOR_VER));
+
+    log::info!("FUSE initialized for protocol version {ver}");
+
     Ok(Init {
         fs,
-        ver: Version(MAJOR_VER, msg.minor.min(MINOR_VER)),
+        ver,
         flags,
         max_readahead: max_readahead as usize,
         config,
@@ -316,11 +441,16 @@ fn read_init_req_sync(dev: &DevFuse) -> Result<InitReqRaw> {
             Ok(len) => break len,
             // ENOENT means the request was interrupted and the read can be retried.
             Err(nix::Error::EINTR | nix::Error::EAGAIN | nix::Error::ENOENT) => {}
-            Err(err) => return Err(err.into()),
+            Err(err) => {
+                log::error!("failed to read FUSE device: {err}");
+                return Err(err.into());
+            }
         }
     };
 
     if len < size_of::<ReqHdr>() {
+        log::error!("incomplete INIT request received from FUSE device: {len} bytes read");
+
         return Err(std::io::Error::new(
             ErrorKind::UnexpectedEof,
             "short read from FUSE device",
@@ -370,7 +500,10 @@ fn write_init_resp_sync(dev: &DevFuse, resp: InitRespRaw) -> Result<()> {
         match nix::unistd::write(dev.as_fd(), buf) {
             Ok(_) => return Ok(()),
             Err(nix::Error::EINTR | nix::Error::EAGAIN) => {}
-            Err(err) => return Err(err.into()),
+            Err(err) => {
+                log::error!("failed to write to FUSE device: {err}");
+                return Err(err.into());
+            }
         }
     }
 }
