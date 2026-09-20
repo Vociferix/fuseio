@@ -1,7 +1,10 @@
 use super::ioctl_retry::Raw;
-use super::{Cfg, EncodeResp, IntoIoBuf, RawHeader};
+use super::{Cfg, EncodeResp, RawHeader};
 use crate::types::IoctlFlags;
-use crate::{Result, Vectored};
+use crate::{
+    Result,
+    buf::{IntoIoBuf, Vectored},
+};
 
 #[derive(Debug)]
 pub struct Ioctl<B> {

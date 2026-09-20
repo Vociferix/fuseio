@@ -1,6 +1,7 @@
 use super::{Cfg, HDR_LEN, Ino};
+use crate::buf::Buf;
 use crate::types::AccessFlags;
-use crate::{Buf, Error, Result};
+use crate::{Error, Result};
 
 #[derive(Debug)]
 pub struct Access {

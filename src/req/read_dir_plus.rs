@@ -1,7 +1,7 @@
-use super::Req;
+use super::{DirEntry, RawDirEntry, Req};
 use crate::buf::Buf;
-use crate::proto::request::ReadDir;
-use crate::proto::response::Data;
+use crate::proto::request::ReadDirPlus;
+use crate::proto::response::{Data, Entry};
 use crate::types::{FileHandle, Ino, InodeKind, LockOwner, OFlag, SFlag};
 use crate::{Error, Result};
 
@@ -11,35 +11,31 @@ use std::ffi::OsStr;
 use std::os::unix::ffi::OsStrExt;
 
 #[derive(Debug)]
-pub struct ReadDirReq {
+pub struct ReadDirPlusReq {
     req: Req,
-    readdir: ReadDir,
+    readdir: ReadDirPlus,
 }
 
 #[derive(Debug)]
-pub struct DirEntryBuf {
+pub struct DirEntryPlusBuf {
     max_len: usize,
     buf: Buf,
 }
 
-#[derive(Debug)]
-pub struct DirEntry<T> {
-    pub ino: Ino,
-    pub kind: InodeKind,
-    pub next: u64,
-    pub name: T,
-}
-
 #[repr(C)]
-pub struct RawDirEntry {
-    pub ino: u64,
-    pub next: u64,
-    pub namelen: u32,
-    pub kind: u32,
+struct RawDirEntryPlus {
+    entry: Entry,
+    dirent: RawDirEntry,
 }
 
-impl ReadDirReq {
-    pub(crate) fn new(req: Req, readdir: ReadDir) -> Self {
+#[derive(Debug)]
+pub struct DirEntryPlus<T> {
+    pub entry: Entry,
+    pub dirent: DirEntry<T>,
+}
+
+impl ReadDirPlusReq {
+    pub(crate) fn new(req: Req, readdir: ReadDirPlus) -> Self {
         Self { req, readdir }
     }
 
@@ -71,17 +67,17 @@ impl ReadDirReq {
         self.readdir.open_flags()
     }
 
-    pub fn new_buffer(&self) -> DirEntryBuf {
+    pub fn new_buffer(&self) -> DirEntryPlusBuf {
         let len = self.len();
-        DirEntryBuf {
+        DirEntryPlusBuf {
             max_len: len,
             buf: self.buffer_pool().checkout_with_capacity(len),
         }
     }
 
-    pub fn collect_entries<I, T>(&self, iter: I) -> Result<DirEntryBuf>
+    pub fn collect_entries<I, T>(&self, iter: I) -> Result<DirEntryPlusBuf>
     where
-        I: IntoIterator<Item = DirEntry<T>>,
+        I: IntoIterator<Item = DirEntryPlus<T>>,
         T: AsRef<OsStr>,
     {
         let mut buf = self.new_buffer();
@@ -89,9 +85,9 @@ impl ReadDirReq {
         Ok(buf)
     }
 
-    pub async fn collect_entry_stream<S, T>(&self, stream: S) -> Result<DirEntryBuf>
+    pub async fn collect_entry_stream<S, T>(&self, stream: S) -> Result<DirEntryPlusBuf>
     where
-        S: Stream<Item = DirEntry<T>>,
+        S: Stream<Item = DirEntryPlus<T>>,
         T: AsRef<OsStr>,
     {
         let mut buf = self.new_buffer();
@@ -100,7 +96,7 @@ impl ReadDirReq {
     }
 }
 
-impl std::ops::Deref for ReadDirReq {
+impl std::ops::Deref for ReadDirPlusReq {
     type Target = Req;
 
     fn deref(&self) -> &Self::Target {
@@ -108,18 +104,18 @@ impl std::ops::Deref for ReadDirReq {
     }
 }
 
-impl DirEntryBuf {
-    pub fn push<T>(&mut self, entry: DirEntry<T>) -> Result<()>
+impl DirEntryPlusBuf {
+    pub fn push<T>(&mut self, entry: DirEntryPlus<T>) -> Result<()>
     where
         T: AsRef<OsStr>,
     {
-        let name = entry.name.as_ref().as_bytes();
+        let name = entry.dirent.name.as_ref().as_bytes();
 
         let Some(total_len) = self
             .buf
             .len()
             .checked_add(name.len())
-            .and_then(|len| len.checked_add(std::mem::size_of::<RawDirEntry>()))
+            .and_then(|len| len.checked_add(std::mem::size_of::<RawDirEntryPlus>()))
         else {
             return Err(Error::ERANGE);
         };
@@ -131,16 +127,20 @@ impl DirEntryBuf {
             return Err(Error::E2BIG);
         };
 
-        let raw = RawDirEntry {
-            ino: entry.ino.as_raw(),
-            next: entry.next,
+        let dirent = RawDirEntry {
+            ino: entry.dirent.ino.as_raw(),
+            next: entry.dirent.next,
             namelen,
-            kind: SFlag::from(entry.kind).bits(),
+            kind: SFlag::from(entry.dirent.kind).bits(),
+        };
+        let raw = RawDirEntryPlus {
+            entry: entry.entry,
+            dirent,
         };
         let raw = unsafe {
             std::slice::from_raw_parts(
-                &raw as *const RawDirEntry as *const u8,
-                std::mem::size_of::<RawDirEntry>(),
+                &raw as *const RawDirEntryPlus as *const u8,
+                std::mem::size_of::<RawDirEntryPlus>(),
             )
         };
 
@@ -152,7 +152,7 @@ impl DirEntryBuf {
 
     pub fn extend<I, T>(&mut self, iter: I) -> Result<()>
     where
-        I: IntoIterator<Item = DirEntry<T>>,
+        I: IntoIterator<Item = DirEntryPlus<T>>,
         T: AsRef<OsStr>,
     {
         for entry in iter {
@@ -163,7 +163,7 @@ impl DirEntryBuf {
 
     pub async fn extend_stream<S, T>(&mut self, stream: S) -> Result<()>
     where
-        S: Stream<Item = DirEntry<T>>,
+        S: Stream<Item = DirEntryPlus<T>>,
         T: AsRef<OsStr>,
     {
         let mut stream = std::pin::pin!(stream);
@@ -176,5 +176,14 @@ impl DirEntryBuf {
 
     pub(crate) fn into_data(self) -> Data<Buf> {
         Data::new(self.buf)
+    }
+}
+
+impl<T> DirEntry<T> {
+    pub fn plus(self, entry: Entry) -> DirEntryPlus<T> {
+        DirEntryPlus {
+            entry,
+            dirent: self,
+        }
     }
 }

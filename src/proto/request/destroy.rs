@@ -1,5 +1,5 @@
 use super::{Cfg, Ino};
-use crate::{Buf, Result};
+use crate::{Result, buf::Buf};
 
 #[derive(Debug)]
 pub struct Destroy {

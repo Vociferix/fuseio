@@ -1,6 +1,7 @@
+use crate::buf::IntoIoBuf;
 use crate::handshake::{Config, KernelConfig};
 use crate::types::PollFlags;
-use crate::{Error, IntoIoBuf, MountOpt, Result};
+use crate::{Error, MountOpt, Result};
 
 pub mod req {
     pub use crate::req::*;
@@ -9,11 +10,7 @@ pub mod req {
 pub mod types {
     use std::marker::PhantomData;
 
-    pub struct ReadLinkBuf<T>(PhantomData<T>);
-    pub struct DirEntries<T>(PhantomData<T>);
-    pub struct XattrKeyBuf<T>(PhantomData<T>);
     pub struct IoctlBuf<T>(PhantomData<T>);
-    pub struct DirPlusEntries<T>(PhantomData<T>);
 
     pub use crate::types::{
         Abi, AccessFlags, CopyFileRangePos, FileFlag, FileHandle, FileRange, FileTime, ForgetIno,
@@ -22,19 +19,23 @@ pub mod types {
         StatXSync, Uid, Version, Whence, XattrMode,
     };
 
+    pub use crate::req::{DirEntry, DirEntryBuf, DirEntryPlus, DirEntryPlusBuf, XattrKeyBuf};
+
     pub use crate::proto::response::{Attrs, Created, Entry, FsAttrs, Opened, PosixLock, StatX};
 
     pub use crate::passthrough::{BackingId, PassthroughFd};
 
     pub use crate::context::{CacheData, Context};
 
-    pub use futures_util::Stream;
+    pub use futures_util::{Stream, StreamExt};
 }
 
 pub mod prelude {
     pub use super::req::*;
     pub use super::types::*;
     pub use super::{BindFs, Fs, MountFs};
+    pub use crate::buf::Buf;
+    pub use crate::{Error, Result};
 }
 
 pub trait Fs: Sized + 'static {
@@ -61,9 +62,9 @@ pub trait Fs: Sized + 'static {
         Err(Error::ENOSYS)
     }
 
-    async fn read_link(&self, req: req::ReadLinkReq) -> Result<types::ReadLinkBuf<impl IntoIoBuf>> {
+    async fn read_link(&self, req: req::ReadLinkReq) -> Result<impl IntoIoBuf> {
         let _ = (self, req);
-        Err::<types::ReadLinkBuf<[u8; 0]>, _>(Error::ENOSYS)
+        Err::<[u8; 0], _>(Error::ENOSYS)
     }
 
     async fn make_node(&self, req: req::MakeNodeReq) -> Result<types::Entry> {
@@ -131,9 +132,9 @@ pub trait Fs: Sized + 'static {
         Err(Error::ENOSYS)
     }
 
-    async fn read_dir(&self, req: req::ReadDirReq) -> Result<types::DirEntries<impl IntoIoBuf>> {
+    async fn read_dir(&self, req: req::ReadDirReq) -> Result<types::DirEntryBuf> {
         let _ = (self, req);
-        Err::<types::DirEntries<[u8; 0]>, _>(Error::ENOSYS)
+        Err(Error::ENOSYS)
     }
 
     async fn statfs(&self, req: req::StatFsReq) -> Result<types::FsAttrs> {
@@ -164,12 +165,9 @@ pub trait Fs: Sized + 'static {
         Err::<futures_util::stream::Empty<usize>, _>(Error::ENOSYS)
     }
 
-    async fn xattr_keys(
-        &self,
-        req: req::XattrKeysReq,
-    ) -> Result<types::XattrKeyBuf<impl IntoIoBuf>> {
+    async fn xattr_keys(&self, req: req::XattrKeysReq) -> Result<types::XattrKeyBuf> {
         let _ = (self, req);
-        Err::<types::XattrKeyBuf<[u8; 0]>, _>(Error::ENOSYS)
+        Err(Error::ENOSYS)
     }
 
     async fn remove_xattr(&self, req: req::RemoveXattrReq) -> Result<()> {
@@ -232,12 +230,9 @@ pub trait Fs: Sized + 'static {
         Err(Error::ENOSYS)
     }
 
-    async fn read_dir_plus(
-        &self,
-        req: req::ReadDirReq,
-    ) -> Result<types::DirPlusEntries<impl IntoIoBuf>> {
+    async fn read_dir_plus(&self, req: req::ReadDirPlusReq) -> Result<types::DirEntryPlusBuf> {
         let _ = (self, req);
-        Err::<types::DirPlusEntries<[u8; 0]>, _>(Error::ENOSYS)
+        Err(Error::ENOSYS)
     }
 
     async fn copy_file_range(&self, req: req::CopyFileRangeReq) -> Result<u64> {

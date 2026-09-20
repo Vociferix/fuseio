@@ -7,8 +7,8 @@ use crate::fs::{BindFs, Fs};
 use crate::handle::{Handle, Once};
 use crate::mount::Unmount;
 use crate::proto::request::{self, AnyRequest, Body, NotifyReply, SharedNotifyReply};
-use crate::proto::response::EncodeResp;
-use crate::proto::response::{Bmap, CopyFileRange, Data, Lseek, Poll, Write, XattrLen};
+use crate::proto::response::{Bmap, CopyFileRange, Data, EncodeResp, Lseek, Poll, Write, XattrLen};
+use crate::req::{DirEntryBuf, DirEntryPlusBuf, XattrKeyBuf};
 use crate::types::{ReplyInitFlags, Request};
 
 use compio::runtime::JoinHandle;
@@ -26,6 +26,8 @@ use std::ops::ControlFlow;
 use std::os::fd::AsFd;
 use std::rc::Rc;
 use std::sync::Arc;
+
+pub const MAX_WRITE_SIZE: usize = 16 * 1024 * 1024;
 
 pub struct Server<F, U> {
     pub inner: Rc<ServerInner>,
@@ -82,7 +84,7 @@ where
                 minor_ver: h.minor_ver,
                 flags: h.flags,
                 buf_pool: BufPool::new(),
-                buf_size: crate::MAX_WRITE_SIZE,
+                buf_size: MAX_WRITE_SIZE,
                 open_reqs: RefCell::new(HashMap::new()),
                 replies: ReplyState {
                     pending: RefCell::new(HashMap::new()),
@@ -333,7 +335,10 @@ where
     }
 
     async fn readlink(this: AsyncRc<Self>, req: Request, body: request::ReadLink) {
-        todo!()
+        let id = req.id;
+        let req = req::ReadLinkReq::new(Req::new(&this, req), body);
+        this.send(id, this.fs.read_link(req).await.map(Data::new))
+            .await;
     }
 
     async fn symlink(this: AsyncRc<Self>, req: Request, body: request::Symlink) {
@@ -480,7 +485,11 @@ where
             this.send(id, XattrLen::new(total)).await;
         } else {
             let req = req::XattrKeysReq::new(Req::new(&this, req), body);
-            todo!();
+            this.send(
+                id,
+                this.fs.xattr_keys(req).await.map(XattrKeyBuf::into_data),
+            )
+            .await;
         }
     }
 
@@ -503,7 +512,10 @@ where
     }
 
     async fn readdir(this: AsyncRc<Self>, req: Request, body: request::ReadDir) {
-        todo!()
+        let id = req.id;
+        let req = req::ReadDirReq::new(Req::new(&this, req), body);
+        this.send(id, this.fs.read_dir(req).await.map(DirEntryBuf::into_data))
+            .await;
     }
 
     async fn releasedir(this: AsyncRc<Self>, req: Request, body: request::ReleaseDir) {
@@ -587,7 +599,16 @@ where
     }
 
     async fn readdirplus(this: AsyncRc<Self>, req: Request, body: request::ReadDirPlus) {
-        todo!()
+        let id = req.id;
+        let req = req::ReadDirPlusReq::new(Req::new(&this, req), body);
+        this.send(
+            id,
+            this.fs
+                .read_dir_plus(req)
+                .await
+                .map(DirEntryPlusBuf::into_data),
+        )
+        .await;
     }
 
     async fn lseek(this: AsyncRc<Self>, req: Request, body: request::Lseek) {

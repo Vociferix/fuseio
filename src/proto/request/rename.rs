@@ -1,6 +1,6 @@
 use super::{Cfg, HDR_LEN, Ino};
 use crate::types::RenameMode;
-use crate::{Buf, Error, Result};
+use crate::{Error, Result, buf::Buf};
 
 #[cfg(target_os = "macos")]
 use crate::types::ReplyInitFlags;

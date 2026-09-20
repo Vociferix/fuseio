@@ -1,5 +1,5 @@
 use crate::types::{Gid, Ino, Pid, ReplyInitFlags, Request, Uid};
-use crate::{Buf, Error, Result};
+use crate::{Error, Result, buf::Buf};
 
 mod access;
 mod batch_forget;

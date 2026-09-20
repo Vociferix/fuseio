@@ -1,7 +1,7 @@
 use super::getattr::GetAttrFlags;
 use super::{Cfg, HDR_LEN, Ino};
 use crate::types::{FileHandle, StatXMask, StatXSync};
-use crate::{Buf, Error, Result};
+use crate::{Error, Result, buf::Buf};
 
 #[derive(Debug)]
 pub struct StatX {

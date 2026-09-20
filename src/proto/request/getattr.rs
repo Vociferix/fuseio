@@ -1,6 +1,6 @@
 use super::{Cfg, HDR_LEN, Ino};
 use crate::types::FileHandle;
-use crate::{Buf, Error, Result};
+use crate::{Error, Result, buf::Buf};
 
 bitflags::bitflags! {
     #[repr(C)]

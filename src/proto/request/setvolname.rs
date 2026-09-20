@@ -1,5 +1,5 @@
 use super::{Cfg, HDR_LEN, Ino};
-use crate::{Buf, Result};
+use crate::{Result, buf::Buf};
 
 use std::ffi::OsStr;
 use std::os::unix::ffi::OsStrExt;

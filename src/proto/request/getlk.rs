@@ -1,6 +1,6 @@
 use super::{Cfg, HDR_LEN, Ino};
 use crate::types::{FileHandle, FileRange, LockFlags, LockKind, LockOwner, Pid};
-use crate::{Buf, Error, Result};
+use crate::{Error, Result, buf::Buf};
 
 #[derive(Debug)]
 pub struct GetLk {

@@ -1,6 +1,6 @@
 use super::{Cfg, HDR_LEN, Ino};
 use crate::types::{OFlag, OpenFlags};
-use crate::{Buf, Error, Result};
+use crate::{Error, Result, buf::Buf};
 
 #[derive(Debug)]
 pub struct Open {

@@ -30,6 +30,7 @@ pub(crate) mod poll;
 mod posix_lock;
 mod read;
 mod read_dir;
+mod read_dir_plus;
 mod read_link;
 mod remove_dir;
 mod remove_xattr;
@@ -70,7 +71,8 @@ pub use open::OpenReq;
 pub use poll::PollReq;
 pub use posix_lock::PosixLockReq;
 pub use read::ReadReq;
-pub use read_dir::ReadDirReq;
+pub use read_dir::{DirEntry, DirEntryBuf, ReadDirReq};
+pub use read_dir_plus::{DirEntryPlus, DirEntryPlusBuf, ReadDirPlusReq};
 pub use read_link::ReadLinkReq;
 pub use remove_dir::RemoveDirReq;
 pub use remove_xattr::RemoveXattrReq;
@@ -85,8 +87,10 @@ pub use test_posix_lock::TestPosixLockReq;
 pub use tmp_file::TmpFileReq;
 pub use unlink_node::UnlinkNodeReq;
 pub use write::WriteReq;
-pub use xattr_keys::XattrKeysReq;
+pub use xattr_keys::{XattrKeyBuf, XattrKeysReq};
 pub use xattr_keys_len::XattrKeysLenReq;
+
+use read_dir::RawDirEntry;
 
 #[derive(Clone)]
 pub struct Req {

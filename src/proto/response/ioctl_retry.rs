@@ -1,6 +1,9 @@
-use super::{Cfg, EncodeResp, IntoIoBuf, IoBuf, RawHeader};
+use super::{Cfg, EncodeResp, IoBuf, RawHeader};
 use crate::types::IoctlFlags;
-use crate::{Buf, BufPool, Result, Vectored};
+use crate::{
+    Result,
+    buf::{Buf, BufPool, IntoIoBuf, Vectored},
+};
 
 use futures_util::{Stream, StreamExt};
 

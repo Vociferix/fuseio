@@ -1,6 +1,6 @@
 use super::{Cfg, HDR_LEN, Ino};
 use crate::types::{FileFlag, FileHandle, FileTime, Gid, Mode, Uid};
-use crate::{Buf, Error, Result};
+use crate::{Error, Result, buf::Buf};
 
 use std::time::{Duration, SystemTime};
 

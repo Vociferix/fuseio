@@ -1,5 +1,5 @@
 use super::{Cfg, EncodeNotify, IntoIoBuf, IoBuf, NotifyCode, RawHeader};
-use crate::Vectored;
+use crate::buf::Vectored;
 use crate::types::Ino;
 
 use compio::buf::IoVectoredBuf;

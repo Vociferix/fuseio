@@ -1,6 +1,6 @@
 use super::{Cfg, HDR_LEN, Ino};
 use crate::types::{Mode, OFlag, OpenFlags, SFlag};
-use crate::{Buf, Error, Result};
+use crate::{Error, Result, buf::Buf};
 
 use std::ffi::OsStr;
 use std::os::unix::ffi::OsStrExt;

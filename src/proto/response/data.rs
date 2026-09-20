@@ -1,5 +1,5 @@
 use super::{Cfg, EncodeResp, IntoIoBuf, RawHeader};
-use crate::Vectored;
+use crate::buf::Vectored;
 
 pub struct Data<T> {
     data: T,

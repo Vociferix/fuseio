@@ -1,5 +1,5 @@
 use super::Cfg;
-use crate::IntoIoBuf;
+use crate::buf::IntoIoBuf;
 
 use compio::buf::IoBuf;
 

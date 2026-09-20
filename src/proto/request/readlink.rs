@@ -1,5 +1,5 @@
 use super::{Cfg, Ino};
-use crate::{Buf, Error, Result};
+use crate::{Error, Result, buf::Buf};
 
 #[derive(Debug)]
 pub struct ReadLink {

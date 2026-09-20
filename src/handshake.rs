@@ -123,7 +123,7 @@ impl KernelConfig {
             max_background: 64,
             // Zero selects 3/4 of `max_background`, as libfuse does.
             congestion_threshold: 0,
-            max_write: crate::MAX_WRITE_SIZE as u32,
+            max_write: crate::server::MAX_WRITE_SIZE as u32,
             time_gran: 1,
             map_alignment: 0,
         }
