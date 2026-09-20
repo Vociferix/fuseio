@@ -11,8 +11,8 @@ use crate::proto::response::{Bmap, CopyFileRange, Data, EncodeResp, Lseek, Poll,
 use crate::req::{DirEntryBuf, DirEntryPlusBuf, XattrKeyBuf};
 use crate::types::{FsCaps, RenameMode, ReplyInitFlags, Request};
 
-use compio::runtime::JoinHandle;
 use compio::BufResult;
+use compio::runtime::JoinHandle;
 use crossfire::{AsyncRx, MAsyncTx, mpsc::Array};
 use futures_util::StreamExt;
 
@@ -201,7 +201,11 @@ where
 
     async fn handle_req(this: &AsyncRc<Self>, buf: Buf) -> ControlFlow<bool> {
         if buf.len() < std::mem::size_of::<crate::proto::request::RawHeader>() {
-            log::error!("worker {} received incomplete request from kernel: {} bytes received", this.inner.id, buf.len());
+            log::error!(
+                "worker {} received incomplete request from kernel: {} bytes received",
+                this.inner.id,
+                buf.len()
+            );
             return ControlFlow::Continue(());
         }
 
@@ -210,7 +214,11 @@ where
         let full_req = match AnyRequest::decode(buf, this.minor_ver, this.flags) {
             Ok(req) => req,
             Err(err) => {
-                log::error!("worker {} received invalid request from kernel: id={}", this.inner.id, id);
+                log::error!(
+                    "worker {} received invalid request from kernel: id={}",
+                    this.inner.id,
+                    id
+                );
 
                 let this = this.clone();
                 compio::runtime::spawn(async move {
@@ -747,7 +755,11 @@ where
         };
 
         if let BufResult(Err(err), _) = self.inner.dev.write_buf(buf).await {
-            log::error!("worker {} failed to send response on FUSE device: {}", self.inner.id, err);
+            log::error!(
+                "worker {} failed to send response on FUSE device: {}",
+                self.inner.id,
+                err
+            );
         }
     }
 }

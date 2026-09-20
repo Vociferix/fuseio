@@ -20,10 +20,7 @@ impl BufPool {
     pub(super) fn checkout_owned(self) -> Buf {
         let buf_opt = unsafe { (*self.pool.get()).pop() };
         let buf = buf_opt.unwrap_or_else(|| AVec::new(ALIGN));
-        Buf {
-            buf,
-            pool: self,
-        }
+        Buf { buf, pool: self }
     }
 
     pub(super) fn checkout_with_capacity_owned(self, capacity: usize) -> Buf {
@@ -36,10 +33,7 @@ impl BufPool {
             None => AVec::with_capacity(ALIGN, capacity),
         };
 
-        Buf {
-            buf,
-            pool: self,
-        }
+        Buf { buf, pool: self }
     }
 
     pub fn checkout(&self) -> Buf {

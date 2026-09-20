@@ -80,7 +80,10 @@ impl IoctlRetry {
         while let Some(res) = iovs.next().await {
             let lkup = res?;
             let bytes = unsafe {
-                std::slice::from_raw_parts(&lkup as *const IoctlLookup as *const u8, std::mem::size_of::<IoctlLookup>())
+                std::slice::from_raw_parts(
+                    &lkup as *const IoctlLookup as *const u8,
+                    std::mem::size_of::<IoctlLookup>(),
+                )
             };
             self.in_buf.extend_from_slice(bytes);
         }
@@ -99,7 +102,10 @@ impl IoctlRetry {
         while let Some(res) = lens.next().await {
             let lkup = IoctlLookup { addr: 0, len: res? };
             let bytes = unsafe {
-                std::slice::from_raw_parts(&lkup as *const IoctlLookup as *const u8, std::mem::size_of::<IoctlLookup>())
+                std::slice::from_raw_parts(
+                    &lkup as *const IoctlLookup as *const u8,
+                    std::mem::size_of::<IoctlLookup>(),
+                )
             };
             self.out_buf.extend_from_slice(bytes);
         }

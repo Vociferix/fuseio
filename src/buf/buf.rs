@@ -27,10 +27,7 @@ impl Buf {
         let len = buf.len();
         let cap = buf.capacity();
         let buf = unsafe { AVec::from_raw_parts(ptr.cast(), ALIGN, len, cap) };
-        Buf {
-            buf,
-            pool,
-        }
+        Buf { buf, pool }
     }
 
     pub fn with_capacity(capacity: usize, pool: BufPool) -> Self {
@@ -83,8 +80,7 @@ impl Buf {
     }
 
     pub fn reserve_exact(&mut self, additional: usize) {
-        self.buf
-            .reserve_exact(additional);
+        self.buf.reserve_exact(additional);
     }
 
     pub fn shrink_to_fit(&mut self) {
@@ -139,11 +135,7 @@ impl Buf {
         self.reserve(slice_len.max(len * 2));
 
         unsafe {
-            std::ptr::copy_nonoverlapping(
-                slice.as_ptr(),
-                self.as_mut_ptr().add(len),
-                slice.len(),
-            );
+            std::ptr::copy_nonoverlapping(slice.as_ptr(), self.as_mut_ptr().add(len), slice.len());
             self.set_len(new_len);
         }
     }

@@ -1,4 +1,7 @@
-use super::{Req, DirEntry, read_dir::{RawDirEntry, DIRENT_ALIGN, DIRENT_PADDING}};
+use super::{
+    DirEntry, Req,
+    read_dir::{DIRENT_ALIGN, DIRENT_PADDING, RawDirEntry},
+};
 use crate::buf::Buf;
 use crate::proto::request::ReadDirPlus;
 use crate::proto::response::{Data, Entry};
@@ -190,7 +193,9 @@ impl DirEntryPlusBuf {
     {
         let mut stream = std::pin::pin!(stream);
         let start = self.count;
-        while let Some(entry) = stream.next().await && self.push(&entry)? {}
+        while let Some(entry) = stream.next().await
+            && self.push(&entry)?
+        {}
         Ok(self.count - start)
     }
 
@@ -201,7 +206,11 @@ impl DirEntryPlusBuf {
 
 impl<T: AsRef<OsStr>> DirEntryPlus<T> {
     pub fn entry_size_for(name: &T) -> usize {
-        name.as_ref().as_bytes().len().next_multiple_of(DIRENT_ALIGN) + std::mem::size_of::<RawDirEntryPlus>()
+        name.as_ref()
+            .as_bytes()
+            .len()
+            .next_multiple_of(DIRENT_ALIGN)
+            + std::mem::size_of::<RawDirEntryPlus>()
     }
 
     pub fn entry_size(&self) -> usize {

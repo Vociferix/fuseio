@@ -211,7 +211,9 @@ impl DirEntryBuf {
     {
         let mut stream = std::pin::pin!(stream);
         let start = self.count;
-        while let Some(entry) = stream.next().await && self.push(&entry)? {}
+        while let Some(entry) = stream.next().await
+            && self.push(&entry)?
+        {}
         Ok(self.count - start)
     }
 
@@ -222,7 +224,11 @@ impl DirEntryBuf {
 
 impl<T: AsRef<OsStr>> DirEntry<T> {
     pub fn entry_size_for(name: &T) -> usize {
-        name.as_ref().as_bytes().len().next_multiple_of(DIRENT_ALIGN) + std::mem::size_of::<RawDirEntry>()
+        name.as_ref()
+            .as_bytes()
+            .len()
+            .next_multiple_of(DIRENT_ALIGN)
+            + std::mem::size_of::<RawDirEntry>()
     }
 
     pub fn entry_size(&self) -> usize {
