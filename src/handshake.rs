@@ -131,7 +131,17 @@ impl KernelConfig {
 }
 
 impl Config {
-    // TODO
+    /// Returns the features the filesystem enabled.
+    pub fn caps(&self) -> FsCaps {
+        self.caps
+    }
+
+    /// Returns the largest write request the filesystem accepts.
+    pub fn max_write(&self) -> u32 {
+        self.max_write
+    }
+
+    // TODO: setters
 }
 
 pub async fn handshake<F: MountFs>(

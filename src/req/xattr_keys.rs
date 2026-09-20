@@ -81,29 +81,23 @@ impl XattrKeyBuf {
         K: AsRef<OsStr>,
     {
         let key = key.as_ref().as_bytes();
-        if self.buf.is_empty() {
-            let Some(new_len) = self.buf.len().checked_add(key.len()) else {
-                return Err(Error::ERANGE);
-            };
-            if new_len > self.max_len {
-                return Err(Error::ERANGE);
-            }
-            self.buf.extend_from_slice(key);
-        } else {
-            let Some(new_len) = self
-                .buf
-                .len()
-                .checked_add(key.len())
-                .and_then(|len| len.checked_add(1))
-            else {
-                return Err(Error::ERANGE);
-            };
-            if new_len > self.max_len {
-                return Err(Error::ERANGE);
-            }
-            self.buf.push(0);
-            self.buf.extend_from_slice(key);
+
+        // listxattr(2) returns a sequence of NUL-terminated names.
+        let Some(new_len) = self
+            .buf
+            .len()
+            .checked_add(key.len())
+            .and_then(|len| len.checked_add(1))
+        else {
+            return Err(Error::ERANGE);
+        };
+        if new_len > self.max_len {
+            return Err(Error::ERANGE);
         }
+
+        self.buf.extend_from_slice(key);
+        self.buf.push(0);
+
         Ok(())
     }
 
@@ -112,37 +106,8 @@ impl XattrKeyBuf {
         I: IntoIterator,
         I::Item: AsRef<OsStr>,
     {
-        let mut iter = iter.into_iter();
-        if self.buf.is_empty() {
-            let Some(key) = iter.next() else {
-                return Ok(());
-            };
-            let key = key.as_ref().as_bytes();
-
-            let Some(new_len) = self.buf.len().checked_add(key.len()) else {
-                return Err(Error::ERANGE);
-            };
-            if new_len > self.max_len {
-                return Err(Error::ERANGE);
-            }
-            self.buf.extend_from_slice(key);
-        }
-
         for key in iter {
-            let key = key.as_ref().as_bytes();
-            let Some(new_len) = self
-                .buf
-                .len()
-                .checked_add(key.len())
-                .and_then(|len| len.checked_add(1))
-            else {
-                return Err(Error::ERANGE);
-            };
-            if new_len > self.max_len {
-                return Err(Error::ERANGE);
-            }
-            self.buf.push(0);
-            self.buf.extend_from_slice(key);
+            self.push(key)?;
         }
 
         Ok(())
@@ -155,36 +120,8 @@ impl XattrKeyBuf {
     {
         let mut stream = std::pin::pin!(stream);
 
-        if self.buf.is_empty() {
-            let Some(key) = stream.next().await else {
-                return Ok(());
-            };
-            let key = key.as_ref().as_bytes();
-
-            let Some(new_len) = self.buf.len().checked_add(key.len()) else {
-                return Err(Error::ERANGE);
-            };
-            if new_len > self.max_len {
-                return Err(Error::ERANGE);
-            }
-            self.buf.extend_from_slice(key);
-        }
-
         while let Some(key) = stream.next().await {
-            let key = key.as_ref().as_bytes();
-            let Some(new_len) = self
-                .buf
-                .len()
-                .checked_add(key.len())
-                .and_then(|len| len.checked_add(1))
-            else {
-                return Err(Error::ERANGE);
-            };
-            if new_len > self.max_len {
-                return Err(Error::ERANGE);
-            }
-            self.buf.push(0);
-            self.buf.extend_from_slice(key);
+            self.push(key)?;
         }
 
         Ok(())

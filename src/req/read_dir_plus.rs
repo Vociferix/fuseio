@@ -1,3 +1,4 @@
+use super::read_dir::{DIRENT_ALIGN, DIRENT_PADDING};
 use super::{DirEntry, RawDirEntry, Req};
 use crate::buf::Buf;
 use crate::proto::request::ReadDirPlus;
@@ -111,11 +112,17 @@ impl DirEntryPlusBuf {
     {
         let name = entry.dirent.name.as_ref().as_bytes();
 
-        let Some(total_len) = self
-            .buf
+        let Some(entry_len) = name
             .len()
-            .checked_add(name.len())
-            .and_then(|len| len.checked_add(std::mem::size_of::<RawDirEntryPlus>()))
+            .checked_add(std::mem::size_of::<RawDirEntryPlus>())
+            .filter(|len| *len <= self.max_len)
+        else {
+            return Err(Error::ERANGE);
+        };
+
+        let Some(total_len) = entry_len
+            .checked_next_multiple_of(DIRENT_ALIGN)
+            .and_then(|padded| self.buf.len().checked_add(padded))
         else {
             return Err(Error::ERANGE);
         };
@@ -131,7 +138,9 @@ impl DirEntryPlusBuf {
             ino: entry.dirent.ino.as_raw(),
             next: entry.dirent.next,
             namelen,
-            kind: SFlag::from(entry.dirent.kind).bits(),
+            // The wire format carries the DT_* value, i.e. the file type bits of
+            // the mode shifted down.
+            kind: u32::from(SFlag::from(entry.dirent.kind).bits()) >> 12,
         };
         let raw = RawDirEntryPlus {
             entry: entry.entry,

@@ -16,23 +16,25 @@ mod sealed {
 
 pub struct Vectored<V>(pub V);
 
-pub enum IoBuffer<B, V> {
+pub(crate) enum IoBuffer<B, V> {
     Buf(B),
     VecBuf(V),
 }
 
-pub struct IoBufferWithNul<B, V> {
+pub(crate) struct IoBufferWithNul<B, V> {
     buf: IoBuffer<B, V>,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
-pub enum BufferPlaceholder {}
+mod placeholder {
+    #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
+    pub enum BufferPlaceholder {}
+}
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
-pub struct EitherBuf<L, R>(either::Either<L, R>);
+pub(crate) struct EitherBuf<L, R>(either::Either<L, R>);
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
-pub struct EitherIntoIoBuf<L, R>(either::Either<L, R>);
+pub(crate) struct EitherIntoIoBuf<L, R>(either::Either<L, R>);
 
 impl<B, V> IoBuffer<B, V>
 where
@@ -104,25 +106,30 @@ pub trait IntoIoBuf: sealed::Sealed + Sized {
         IoBufferWithNul::new(self.into_io_buf())
     }
 
+    #[doc(hidden)]
     fn left_buf<R>(self) -> EitherIntoIoBuf<Self, R> {
         EitherIntoIoBuf(either::Left(self))
     }
 
+    #[doc(hidden)]
     fn right_buf<L>(self) -> EitherIntoIoBuf<L, Self> {
         EitherIntoIoBuf(either::Right(self))
     }
 }
 
-impl compio::buf::IoBuf for BufferPlaceholder {
+impl compio::buf::IoBuf for placeholder::BufferPlaceholder {
     fn as_init(&self) -> &[u8] {
         unsafe { std::hint::unreachable_unchecked() }
     }
 }
 
-impl compio::buf::IoVectoredBuf for BufferPlaceholder {
+impl compio::buf::IoVectoredBuf for placeholder::BufferPlaceholder {
     fn iter_slice(&self) -> impl Iterator<Item = &[u8]> {
         enum Iter<'a> {
-            __Uninhabited(BufferPlaceholder, std::marker::PhantomData<&'a [u8]>),
+            __Uninhabited(
+                placeholder::BufferPlaceholder,
+                std::marker::PhantomData<&'a [u8]>,
+            ),
         }
 
         impl<'a> Iterator for Iter<'a> {
@@ -143,18 +150,18 @@ impl compio::buf::IoVectoredBuf for BufferPlaceholder {
 
 impl<B: compio::buf::IoBuf> IntoIoBuf for B {
     type Buffer = Self;
-    type VecBuffer = BufferPlaceholder;
+    type VecBuffer = placeholder::BufferPlaceholder;
 
-    fn into_io_buf(self) -> IoBuffer<Self, BufferPlaceholder> {
+    fn into_io_buf(self) -> IoBuffer<Self, placeholder::BufferPlaceholder> {
         IoBuffer::Buf(self)
     }
 }
 
 impl<V: compio::buf::IoVectoredBuf> IntoIoBuf for Vectored<V> {
-    type Buffer = BufferPlaceholder;
+    type Buffer = placeholder::BufferPlaceholder;
     type VecBuffer = V;
 
-    fn into_io_buf(self) -> IoBuffer<BufferPlaceholder, V> {
+    fn into_io_buf(self) -> IoBuffer<placeholder::BufferPlaceholder, V> {
         IoBuffer::VecBuf(self.0)
     }
 }
@@ -224,7 +231,7 @@ where
     B: compio::buf::IoBuf,
     V: compio::buf::IoVectoredBuf,
 {
-    type Buffer = BufferPlaceholder;
+    type Buffer = placeholder::BufferPlaceholder;
     type VecBuffer = Self;
 
     fn into_io_buf(self) -> IoBuffer<Self::Buffer, Self> {

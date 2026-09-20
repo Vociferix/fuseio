@@ -30,6 +30,10 @@ pub struct DirEntry<T> {
     pub name: T,
 }
 
+/// `FUSE_DIRENT_ALIGN`: every entry is padded to a multiple of this.
+pub(crate) const DIRENT_ALIGN: usize = std::mem::size_of::<u64>();
+pub(crate) const DIRENT_PADDING: [u8; DIRENT_ALIGN] = [0; DIRENT_ALIGN];
+
 #[repr(C)]
 pub struct RawDirEntry {
     pub ino: u64,
@@ -115,11 +119,17 @@ impl DirEntryBuf {
     {
         let name = entry.name.as_ref().as_bytes();
 
-        let Some(total_len) = self
-            .buf
+        let Some(entry_len) = name
             .len()
-            .checked_add(name.len())
-            .and_then(|len| len.checked_add(std::mem::size_of::<RawDirEntry>()))
+            .checked_add(std::mem::size_of::<RawDirEntry>())
+            .filter(|len| *len <= self.max_len)
+        else {
+            return Err(Error::ERANGE);
+        };
+
+        let Some(total_len) = entry_len
+            .checked_next_multiple_of(DIRENT_ALIGN)
+            .and_then(|padded| self.buf.len().checked_add(padded))
         else {
             return Err(Error::ERANGE);
         };
@@ -135,7 +145,9 @@ impl DirEntryBuf {
             ino: entry.ino.as_raw(),
             next: entry.next,
             namelen,
-            kind: SFlag::from(entry.kind).bits(),
+            // The wire format carries the DT_* value, i.e. the file type bits of
+            // the mode shifted down.
+            kind: u32::from(SFlag::from(entry.kind).bits()) >> 12,
         };
         let raw = unsafe {
             std::slice::from_raw_parts(
@@ -146,6 +158,10 @@ impl DirEntryBuf {
 
         self.buf.extend_from_slice(raw);
         self.buf.extend_from_slice(name);
+        // Pad the entry out so the next one starts aligned.
+        self.buf.extend_from_slice(
+            &DIRENT_PADDING[..entry_len.next_multiple_of(DIRENT_ALIGN) - entry_len],
+        );
 
         Ok(())
     }
