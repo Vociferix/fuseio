@@ -1,39 +1,35 @@
 use super::{ALIGN, BufPool};
 
-use std::marker::PhantomData;
 use std::mem::{ManuallyDrop, MaybeUninit};
 
 use aligned_vec::{AVec, ConstAlign};
 
-pub struct Buf<T = u8> {
+pub struct Buf {
     pub(super) buf: AVec<u8, ConstAlign<ALIGN>>,
     pub(super) pool: BufPool,
-    pub(super) _phantom: PhantomData<AVec<T, ConstAlign<ALIGN>>>,
 }
 
-pub struct BufIntoIter<T = u8> {
+pub struct BufIntoIter {
     buf: AVec<u8, ConstAlign<ALIGN>>,
     pool: BufPool,
     start: usize,
     end: usize,
-    _phantom: PhantomData<AVec<T, ConstAlign<ALIGN>>>,
 }
 
-impl<T> Buf<T> {
+impl Buf {
     pub fn new(pool: BufPool) -> Self {
         pool.checkout_owned()
     }
 
-    pub(crate) fn from_avec(avec: AVec<T, ConstAlign<ALIGN>>, pool: BufPool) -> Self {
+    pub(crate) fn from_avec(avec: AVec<u8, ConstAlign<ALIGN>>, pool: BufPool) -> Self {
         let mut buf = std::mem::ManuallyDrop::new(avec);
         let ptr = buf.as_mut_ptr();
-        let len = buf.len() * std::mem::size_of::<T>();
-        let cap = buf.capacity() * std::mem::size_of::<T>();
+        let len = buf.len();
+        let cap = buf.capacity();
         let buf = unsafe { AVec::from_raw_parts(ptr.cast(), ALIGN, len, cap) };
         Buf {
             buf,
             pool,
-            _phantom: PhantomData,
         }
     }
 
@@ -46,34 +42,34 @@ impl<T> Buf<T> {
     }
 
     pub fn capacity(&self) -> usize {
-        self.buf.capacity() / std::mem::size_of::<T>()
+        self.buf.capacity()
     }
 
     pub fn len(&self) -> usize {
-        self.buf.len() / std::mem::size_of::<T>()
+        self.buf.len()
     }
 
     pub fn is_empty(&self) -> bool {
         self.buf.is_empty()
     }
 
-    pub fn as_ptr(&self) -> *const T {
+    pub fn as_ptr(&self) -> *const u8 {
         self.buf.as_ptr().cast()
     }
 
-    pub fn as_mut_ptr(&mut self) -> *mut T {
+    pub fn as_mut_ptr(&mut self) -> *mut u8 {
         self.buf.as_mut_ptr().cast()
     }
 
-    pub fn as_slice(&self) -> &[T] {
+    pub fn as_slice(&self) -> &[u8] {
         unsafe { std::slice::from_raw_parts(self.as_ptr(), self.len()) }
     }
 
-    pub fn as_mut_slice(&mut self) -> &mut [T] {
+    pub fn as_mut_slice(&mut self) -> &mut [u8] {
         unsafe { std::slice::from_raw_parts_mut(self.as_mut_ptr(), self.len()) }
     }
 
-    pub fn spare_capacity_mut(&mut self) -> &mut [MaybeUninit<T>] {
+    pub fn spare_capacity_mut(&mut self) -> &mut [MaybeUninit<u8>] {
         unsafe {
             std::slice::from_raw_parts_mut(
                 self.as_mut_ptr().cast(),
@@ -83,12 +79,12 @@ impl<T> Buf<T> {
     }
 
     pub fn reserve(&mut self, additional: usize) {
-        self.buf.reserve(additional * std::mem::size_of::<T>());
+        self.buf.reserve(additional);
     }
 
     pub fn reserve_exact(&mut self, additional: usize) {
         self.buf
-            .reserve_exact(additional * std::mem::size_of::<T>());
+            .reserve_exact(additional);
     }
 
     pub fn shrink_to_fit(&mut self) {
@@ -96,33 +92,30 @@ impl<T> Buf<T> {
     }
 
     pub fn shrink_to(&mut self, min_capacity: usize) {
-        self.buf.shrink_to(min_capacity * std::mem::size_of::<T>());
+        self.buf.shrink_to(min_capacity);
     }
 
     pub unsafe fn set_len(&mut self, new_len: usize) {
         unsafe {
-            self.buf.set_len(new_len * std::mem::size_of::<T>());
+            self.buf.set_len(new_len);
         }
     }
 
-    pub fn push(&mut self, item: T) -> &mut T {
+    pub fn push(&mut self, byte: u8) {
         let len = self.len();
         if len == self.capacity() {
             self.reserve((len * 2).max(1));
         }
 
-        let ptr = unsafe { self.as_mut_ptr().add(len) };
         unsafe {
-            std::ptr::write(ptr, item);
+            *self.as_mut_ptr().add(len) = byte;
         }
         unsafe {
             self.set_len(len.unchecked_add(1));
         }
-
-        unsafe { &mut *ptr }
     }
 
-    pub fn pop(&mut self) -> Option<T> {
+    pub fn pop(&mut self) -> Option<u8> {
         let len = self.len();
         if len == 0 {
             return None;
@@ -136,53 +129,28 @@ impl<T> Buf<T> {
             self.set_len(new_len);
         }
 
-        Some(unsafe { std::ptr::read(ptr) })
+        Some(unsafe { *ptr })
     }
 
-    pub fn extend_from_slice(&mut self, slice: &[T])
-    where
-        T: Clone,
-    {
+    pub fn extend_from_slice(&mut self, slice: &[u8]) {
         let slice_len = slice.len();
         let len = self.len();
         let new_len = slice_len + len;
         self.reserve(slice_len.max(len * 2));
 
-        if is_copy::<T>() {
-            unsafe {
-                std::ptr::copy_nonoverlapping(
-                    slice.as_ptr(),
-                    self.as_mut_ptr().add(len),
-                    slice.len(),
-                );
-                self.set_len(new_len);
-            }
-        } else {
-            let dst_ptr = unsafe { self.as_mut_ptr().add(len) };
-            let src_ptr = slice.as_ptr();
-            for idx in 0..slice_len {
-                unsafe {
-                    std::ptr::write(dst_ptr.add(idx), (*src_ptr.add(idx)).clone());
-                    self.set_len(len.unchecked_add(idx));
-                }
-            }
+        unsafe {
+            std::ptr::copy_nonoverlapping(
+                slice.as_ptr(),
+                self.as_mut_ptr().add(len),
+                slice.len(),
+            );
+            self.set_len(new_len);
         }
     }
 
-    pub fn resize(&mut self, new_len: usize, default: T)
-    where
-        T: Clone,
-    {
+    pub fn resize(&mut self, new_len: usize, default: u8) {
         let len = self.len();
         if new_len < len {
-            if std::mem::needs_drop::<T>() {
-                unsafe {
-                    std::ptr::drop_in_place(std::ptr::slice_from_raw_parts_mut(
-                        self.as_mut_ptr().add(new_len),
-                        len.unchecked_sub(new_len),
-                    ));
-                }
-            }
             unsafe {
                 self.set_len(new_len);
             }
@@ -190,12 +158,9 @@ impl<T> Buf<T> {
             let reserve = new_len.max(len * 2);
             self.reserve(unsafe { reserve.unchecked_sub(len) });
 
-            let ptr = self.as_mut_ptr();
-            for idx in len..new_len {
-                unsafe {
-                    std::ptr::write(ptr.add(idx), default.clone());
-                    self.set_len(idx.unchecked_add(1));
-                }
+            unsafe {
+                std::ptr::write_bytes(self.as_mut_ptr().add(len), default, new_len - len);
+                self.set_len(new_len);
             }
         }
     }
@@ -206,189 +171,130 @@ impl<T> Buf<T> {
             panic!("truncated length is greater than current length");
         }
 
-        if std::mem::needs_drop::<T>() {
-            unsafe {
-                std::ptr::drop_in_place(std::ptr::slice_from_raw_parts_mut(
-                    self.as_mut_ptr().add(new_len),
-                    len.unchecked_sub(new_len),
-                ));
-            }
-        }
         unsafe {
             self.set_len(new_len);
         }
     }
 
     pub fn clear(&mut self) {
-        if std::mem::needs_drop::<T>() {
-            unsafe {
-                std::ptr::drop_in_place(self.as_mut_slice());
-            }
-        }
         unsafe {
             self.buf.set_len(0);
         }
     }
 
-    pub(crate) fn steal(self) -> AVec<T, ConstAlign<ALIGN>> {
+    pub(crate) fn steal(self) -> AVec<u8, ConstAlign<ALIGN>> {
         let mut this = std::mem::ManuallyDrop::new(self);
         let mut buf =
             std::mem::ManuallyDrop::new(std::mem::replace(&mut this.buf, AVec::new(ALIGN)));
         unsafe { std::ptr::drop_in_place(&mut this.pool) };
 
         let ptr = buf.as_mut_ptr();
-        let len = buf.len() / std::mem::size_of::<T>();
-        let cap = buf.capacity() / std::mem::size_of::<T>();
+        let len = buf.len();
+        let cap = buf.capacity();
         unsafe { AVec::from_raw_parts(ptr.cast(), ALIGN, len, cap) }
     }
 }
 
-impl<T: bytemuck::Pod> Buf<T> {
-    pub fn try_cast<U: bytemuck::Pod>(self) -> Result<Buf<U>, Self> {
-        if std::mem::align_of::<U>() > ALIGN || self.buf.len() % std::mem::size_of::<U>() != 0 {
-            Err(self)
-        } else {
-            unsafe { Ok(self.cast_unchecked()) }
-        }
-    }
-
-    pub unsafe fn cast_unchecked<U: bytemuck::Pod>(self) -> Buf<U> {
-        let this = ManuallyDrop::new(self);
-        let buf = unsafe { std::ptr::read(&this.buf) };
-        let pool = unsafe { std::ptr::read(&this.pool) };
-        Buf {
-            buf,
-            pool,
-            _phantom: PhantomData,
-        }
-    }
-
-    pub fn cast<U: bytemuck::Pod>(self) -> Buf<U> {
-        if std::mem::align_of::<U>() > ALIGN {
-            panic!(
-                "type {} does not satisfy alignment requirements",
-                std::any::type_name::<U>()
-            );
-        }
-        if self.buf.len() % std::mem::size_of::<U>() != 0 {
-            panic!(
-                "type {} does not fit evenly into buffer",
-                std::any::type_name::<U>()
-            );
-        }
-        unsafe { self.cast_unchecked() }
-    }
-}
-
-impl<T> Drop for Buf<T> {
+impl Drop for Buf {
     fn drop(&mut self) {
-        if std::mem::needs_drop::<T>() {
-            let ptr = self.as_mut_ptr();
-            let len = self.len();
-            unsafe {
-                self.set_len(0);
-                std::ptr::drop_in_place(std::ptr::slice_from_raw_parts_mut(ptr, len));
-            }
-        }
-
         let buf = std::mem::replace(&mut self.buf, AVec::new(ALIGN));
         self.pool.checkin(buf);
     }
 }
 
-impl<T: Clone> Clone for Buf<T> {
+impl Clone for Buf {
     fn clone(&self) -> Self {
-        let mut buf = self.pool.checkout_with_capacity::<T>(self.len());
+        let mut buf = self.pool.checkout_with_capacity(self.len());
         buf.extend_from_slice(self.as_slice());
         buf
     }
 }
 
-impl<T: std::fmt::Debug> std::fmt::Debug for Buf<T> {
+impl std::fmt::Debug for Buf {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         std::fmt::Debug::fmt(self.as_slice(), f)
     }
 }
 
-impl<T> std::borrow::Borrow<[T]> for Buf<T> {
-    fn borrow(&self) -> &[T] {
+impl std::borrow::Borrow<[u8]> for Buf {
+    fn borrow(&self) -> &[u8] {
         self.as_slice()
     }
 }
 
-impl<T> std::borrow::BorrowMut<[T]> for Buf<T> {
-    fn borrow_mut(&mut self) -> &mut [T] {
+impl std::borrow::BorrowMut<[u8]> for Buf {
+    fn borrow_mut(&mut self) -> &mut [u8] {
         self.as_mut_slice()
     }
 }
 
-impl<T> AsRef<[T]> for Buf<T> {
-    fn as_ref(&self) -> &[T] {
+impl AsRef<[u8]> for Buf {
+    fn as_ref(&self) -> &[u8] {
         self.as_slice()
     }
 }
 
-impl<T> AsMut<[T]> for Buf<T> {
-    fn as_mut(&mut self) -> &mut [T] {
+impl AsMut<[u8]> for Buf {
+    fn as_mut(&mut self) -> &mut [u8] {
         self.as_mut_slice()
     }
 }
 
-impl<T> std::ops::Deref for Buf<T> {
-    type Target = [T];
+impl std::ops::Deref for Buf {
+    type Target = [u8];
 
-    fn deref(&self) -> &[T] {
+    fn deref(&self) -> &[u8] {
         self.as_slice()
     }
 }
 
-impl<T> std::ops::DerefMut for Buf<T> {
-    fn deref_mut(&mut self) -> &mut [T] {
+impl std::ops::DerefMut for Buf {
+    fn deref_mut(&mut self) -> &mut [u8] {
         self.as_mut_slice()
     }
 }
 
-impl<T, I> std::ops::Index<I> for Buf<T>
+impl<I> std::ops::Index<I> for Buf
 where
-    I: std::slice::SliceIndex<[T]>,
+    I: std::slice::SliceIndex<[u8]>,
 {
-    type Output = <I as std::slice::SliceIndex<[T]>>::Output;
+    type Output = <I as std::slice::SliceIndex<[u8]>>::Output;
 
     fn index(&self, index: I) -> &Self::Output {
         self.as_slice().index(index)
     }
 }
 
-impl<T, I> std::ops::IndexMut<I> for Buf<T>
+impl<I> std::ops::IndexMut<I> for Buf
 where
-    I: std::slice::SliceIndex<[T]>,
+    I: std::slice::SliceIndex<[u8]>,
 {
     fn index_mut(&mut self, index: I) -> &mut Self::Output {
         self.as_mut_slice().index_mut(index)
     }
 }
 
-impl<'a, T> IntoIterator for &'a Buf<T> {
-    type Item = &'a T;
-    type IntoIter = std::slice::Iter<'a, T>;
+impl<'a> IntoIterator for &'a Buf {
+    type Item = &'a u8;
+    type IntoIter = std::slice::Iter<'a, u8>;
 
     fn into_iter(self) -> Self::IntoIter {
         self.as_slice().iter()
     }
 }
 
-impl<'a, T> IntoIterator for &'a mut Buf<T> {
-    type Item = &'a mut T;
-    type IntoIter = std::slice::IterMut<'a, T>;
+impl<'a> IntoIterator for &'a mut Buf {
+    type Item = &'a mut u8;
+    type IntoIter = std::slice::IterMut<'a, u8>;
 
     fn into_iter(self) -> Self::IntoIter {
         self.as_mut_slice().iter_mut()
     }
 }
 
-impl<T> IntoIterator for Buf<T> {
-    type Item = T;
-    type IntoIter = BufIntoIter<T>;
+impl IntoIterator for Buf {
+    type Item = u8;
+    type IntoIter = BufIntoIter;
 
     fn into_iter(mut self) -> Self::IntoIter {
         let len = self.len();
@@ -405,71 +311,67 @@ impl<T> IntoIterator for Buf<T> {
             pool,
             start: 0,
             end: len,
-            _phantom: PhantomData,
         }
     }
 }
 
-impl<T> BufIntoIter<T> {
-    fn as_ptr(&self) -> *const T {
-        unsafe { self.buf.as_ptr().cast::<T>().add(self.start) }
+impl BufIntoIter {
+    fn as_ptr(&self) -> *const u8 {
+        unsafe { self.buf.as_ptr().add(self.start) }
     }
 
-    fn as_mut_ptr(&mut self) -> *mut T {
-        unsafe { self.buf.as_mut_ptr().cast::<T>().add(self.start) }
+    fn as_mut_ptr(&mut self) -> *mut u8 {
+        unsafe { self.buf.as_mut_ptr().add(self.start) }
     }
 
-    pub fn as_slice(&self) -> &[T] {
+    pub fn as_slice(&self) -> &[u8] {
         unsafe { std::slice::from_raw_parts(self.as_ptr(), self.len()) }
     }
 
-    pub fn as_mut_slice(&mut self) -> &mut [T] {
+    pub fn as_mut_slice(&mut self) -> &mut [u8] {
         unsafe { std::slice::from_raw_parts_mut(self.as_mut_ptr(), self.len()) }
     }
 }
 
-impl<T> Drop for BufIntoIter<T> {
+impl Drop for BufIntoIter {
     fn drop(&mut self) {
-        if std::mem::needs_drop::<T>() {
-            unsafe {
-                std::ptr::drop_in_place(self.as_mut_slice());
-            }
-        }
-
         let buf = std::mem::replace(&mut self.buf, AVec::new(ALIGN));
         self.pool.checkin(buf);
     }
 }
 
-impl<T> Iterator for BufIntoIter<T> {
-    type Item = T;
+impl Iterator for BufIntoIter {
+    type Item = u8;
 
-    fn next(&mut self) -> Option<T> {
-        if self.start == self.end {
-            return None;
-        }
-
+    fn next(&mut self) -> Option<u8> {
         let start = self.start;
-        let item = unsafe { std::ptr::read(self.buf.as_mut_ptr().cast::<T>().add(start)) };
-        self.start = unsafe { start.unchecked_add(1) };
-        Some(item)
-    }
-}
 
-impl<T> DoubleEndedIterator for BufIntoIter<T> {
-    fn next_back(&mut self) -> Option<T> {
-        if self.start == self.end {
+        if start == self.end {
             return None;
         }
 
-        let end = unsafe { self.end.unchecked_add(1) };
-        let item = unsafe { std::ptr::read(self.buf.as_mut_ptr().cast::<T>().add(end)) };
-        self.end = end;
-        Some(item)
+        self.start += 1;
+
+        Some(unsafe { *self.as_ptr().add(start) })
     }
 }
 
-impl<T> ExactSizeIterator for BufIntoIter<T> {
+impl DoubleEndedIterator for BufIntoIter {
+    fn next_back(&mut self) -> Option<u8> {
+        let end = self.end;
+
+        if self.start == end {
+            return None;
+        }
+
+        let end = unsafe { end.unchecked_sub(1) };
+        self.end = end;
+
+        Some(unsafe { *self.as_ptr().add(end) })
+    }
+}
+
+impl ExactSizeIterator for BufIntoIter {
     fn len(&self) -> usize {
         unsafe { self.end.unchecked_sub(self.start) }
     }
@@ -591,32 +493,4 @@ impl compio::buf::IoBufMut for Buf {
         }
         Ok(())
     }
-}
-
-#[inline(always)]
-fn is_copy<T>() -> bool {
-    struct IsCopy<'a, T> {
-        is_copy: &'a std::cell::Cell<bool>,
-        _marker: PhantomData<T>,
-    }
-
-    impl<T> Clone for IsCopy<'_, T> {
-        fn clone(&self) -> Self {
-            self.is_copy.set(false);
-            IsCopy {
-                is_copy: self.is_copy,
-                _marker: PhantomData,
-            }
-        }
-    }
-
-    impl<T: Copy> Copy for IsCopy<'_, T> {}
-
-    let is_copy = std::cell::Cell::new(true);
-    let _ = [IsCopy::<T> {
-        is_copy: &is_copy,
-        _marker: PhantomData,
-    }]
-    .clone();
-    is_copy.get()
 }

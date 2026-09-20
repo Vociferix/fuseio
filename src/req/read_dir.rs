@@ -19,14 +19,33 @@ pub struct ReadDirReq {
 #[derive(Debug)]
 pub struct DirEntryBuf {
     max_len: usize,
+    cookie: u64,
+    count: usize,
     buf: Buf,
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone, Copy)]
 pub struct DirEntry<T> {
     pub ino: Ino,
+
     pub kind: InodeKind,
-    pub next: u64,
+
+    /// Arbitrary locator for the _next_ entry.
+    ///
+    /// Future [`Fs::read_dir`] or [`Fs::read_dir_plus`] calls may provide this
+    /// value from [`ReadDirReq::cookie`] or [`ReadDirPlus::cookie`] to resume
+    /// reading starting with the entry following this one.
+    ///
+    /// Note that official FUSE documentation names this field `offset`, which
+    /// can be misleading since the value can be arbitrary and need not be
+    /// ordered across sequential entries. They only need to be usable by the
+    /// filesystem to locate the initial entry on a new directory read.
+    ///
+    /// [Fs::read_dir]: crate::fs::Fs::read_dir
+    /// [Fs::read_dir_plus]: crate::fs::Fs::read_dir_plus
+    /// [ReadDirPlus::cookie]: super::ReadDirPlus::cookie
+    pub cookie: u64,
+
     pub name: T,
 }
 
@@ -37,7 +56,7 @@ pub(crate) const DIRENT_PADDING: [u8; DIRENT_ALIGN] = [0; DIRENT_ALIGN];
 #[repr(C)]
 pub struct RawDirEntry {
     pub ino: u64,
-    pub next: u64,
+    pub cookie: u64,
     pub namelen: u32,
     pub kind: u32,
 }
@@ -59,11 +78,11 @@ impl ReadDirReq {
         self.readdir.file_handle()
     }
 
-    pub fn offset(&self) -> u64 {
+    pub fn cookie(&self) -> u64 {
         self.readdir.offset()
     }
 
-    pub fn len(&self) -> usize {
+    pub fn capacity(&self) -> usize {
         self.readdir.len()
     }
 
@@ -76,10 +95,12 @@ impl ReadDirReq {
     }
 
     pub fn new_buffer(&self) -> DirEntryBuf {
-        let len = self.len();
+        let cap = self.capacity();
         DirEntryBuf {
-            max_len: len,
-            buf: self.buffer_pool().checkout_with_capacity(len),
+            max_len: cap,
+            cookie: self.cookie(),
+            count: 0,
+            buf: self.buffer_pool().checkout_with_capacity(cap),
         }
     }
 
@@ -113,40 +134,43 @@ impl std::ops::Deref for ReadDirReq {
 }
 
 impl DirEntryBuf {
-    pub fn push<T>(&mut self, entry: DirEntry<T>) -> Result<()>
+    pub fn last_cookie(&self) -> u64 {
+        self.cookie
+    }
+
+    pub fn num_entries(&self) -> usize {
+        self.count
+    }
+
+    pub fn remaining_capacity(&self) -> usize {
+        self.max_len - self.buf.len()
+    }
+
+    pub fn has_capacity_for<T>(&self, name: T) -> bool
+    where
+        T: AsRef<OsStr>,
+    {
+        DirEntry::entry_size_for(&name) <= self.remaining_capacity()
+    }
+
+    pub fn push<T>(&mut self, entry: &DirEntry<T>) -> Result<bool>
     where
         T: AsRef<OsStr>,
     {
         let name = entry.name.as_ref().as_bytes();
+        let namelen = u32::try_from(name.len()).map_err(|_| Error::E2BIG)?;
 
-        let Some(entry_len) = name
-            .len()
-            .checked_add(std::mem::size_of::<RawDirEntry>())
-            .filter(|len| *len <= self.max_len)
-        else {
-            return Err(Error::ERANGE);
-        };
-
-        let Some(total_len) = entry_len
-            .checked_next_multiple_of(DIRENT_ALIGN)
-            .and_then(|padded| self.buf.len().checked_add(padded))
-        else {
-            return Err(Error::ERANGE);
-        };
-        if total_len > self.max_len {
-            return Err(Error::ERANGE);
+        let entry_len = (namelen as usize) + std::mem::size_of::<RawDirEntry>();
+        let padded_entry_len = entry_len.next_multiple_of(DIRENT_ALIGN);
+        let padding_len = padded_entry_len - entry_len;
+        if padded_entry_len > self.remaining_capacity() {
+            return Ok(false);
         }
-
-        let Ok(namelen) = u32::try_from(name.len()) else {
-            return Err(Error::E2BIG);
-        };
 
         let raw = RawDirEntry {
             ino: entry.ino.as_raw(),
-            next: entry.next,
+            cookie: entry.cookie,
             namelen,
-            // The wire format carries the DT_* value, i.e. the file type bits of
-            // the mode shifted down.
             kind: u32::from(SFlag::from(entry.kind).bits()) >> 12,
         };
         let raw = unsafe {
@@ -158,39 +182,50 @@ impl DirEntryBuf {
 
         self.buf.extend_from_slice(raw);
         self.buf.extend_from_slice(name);
-        // Pad the entry out so the next one starts aligned.
-        self.buf.extend_from_slice(
-            &DIRENT_PADDING[..entry_len.next_multiple_of(DIRENT_ALIGN) - entry_len],
-        );
+        self.buf.extend_from_slice(&DIRENT_PADDING[..padding_len]);
 
-        Ok(())
+        self.count += 1;
+        self.cookie = entry.cookie;
+
+        Ok(true)
     }
 
-    pub fn extend<I, T>(&mut self, iter: I) -> Result<()>
+    pub fn extend<I, T>(&mut self, iter: I) -> Result<usize>
     where
         I: IntoIterator<Item = DirEntry<T>>,
         T: AsRef<OsStr>,
     {
+        let start = self.count;
         for entry in iter {
-            self.push(entry)?;
+            if !self.push(&entry)? {
+                break;
+            }
         }
-        Ok(())
+        Ok(self.count - start)
     }
 
-    pub async fn extend_stream<S, T>(&mut self, stream: S) -> Result<()>
+    pub async fn extend_stream<S, T>(&mut self, stream: S) -> Result<usize>
     where
         S: Stream<Item = DirEntry<T>>,
         T: AsRef<OsStr>,
     {
         let mut stream = std::pin::pin!(stream);
-
-        while let Some(entry) = stream.next().await {
-            self.push(entry)?;
-        }
-        Ok(())
+        let start = self.count;
+        while let Some(entry) = stream.next().await && self.push(&entry)? {}
+        Ok(self.count - start)
     }
 
     pub(crate) fn into_data(self) -> Data<Buf> {
         Data::new(self.buf)
+    }
+}
+
+impl<T: AsRef<OsStr>> DirEntry<T> {
+    pub fn entry_size_for(name: &T) -> usize {
+        name.as_ref().as_bytes().len().next_multiple_of(DIRENT_ALIGN) + std::mem::size_of::<RawDirEntry>()
+    }
+
+    pub fn entry_size(&self) -> usize {
+        Self::entry_size_for(&self.name)
     }
 }

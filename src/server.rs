@@ -1,6 +1,6 @@
 use crate::Error;
 use crate::async_rc::AsyncRc;
-use crate::buf::{Buf, BufPool, IntoIoBuf, IoBuffer};
+use crate::buf::{Buf, BufPool, IntoIoBuf};
 use crate::dev_fuse::FuseChannel;
 use crate::fs::req::{self, Req};
 use crate::fs::{BindFs, Fs};
@@ -12,10 +12,7 @@ use crate::req::{DirEntryBuf, DirEntryPlusBuf, XattrKeyBuf};
 use crate::types::{FsCaps, RenameMode, ReplyInitFlags, Request};
 
 use compio::runtime::JoinHandle;
-use compio::{
-    BufResult,
-    buf::{IoBuf, IoVectoredBuf},
-};
+use compio::BufResult;
 use crossfire::{AsyncRx, MAsyncTx, mpsc::Array};
 use futures_util::StreamExt;
 
@@ -173,7 +170,7 @@ where
                 }
                 Ok(Message::Reply(id, reply)) => {
                     let reply = reply.bind(&this.inner.buf_pool);
-                    drop(this.inner.buf_pool.checkout::<u8>().steal());
+                    drop(this.inner.buf_pool.checkout().steal());
                     Self::handle_reply(this, id, reply);
                 }
             }
@@ -187,7 +184,6 @@ where
     }
 
     fn handle_error(err: std::io::Error) -> ControlFlow<bool> {
-        // TODO: log error
         match err.raw_os_error() {
             // Interrupted, or the request was cancelled before it could be read.
             Some(nix::libc::EINTR | nix::libc::EAGAIN | nix::libc::ENOENT) => {
@@ -196,20 +192,26 @@ where
             // ENODEV means the filesystem was unmounted or the connection was
             // aborted via /sys/fs/fuse/connections. Anything else is unexpected;
             // either way this worker stops rather than spinning on the error.
-            _ => ControlFlow::Break(false),
+            _ => {
+                log::error!("FUSE device connection broken: {err}");
+                ControlFlow::Break(true) // abort all workers
+            }
         }
     }
 
     async fn handle_req(this: &AsyncRc<Self>, buf: Buf) -> ControlFlow<bool> {
         if buf.len() < std::mem::size_of::<crate::proto::request::RawHeader>() {
+            log::error!("worker {} received incomplete request from kernel: {} bytes received", this.inner.id, buf.len());
             return ControlFlow::Continue(());
         }
 
         let id = unsafe { (*(buf.as_ptr() as *const crate::proto::request::RawHeader)).unique };
 
-        let AnyRequest { req, body } = match AnyRequest::decode(buf, this.minor_ver, this.flags) {
+        let full_req = match AnyRequest::decode(buf, this.minor_ver, this.flags) {
             Ok(req) => req,
             Err(err) => {
+                log::error!("worker {} received invalid request from kernel: id={}", this.inner.id, id);
+
                 let this = this.clone();
                 compio::runtime::spawn(async move {
                     let _ = this.dev.write_buf(err.into_reply(id)).await;
@@ -218,6 +220,10 @@ where
                 return ControlFlow::Continue(());
             }
         };
+
+        log::trace!("worker {} received request: {:?}", this.inner.id, full_req);
+
+        let AnyRequest { req, body } = full_req;
 
         match body {
             Body::Interrupt(intr) => {
@@ -260,6 +266,7 @@ where
             // DESTROY is synchronous: the kernel waits for this reply before the
             // unmount completes.
             Body::Destroy(_) => {
+                log::info!("kernel initiated unmount");
                 this.send(id, ()).await;
                 return ControlFlow::Break(true);
             }
@@ -739,8 +746,9 @@ where
             }
         };
 
-        // TODO: log error
-        let _ = self.inner.dev.write_buf(buf).await;
+        if let BufResult(Err(err), _) = self.inner.dev.write_buf(buf).await {
+            log::error!("worker {} failed to send response on FUSE device: {}", self.inner.id, err);
+        }
     }
 }
 

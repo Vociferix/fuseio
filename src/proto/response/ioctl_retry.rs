@@ -18,8 +18,8 @@ pub struct IoctlLookup {
 
 #[derive(Debug)]
 pub struct IoctlRetry {
-    in_buf: Buf<IoctlLookup>,
-    out_buf: Buf<IoctlLookup>,
+    in_buf: Buf,
+    out_buf: Buf,
 }
 
 #[repr(C)]
@@ -31,7 +31,7 @@ pub(super) struct Raw {
     pub(super) out_iovs: u32,
 }
 
-struct IoctlIovecBuf(Buf<IoctlLookup>);
+struct IoctlIovecBuf(Buf);
 
 impl IoBuf for Raw {
     fn as_init(&self) -> &[u8] {
@@ -78,7 +78,11 @@ impl IoctlRetry {
         let mut iovs = pin!(iovs);
 
         while let Some(res) = iovs.next().await {
-            self.in_buf.push(res?);
+            let lkup = res?;
+            let bytes = unsafe {
+                std::slice::from_raw_parts(&lkup as *const IoctlLookup as *const u8, std::mem::size_of::<IoctlLookup>())
+            };
+            self.in_buf.extend_from_slice(bytes);
         }
 
         Ok(self)
@@ -93,7 +97,11 @@ impl IoctlRetry {
         let mut lens = pin!(lens);
 
         while let Some(res) = lens.next().await {
-            self.out_buf.push(IoctlLookup { addr: 0, len: res? });
+            let lkup = IoctlLookup { addr: 0, len: res? };
+            let bytes = unsafe {
+                std::slice::from_raw_parts(&lkup as *const IoctlLookup as *const u8, std::mem::size_of::<IoctlLookup>())
+            };
+            self.out_buf.extend_from_slice(bytes);
         }
 
         Ok(self)

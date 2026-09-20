@@ -188,12 +188,19 @@ const HDR_LEN: usize = std::mem::size_of::<RawHeader>();
 
 #[repr(C)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
-struct Opcode(pub u32);
+pub struct Opcode(pub u32);
 
 macro_rules! opcodes {
     ($($(#[$($attrs:tt)*])* $name:ident : $val:literal),* $(,)?) => {
         impl Opcode {
-            $($(#[$($attrs)*])* const $name: Self = Self($val);)*
+            $($(#[$($attrs)*])* pub const $name: Self = Self($val);)*
+
+            pub const fn name(self) -> Option<&'static str> {
+                match self.0 {
+                    $($(#[$($attrs)*])* $val => Some(std::stringify!($name)),)*
+                    _ => None,
+                }
+            }
         }
     };
 }
@@ -260,6 +267,16 @@ opcodes! {
     EXCHANGE: 63,
 
     CUSE_INIT: 4096,
+}
+
+impl std::fmt::Display for Opcode {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        if let Some(name) = (*self).name() {
+            f.write_str(name)
+        } else {
+            write!(f, "UNKNOWN({})", self.0)
+        }
+    }
 }
 
 impl AnyRequest {

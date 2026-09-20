@@ -1,7 +1,6 @@
 use super::{ALIGN, Buf};
 
 use std::cell::UnsafeCell;
-use std::marker::PhantomData;
 use std::rc::Rc;
 
 use aligned_vec::{AVec, ConstAlign};
@@ -18,42 +17,36 @@ impl BufPool {
         }
     }
 
-    pub(super) fn checkout_owned<T>(self) -> Buf<T> {
-        assert!(std::mem::align_of::<T>() <= ALIGN);
-
+    pub(super) fn checkout_owned(self) -> Buf {
         let buf_opt = unsafe { (*self.pool.get()).pop() };
         let buf = buf_opt.unwrap_or_else(|| AVec::new(ALIGN));
         Buf {
             buf,
             pool: self,
-            _phantom: PhantomData,
         }
     }
 
-    pub(super) fn checkout_with_capacity_owned<T>(self, capacity: usize) -> Buf<T> {
-        assert!(std::mem::align_of::<T>() <= ALIGN);
-
+    pub(super) fn checkout_with_capacity_owned(self, capacity: usize) -> Buf {
         let buf_opt = unsafe { (*self.pool.get()).pop() };
         let buf = match buf_opt {
             Some(mut buf) => {
-                buf.reserve(capacity * std::mem::size_of::<T>());
+                buf.reserve(capacity);
                 buf
             }
-            None => AVec::with_capacity(ALIGN, capacity * std::mem::size_of::<T>()),
+            None => AVec::with_capacity(ALIGN, capacity),
         };
 
         Buf {
             buf,
             pool: self,
-            _phantom: PhantomData,
         }
     }
 
-    pub fn checkout<T>(&self) -> Buf<T> {
+    pub fn checkout(&self) -> Buf {
         self.clone().checkout_owned()
     }
 
-    pub fn checkout_with_capacity<T>(&self, capacity: usize) -> Buf<T> {
+    pub fn checkout_with_capacity(&self, capacity: usize) -> Buf {
         self.clone().checkout_with_capacity_owned(capacity)
     }
 

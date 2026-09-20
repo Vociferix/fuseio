@@ -161,6 +161,10 @@ pub async fn handshake<F: MountFs>(
         {
             let _ = write_init_err(dev.clone(), msg.hdr.unique, crate::Error::EPROTO).await;
 
+            if msg.hdr.opcode != INIT_OPCODE {
+                todo!();
+            }
+
             return Err(std::io::Error::new(
                 ErrorKind::InvalidData,
                 "invalid initialization request from kernel",

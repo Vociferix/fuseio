@@ -4,7 +4,7 @@ mod pool;
 pub use buf::Buf;
 pub use pool::BufPool;
 
-pub(crate) const ALIGN: usize = std::mem::align_of::<crossbeam_utils::CachePadded<u64>>();
+pub(crate) const ALIGN: usize = std::mem::align_of::<u64>();
 
 mod sealed {
     pub trait Sealed {}

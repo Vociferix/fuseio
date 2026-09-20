@@ -90,8 +90,6 @@ pub use write::WriteReq;
 pub use xattr_keys::{XattrKeyBuf, XattrKeysReq};
 pub use xattr_keys_len::XattrKeysLenReq;
 
-use read_dir::RawDirEntry;
-
 #[derive(Clone)]
 pub struct Req {
     ctx: Context,
