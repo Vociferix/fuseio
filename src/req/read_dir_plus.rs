@@ -1,6 +1,6 @@
 use super::{
-    DirEntry, Req,
-    read_dir::{DIRENT_ALIGN, DIRENT_PADDING, RawDirEntry},
+    Req,
+    read_dir::{DIRENT_ALIGN, DIRENT_PADDING, DirEntry, RawDirEntry},
 };
 use crate::buf::Buf;
 use crate::proto::request::ReadDirPlus;

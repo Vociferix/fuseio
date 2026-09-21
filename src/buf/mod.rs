@@ -14,7 +14,13 @@ mod sealed {
     impl<V: compio::buf::IoVectoredBuf> Sealed for super::Vectored<V> {}
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Default)]
+#[repr(transparent)]
 pub struct Vectored<V>(pub V);
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Default)]
+#[repr(transparent)]
+pub struct Pod<T>(pub T);
 
 pub(crate) enum IoBuffer<B, V> {
     Buf(B),
@@ -25,10 +31,8 @@ pub(crate) struct IoBufferWithNul<B, V> {
     buf: IoBuffer<B, V>,
 }
 
-mod placeholder {
-    #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
-    pub enum BufferPlaceholder {}
-}
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub enum NoData {}
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub(crate) struct EitherBuf<L, R>(either::Either<L, R>);
@@ -117,19 +121,16 @@ pub trait IntoIoBuf: sealed::Sealed + Sized {
     }
 }
 
-impl compio::buf::IoBuf for placeholder::BufferPlaceholder {
+impl compio::buf::IoBuf for NoData {
     fn as_init(&self) -> &[u8] {
         unsafe { std::hint::unreachable_unchecked() }
     }
 }
 
-impl compio::buf::IoVectoredBuf for placeholder::BufferPlaceholder {
+impl compio::buf::IoVectoredBuf for NoData {
     fn iter_slice(&self) -> impl Iterator<Item = &[u8]> {
         enum Iter<'a> {
-            __Uninhabited(
-                placeholder::BufferPlaceholder,
-                std::marker::PhantomData<&'a [u8]>,
-            ),
+            __Uninhabited(NoData, std::marker::PhantomData<&'a [u8]>),
         }
 
         impl<'a> Iterator for Iter<'a> {
@@ -150,19 +151,37 @@ impl compio::buf::IoVectoredBuf for placeholder::BufferPlaceholder {
 
 impl<B: compio::buf::IoBuf> IntoIoBuf for B {
     type Buffer = Self;
-    type VecBuffer = placeholder::BufferPlaceholder;
+    type VecBuffer = NoData;
 
-    fn into_io_buf(self) -> IoBuffer<Self, placeholder::BufferPlaceholder> {
+    fn into_io_buf(self) -> IoBuffer<Self, NoData> {
         IoBuffer::Buf(self)
     }
 }
 
 impl<V: compio::buf::IoVectoredBuf> IntoIoBuf for Vectored<V> {
-    type Buffer = placeholder::BufferPlaceholder;
+    type Buffer = NoData;
     type VecBuffer = V;
 
-    fn into_io_buf(self) -> IoBuffer<placeholder::BufferPlaceholder, V> {
+    fn into_io_buf(self) -> IoBuffer<NoData, V> {
         IoBuffer::VecBuf(self.0)
+    }
+}
+
+impl<T: bytemuck::NoUninit> compio::buf::IoBuf for Pod<T> {
+    fn as_init(&self) -> &[u8] {
+        bytemuck::bytes_of(&self.0)
+    }
+
+    fn buf_len(&self) -> usize {
+        std::mem::size_of::<T>()
+    }
+
+    fn buf_ptr(&self) -> *const u8 {
+        &self.0 as *const T as *const u8
+    }
+
+    fn is_empty(&self) -> bool {
+        std::mem::size_of::<T>() == 0
     }
 }
 
@@ -231,7 +250,7 @@ where
     B: compio::buf::IoBuf,
     V: compio::buf::IoVectoredBuf,
 {
-    type Buffer = placeholder::BufferPlaceholder;
+    type Buffer = NoData;
     type VecBuffer = Self;
 
     fn into_io_buf(self) -> IoBuffer<Self::Buffer, Self> {

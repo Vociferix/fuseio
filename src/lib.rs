@@ -23,3 +23,8 @@ pub use error::Error;
 pub use options::{MountOpt, ParseMountOptError};
 
 pub type Result<T> = std::result::Result<T, Error>;
+
+#[doc(hidden)]
+pub mod __internal {
+    pub use nix;
+}

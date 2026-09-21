@@ -1,5 +1,5 @@
 use super::{Cfg, HDR_LEN, Ino};
-use crate::types::{FileHandle, IoctlFlags};
+use crate::types::{FileHandle, IoctlCmd, IoctlFlags};
 use crate::{Error, Result, buf::Buf};
 
 #[derive(Debug)]
@@ -7,7 +7,7 @@ pub struct Ioctl {
     ino: Ino,
     fh: FileHandle,
     flags: IoctlFlags,
-    cmd: u32,
+    cmd: IoctlCmd,
     arg: u64,
     in_len: usize,
     out_len: usize,
@@ -18,7 +18,7 @@ pub struct Ioctl {
 pub struct Raw {
     fh: u64,
     flags: IoctlFlags,
-    cmd: u32,
+    cmd: IoctlCmd,
     arg: u64,
     in_size: u32,
     out_size: u32,
@@ -37,7 +37,7 @@ impl Ioctl {
         self.flags
     }
 
-    pub fn command(&self) -> u32 {
+    pub fn command(&self) -> IoctlCmd {
         self.cmd
     }
 

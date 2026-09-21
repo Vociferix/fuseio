@@ -1,6 +1,6 @@
 use super::Req;
 use crate::proto::request::Ioctl;
-use crate::types::{Abi, FileHandle, Ino, IoctlFlags};
+use crate::types::{Abi, FileHandle, Ino, IoctlCmd, IoctlFlags};
 
 #[derive(Debug)]
 pub struct IoctlReq {
@@ -48,7 +48,7 @@ impl IoctlReq {
         self.ioctl.flags().contains(IoctlFlags::UNRESTRICTED)
     }
 
-    pub fn command(&self) -> u32 {
+    pub fn command(&self) -> IoctlCmd {
         self.ioctl.command()
     }
 
@@ -66,6 +66,27 @@ impl IoctlReq {
 
     pub fn data(&self) -> &[u8] {
         self.ioctl.data()
+    }
+
+    pub fn cast_data<T>(&self) -> Result<&T, bytemuck::PodCastError>
+    where
+        T: bytemuck::AnyBitPattern,
+    {
+        const {
+            assert!(
+                std::mem::align_of::<T>() <= 8,
+                "IoctlReq::cast_data<T> requires T has an alignment of 8 or less - use IoctlReq::decode_data<T> instead",
+            )
+        };
+
+        bytemuck::try_from_bytes(self.data())
+    }
+
+    pub fn decode_data<T>(&self) -> Result<T, bytemuck::PodCastError>
+    where
+        T: bytemuck::AnyBitPattern,
+    {
+        bytemuck::try_pod_read_unaligned(self.data())
     }
 }
 

@@ -3,12 +3,14 @@ use crate::async_rc::AsyncRc;
 use crate::buf::{Buf, BufPool, IntoIoBuf};
 use crate::dev_fuse::FuseChannel;
 use crate::fs::req::{self, Req};
+use crate::fs::types::{DirEntryBuf, DirEntryPlusBuf, XattrKeyBuf};
 use crate::fs::{BindFs, Fs};
 use crate::handle::{Handle, Once};
 use crate::mount::Unmount;
 use crate::proto::request::{self, AnyRequest, Body, NotifyReply, SharedNotifyReply};
-use crate::proto::response::{Bmap, CopyFileRange, Data, EncodeResp, Lseek, Poll, Write, XattrLen};
-use crate::req::{DirEntryBuf, DirEntryPlusBuf, XattrKeyBuf};
+use crate::proto::response::{
+    Bmap, CopyFileRange, Data, EncodeResp, IoctlReply, Lseek, Poll, Write, XattrLen,
+};
 use crate::types::{FsCaps, RenameMode, ReplyInitFlags, Request};
 
 use compio::BufResult;
@@ -642,7 +644,24 @@ where
     }
 
     async fn ioctl(this: &AsyncRc<Self>, req: Request, body: request::Ioctl) {
-        todo!()
+        let id = req.id;
+        let out_len = body.out_len();
+        let cmd = body.command();
+        let req = req::IoctlReq::new(Req::new(this, req), body);
+        match this.fs.ioctl(req).await {
+            Ok(reply) => {
+                let IoctlReply { value, data } = reply;
+                let data = data.into_io_buf();
+                let len = data.total_len();
+                if len > out_len {
+                    log::error!("ioctl reply for {cmd:?} is {len} bytes, but out_len is {out_len}");
+                    this.send(id, Error::EIO).await;
+                    return;
+                }
+                this.send(id, IoctlReply { value, data }).await;
+            }
+            Err(err) => this.send(id, err).await,
+        }
     }
 
     async fn poll(this: &AsyncRc<Self>, req: Request, body: request::Poll) {

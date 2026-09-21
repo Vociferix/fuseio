@@ -338,3 +338,10 @@ impl From<std::convert::Infallible> for Error {
         unreachable!()
     }
 }
+
+impl From<bytemuck::PodCastError> for Error {
+    fn from(err: bytemuck::PodCastError) -> Self {
+        let _ = err;
+        Self::EINVAL
+    }
+}

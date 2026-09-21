@@ -8,26 +8,30 @@ pub mod req {
 }
 
 pub mod types {
-    use std::marker::PhantomData;
-
-    pub struct IoctlBuf<T>(PhantomData<T>);
-
     pub use crate::types::{
         Abi, AccessFlags, CopyFileRangePos, FileFlag, FileHandle, FileRange, FileTime, ForgetIno,
-        FsCaps, Gid, Ino, InodeKind, KernelCaps, LockKind, LockOwner, Mode, OFlag, OpenAccessMode,
-        OpenFlags, OpenedFlags, Pid, PollFlags, PollNotify, RenameMode, SFlag, StatXAttrs,
-        StatXSync, Uid, Version, Whence, XattrMode,
+        FsCaps, Gid, Ino, InodeKind, IoctlCmd, IoctlDirection, KernelCaps, LockKind, LockOwner,
+        Mode, OFlag, OpenAccessMode, OpenFlags, OpenedFlags, Pid, PollFlags, PollNotify,
+        RenameMode, SFlag, StatXAttrs, StatXSync, Uid, Version, Whence, XattrMode,
     };
 
     pub use crate::handshake::{Config, KernelConfig};
 
-    pub use crate::req::{DirEntry, DirEntryBuf, DirEntryPlus, DirEntryPlusBuf, XattrKeyBuf};
+    pub use crate::req::{
+        read_dir::{DirEntry, DirEntryBuf},
+        read_dir_plus::{DirEntryPlus, DirEntryPlusBuf},
+        xattr_keys::XattrKeyBuf,
+    };
 
-    pub use crate::proto::response::{Attrs, Created, Entry, FsAttrs, Opened, PosixLock, StatX};
+    pub use crate::proto::response::{
+        Attrs, Created, Entry, FsAttrs, IoctlReply, Opened, PosixLock, StatX,
+    };
 
     pub use crate::passthrough::{BackingId, PassthroughFd};
 
     pub use crate::context::{CacheData, Context};
+
+    pub use crate::buf::{Buf, BufPool, NoData, Pod, Vectored};
 
     pub use futures_util::{Stream, StreamExt};
 }
@@ -207,9 +211,9 @@ pub trait Fs: Sized + 'static {
         Err(Error::ENOSYS)
     }
 
-    async fn ioctl(&self, req: req::IoctlReq) -> Result<types::IoctlBuf<impl IntoIoBuf>> {
+    async fn ioctl(&self, req: req::IoctlReq) -> Result<types::IoctlReply<impl IntoIoBuf>> {
         let _ = (self, req);
-        Err::<types::IoctlBuf<[u8; 0]>, _>(Error::ENOSYS)
+        Err::<types::IoctlReply<types::NoData>, _>(Error::ENOSYS)
     }
 
     async fn poll(&self, req: req::PollReq) -> Result<PollFlags> {

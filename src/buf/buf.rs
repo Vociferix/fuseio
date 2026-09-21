@@ -429,6 +429,18 @@ impl compio::buf::IoBuf for Buf {
     fn as_init(&self) -> &[u8] {
         self.as_slice()
     }
+
+    fn buf_len(&self) -> usize {
+        self.len()
+    }
+
+    fn buf_ptr(&self) -> *const u8 {
+        self.as_ptr()
+    }
+
+    fn is_empty(&self) -> bool {
+        self.is_empty()
+    }
 }
 
 unsafe fn set_len(buf: &mut Buf, new_len: usize) {
