@@ -747,12 +747,16 @@ where
 
     #[cfg(target_os = "macos")]
     async fn setvolname(this: &AsyncRc<Self>, req: Request, body: request::SetVolName) {
-        todo!()
+        let id = req.id;
+        let req = req::SetVolumeNameReq::new(Req::new(this, req), body);
+        this.send(id, this.fs.set_volume_name(req).await).await;
     }
 
     #[cfg(target_os = "macos")]
     async fn getxtimes(this: &AsyncRc<Self>, req: Request, body: request::GetXtimes) {
-        todo!()
+        let id = req.id;
+        let req = req::GetXTimesReq::new(Req::new(this, req), body);
+        this.send(id, this.fs.get_xtimes(req).await).await;
     }
 
     async fn send<T>(&self, id: u64, resp: T)

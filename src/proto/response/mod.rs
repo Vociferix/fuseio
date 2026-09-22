@@ -22,6 +22,7 @@ mod statfs;
 mod statx;
 mod write;
 mod xattr;
+mod xtimes;
 
 pub use attr::{Attrs, InodeAttrs};
 pub use bmap::Bmap;
@@ -39,6 +40,7 @@ pub use statfs::FsAttrs;
 pub use statx::StatX;
 pub use write::Write;
 pub use xattr::XattrLen;
+pub use xtimes::XTimes;
 
 #[repr(C)]
 #[derive(Debug, Default)]

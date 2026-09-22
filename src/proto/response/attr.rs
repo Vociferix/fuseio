@@ -1,5 +1,5 @@
 use super::{Cfg, EncodeResp, IntoIoBuf, IoBuf, RawHeader};
-use crate::types::{Gid, Ino, InodeKind, SFlag, Uid};
+use crate::types::{FileFlag, Gid, Ino, InodeKind, SFlag, Uid};
 
 use std::time::{Duration, SystemTime};
 
@@ -21,7 +21,7 @@ struct AttrsCompat {
 }
 
 #[repr(C)]
-#[derive(Debug, Default)]
+#[derive(Debug)]
 pub struct InodeAttrs {
     ino: u64,
     size: u64,
@@ -29,17 +29,31 @@ pub struct InodeAttrs {
     atime: u64,
     mtime: u64,
     ctime: u64,
+    #[cfg(target_os = "macos")]
+    crtime: u64,
     atimensec: u32,
     mtimensec: u32,
     ctimensec: u32,
+    #[cfg(target_os = "macos")]
+    crtimensec: u32,
     mode: u32,
     nlink: u32,
     uid: u32,
     gid: u32,
     rdev: u32,
+    #[cfg(target_os = "macos")]
+    chflags: FileFlag,
     blksize: u32,
     flags: AttrsFlags,
 }
+
+const _: () = {
+    #[cfg(not(target_os = "macos"))]
+    assert!(std::mem::size_of::<InodeAttrs>() == 88);
+
+    #[cfg(target_os = "macos")]
+    assert!(std::mem::size_of::<InodeAttrs>() == 104);
+};
 
 #[repr(C)]
 pub(super) struct InodeAttrsCompat {
@@ -111,6 +125,24 @@ impl InodeAttrs {
         self
     }
 
+    pub fn crtime(mut self, crtime: SystemTime) -> Self {
+        #[cfg(target_os = "macos")]
+        {
+            let ts = crtime
+                .duration_since(SystemTime::UNIX_EPOCH)
+                .unwrap_or(Duration::ZERO);
+            self.crtime = ts.as_secs();
+            self.crtimensec = ts.subsec_nanos();
+        }
+
+        #[cfg(not(target_os = "macos"))]
+        {
+            let _ = crtime;
+        }
+
+        self
+    }
+
     pub fn kind(mut self, kind: InodeKind) -> Self {
         // TODO(e2e): assumes host-native mode values; verify once end-to-end tests
         // can be done.
@@ -140,6 +172,48 @@ impl InodeAttrs {
 
     pub fn submount_root(mut self, is_submount_root: bool) -> Self {
         self.flags.set(AttrsFlags::SUBMOUNT, is_submount_root);
+        self
+    }
+
+    pub fn flags(mut self, flags: FileFlag) -> Self {
+        #[cfg(target_os = "macos")]
+        {
+            self.chflags = flags;
+        }
+
+        #[cfg(not(target_os = "macos"))]
+        {
+            let _ = flags;
+        }
+
+        self
+    }
+
+    pub fn add_flags(mut self, flags: FileFlag) -> Self {
+        #[cfg(target_os = "macos")]
+        {
+            self.chflags.insert(flags);
+        }
+
+        #[cfg(not(target_os = "macos"))]
+        {
+            let _ = flags;
+        }
+
+        self
+    }
+
+    pub fn clear_flags(mut self, flags: FileFlag) -> Self {
+        #[cfg(target_os = "macos")]
+        {
+            self.chflags.remove(flags);
+        }
+
+        #[cfg(not(target_os = "macos"))]
+        {
+            let _ = flags;
+        }
+
         self
     }
 }
@@ -191,7 +265,7 @@ impl EncodeResp for Attrs {
             }
         }
 
-        let len = if cfg.minor_ver < 9 {
+        let len = if !cfg!(target_os = "macos") && cfg.minor_ver < 9 {
             std::mem::size_of::<OutCompat>()
         } else {
             std::mem::size_of::<Out>()
@@ -205,5 +279,20 @@ impl EncodeResp for Attrs {
             },
             attr: self,
         })
+    }
+}
+
+impl Default for InodeAttrs {
+    fn default() -> Self {
+        #[allow(unused_mut)]
+        let mut attrs: Self = unsafe { std::mem::MaybeUninit::zeroed().assume_init() };
+
+        #[cfg(target_os = "macos")]
+        {
+            attrs.crtime = u64::MAX;
+            attrs.crtimensec = u32::MAX;
+        }
+
+        attrs
     }
 }

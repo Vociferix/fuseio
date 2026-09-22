@@ -24,7 +24,7 @@ pub mod types {
     };
 
     pub use crate::proto::response::{
-        Attrs, Created, Entry, FsAttrs, IoctlReply, Opened, PosixLock, StatX,
+        Attrs, Created, Entry, FsAttrs, IoctlReply, Opened, PosixLock, StatX, XTimes,
     };
 
     pub use crate::passthrough::{BackingId, PassthroughFd};
@@ -262,6 +262,16 @@ pub trait Fs: Sized + 'static {
     }
 
     async fn syncfs(&self, req: req::SyncFsReq) -> Result<()> {
+        let _ = (self, req);
+        Err(Error::ENOSYS)
+    }
+
+    async fn get_xtimes(&self, req: req::GetXTimesReq) -> Result<types::XTimes> {
+        let _ = (self, req);
+        Err(Error::ENOSYS)
+    }
+
+    async fn set_volume_name(&self, req: req::SetVolumeNameReq) -> Result<()> {
         let _ = (self, req);
         Err(Error::ENOSYS)
     }
