@@ -1,7 +1,7 @@
 use crate::MountOpt;
 
 use std::io::Result;
-use std::os::fd::BorrowedFd;
+use std::os::fd::{BorrowedFd, OwnedFd};
 use std::path::Path;
 
 #[cfg(not(target_os = "macos"))]
@@ -51,10 +51,9 @@ pub trait Mount: 'static {
 
     async fn mount(
         &self,
-        dev: BorrowedFd<'_>,
         mountpoint: &Path,
         options: &[MountOpt],
-    ) -> Result<Self::Unmount>;
+    ) -> Result<(OwnedFd, impl Future<Output = Result<Self::Unmount>>)>;
 }
 
 pub trait Unmount: 'static {

@@ -8,14 +8,10 @@ use compio::runtime::fd::AsyncFd;
 
 use std::io::Result;
 use std::os::fd::{AsFd, AsRawFd, BorrowedFd, FromRawFd, IntoRawFd, OwnedFd, RawFd};
-use std::path::Path;
-use std::rc::Rc;
-use std::sync::Arc;
 
 #[derive(Debug)]
 pub struct DevFuse {
     fd: OwnedFd,
-    path: Arc<Path>,
 }
 
 #[derive(Debug, Clone)]
@@ -24,39 +20,15 @@ pub struct FuseChannel {
 }
 
 impl DevFuse {
-    pub async fn open<P>(path: P) -> Result<Self>
-    where
-        P: AsRef<Path>,
-    {
-        let path: Arc<Path> = path.as_ref().into();
-
-        // This could probably be implemented asynchronously without
-        // spawn_blocking, but this should be very infrequently called
-        // (once per filesystem mount), so the overhead is acceptable.
-        // It also makes sure we don't attach the FD to the current
-        // runtime yet.
-        compio::runtime::spawn_blocking(move || -> Result<Self> {
-            let fd = nix::fcntl::open(
-                path.as_ref(),
-                OFlag::O_RDWR | OFlag::O_CLOEXEC,
-                Mode::empty(),
-            )?;
-            Ok(Self { fd, path })
-        })
-        .await
-        .unwrap()
+    pub fn new(fd: OwnedFd) -> Self {
+        Self { fd }
     }
 
     pub async fn try_clone(&self) -> Result<Self> {
         let fd = self.fd.as_raw_fd();
-        let path = self.path.clone();
-        compio::runtime::spawn_blocking(move || Self::try_clone_impl(fd, path))
+        compio::runtime::spawn_blocking(move || Self::try_clone_impl(fd))
             .await
             .unwrap()
-    }
-
-    pub fn path(&self) -> &Path {
-        &self.path
     }
 
     pub fn bind(self) -> Result<FuseChannel> {
@@ -66,22 +38,39 @@ impl DevFuse {
     }
 
     #[cfg(target_os = "linux")]
-    fn try_clone_impl(oldfd: RawFd, path: Arc<Path>) -> Result<Self> {
-        let fd = nix::fcntl::open(&*path, OFlag::O_RDWR | OFlag::O_CLOEXEC, Mode::empty())?;
+    fn try_clone_impl(oldfd: RawFd) -> Result<Self> {
+        use std::io::Write;
+
+        const PATHBUF_MAX_LEN: usize = "/proc/self/fd/2147483647".len();
+        let mut pathbuf: arrayvec::ArrayVec<u8, PATHBUF_MAX_LEN> = arrayvec::ArrayVec::new();
+        write!(pathbuf, "/proc/self/fd/{oldfd}")?;
+
+        let Ok(fd) = nix::fcntl::open(
+            pathbuf.as_slice(),
+            OFlag::O_RDWR | OFlag::O_CLOEXEC,
+            Mode::empty(),
+        ) else {
+            return Self::try_clone_dup(oldfd);
+        };
         let mut fd = fd.into_raw_fd();
 
         let res = unsafe { clone_fd(oldfd, &mut fd) };
         let fd = unsafe { OwnedFd::from_raw_fd(fd) };
-        res?;
 
-        Ok(Self {
-            fd,
-            path: path.clone(),
-        })
+        if res.is_err() {
+            drop(fd);
+            return Self::try_clone_dup(oldfd);
+        }
+
+        Ok(Self { fd })
     }
 
     #[cfg(not(target_os = "linux"))]
-    fn try_clone_impl(oldfd: RawFd, path: Arc<Path>) -> Result<Self> {
+    fn try_clone_impl(oldfd: RawFd) -> Result<Self> {
+        Self::try_clone_dup(oldfd)
+    }
+
+    fn try_clone_dup(oldfd: RawFd) -> Result<Self> {
         let oldfd = std::mem::ManuallyDrop::new(unsafe { OwnedFd::from_raw_fd(oldfd) });
         let fd = nix::unistd::dup(&*oldfd)?;
 
@@ -90,7 +79,7 @@ impl DevFuse {
             nix::fcntl::FcntlArg::F_SETFD(nix::fcntl::FdFlag::FD_CLOEXEC),
         )?;
 
-        Ok(Self { fd, path })
+        Ok(Self { fd })
     }
 }
 

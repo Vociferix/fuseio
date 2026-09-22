@@ -3,7 +3,7 @@ use crate::MountOpt;
 
 use std::borrow::Cow;
 use std::io::Result;
-use std::os::fd::BorrowedFd;
+use std::os::fd::{BorrowedFd, OwnedFd};
 use std::path::Path;
 
 /// A [`Mount`] implementation that calls BSD's `mount_fusefs` executable.
@@ -73,11 +73,10 @@ impl Mount for MountFuseFs {
 
     async fn mount(
         &self,
-        dev: BorrowedFd<'_>,
         mount: &Path,
         options: &[MountOpt],
-    ) -> Result<Self::Unmount> {
-        todo!()
+    ) -> Result<(OwnedFd, impl Future<Output = Result<Self::Unmount>>)> {
+        Ok((todo!(), std::future::ready(todo!())))
     }
 }
 

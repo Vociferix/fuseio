@@ -10,7 +10,6 @@ use std::path::Path;
 #[derive(Debug, Clone)]
 pub struct Builder<M = DefaultMount> {
     mount: M,
-    dev: Cow<'static, Path>,
     flags: Flags,
     fsname: Option<OsString>,
     subtype: Option<OsString>,
@@ -62,17 +61,8 @@ impl Builder {
 
 impl<M: Mount> Builder<M> {
     pub fn with_mount_method(mount_method: M) -> Self {
-        // SAFETY: On UNIX-like platforms, `Path` is just an arbitrary
-        //         byte slice, and `str` is represented as a byte slice
-        //         on all platforms. This crate only supports UNIX-like
-        //         platforms, so this is always safe. If we support
-        //         Windows somehow in the future, this will need to
-        //         change.
-        const DEV: &'static Path = unsafe { core::mem::transmute("/dev/fuse") };
-
         Self {
             mount: mount_method,
-            dev: Cow::Borrowed(DEV),
             flags: Flags::DEFAULT,
             fsname: None,
             subtype: None,
@@ -82,7 +72,7 @@ impl<M: Mount> Builder<M> {
         }
     }
 
-    pub(crate) fn into_args(self) -> (M, Cow<'static, Path>, MountOptList, usize) {
+    pub(crate) fn into_args(self) -> (M, MountOptList, usize) {
         struct Arg(Flags, MountOpt, Option<MountOpt>);
 
         const ARGS: [Arg; 15] = [
@@ -125,7 +115,6 @@ impl<M: Mount> Builder<M> {
 
         let Self {
             mount,
-            dev,
             flags,
             fsname,
             subtype,
@@ -166,7 +155,7 @@ impl<M: Mount> Builder<M> {
             opts.push(MountOpt::BlockSize(blksize));
         }
 
-        (mount, dev, opts, workers)
+        (mount, opts, workers)
     }
 
     pub async fn mount<F>(
@@ -192,7 +181,6 @@ impl<M> Builder<M> {
         T: Mount,
     {
         let Self {
-            dev,
             flags,
             fsname,
             subtype,
@@ -204,7 +192,6 @@ impl<M> Builder<M> {
 
         Builder {
             mount: mount_method,
-            dev,
             flags,
             fsname,
             subtype,
@@ -212,14 +199,6 @@ impl<M> Builder<M> {
             blksize,
             workers,
         }
-    }
-
-    pub fn dev_fuse<P>(mut self, path: P) -> Self
-    where
-        P: AsRef<Path>,
-    {
-        self.dev = Cow::Owned(path.as_ref().into());
-        self
     }
 
     pub fn write(mut self, writeable: bool) -> Self {

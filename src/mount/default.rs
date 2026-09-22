@@ -2,7 +2,7 @@ use super::{Mount, Unmount};
 use crate::MountOpt;
 
 use std::io::Result;
-use std::os::fd::BorrowedFd;
+use std::os::fd::{BorrowedFd, OwnedFd};
 use std::path::Path;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Default)]
@@ -18,11 +18,10 @@ impl Mount for DefaultMount {
 
     async fn mount(
         &self,
-        dev: BorrowedFd<'_>,
         mount: &Path,
         options: &[MountOpt],
-    ) -> Result<Self::Unmount> {
-        todo!()
+    ) -> Result<(OwnedFd, impl Future<Output = Result<Self::Unmount>>)> {
+        Ok((todo!(), std::future::ready(Ok(todo!()))))
     }
 }
 

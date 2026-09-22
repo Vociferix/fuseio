@@ -66,7 +66,7 @@ where
     M: Mount,
     F: MountFs,
 {
-    let (mounter, dev, opts, workers) = builder.into_args();
+    let (mounter, opts, workers) = builder.into_args();
 
     if workers == 0 {
         return Err(std::io::Error::new(
@@ -75,11 +75,20 @@ where
         ));
     }
 
-    let dev = AsyncArc::new(DevFuse::open(dev).await?);
+    let (dev_fd, unmounter) = mounter.mount(&mountpoint, opts.as_ref()).await?;
 
-    let unmounter = mounter
-        .mount(dev.as_fd(), &mountpoint, opts.as_ref())
-        .await?;
+    let dev = AsyncArc::new(DevFuse::new(dev_fd));
+
+    let (init_res, unmounter) = {
+        let mut handshake_fut = std::pin::pin!(handshake(fs, dev.clone(), opts.as_ref()));
+        let mut unmounter_fut = std::pin::pin!(unmounter);
+
+        match crate::select_biased(unmounter_fut.as_mut(), handshake_fut.as_mut()).await {
+            either::Left(Err(err)) => return Err(err),
+            either::Left(Ok(unmounter)) => (handshake_fut.await, unmounter),
+            either::Right(init_res) => (init_res, unmounter_fut.await?),
+        }
+    };
 
     let Init {
         fs,
@@ -87,7 +96,7 @@ where
         flags,
         max_readahead,
         config,
-    } = match handshake(fs, dev.clone(), opts.as_ref()).await {
+    } = match init_res {
         Ok(init) => init,
         Err(err) => {
             let _ = unmounter
