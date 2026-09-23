@@ -8,19 +8,18 @@ use crate::fs::types::{DirEntryBuf, DirEntryPlusBuf, XattrKeyBuf};
 use crate::fs::{BindFs, Fs};
 use crate::handle::{Handle, Once};
 use crate::mount::Unmount;
-use crate::proto::request::{self, AnyRequest, Body, NotifyReply, SharedNotifyReply};
+use crate::proto::request::{self, AnyRequest, Body, NotifyReply, Opcode, SharedNotifyReply};
 use crate::proto::response::{
     Bmap, CopyFileRange, Data, EncodeResp, IoctlReply, Lseek, Poll, Write, XattrLen,
 };
 use crate::types::{FsCaps, RenameMode, ReplyInitFlags, Request};
 
 use compio::BufResult;
-use compio::runtime::JoinHandle;
 use crossfire::{AsyncRx, MAsyncTx, mpsc::Array};
 use futures_util::StreamExt;
 
 use std::cell::{Cell, RefCell};
-use std::collections::HashMap;
+use std::collections::{HashMap, VecDeque};
 use std::io::Result;
 use std::ops::ControlFlow;
 use std::os::fd::AsFd;
@@ -53,6 +52,7 @@ pub struct ServerInner {
     pub buf_pool: BufPool,
     pub buf_size: usize,
     pub open_reqs: RefCell<HashMap<u64, CancelToken>>,
+    pub early_interrupts: RefCell<EarlyInterrupts>,
     pub cancel_tokens: RefCell<Vec<CancelToken>>,
     pub replies: ReplyState,
     pub mesh_rx: AsyncRx<Array<Message>>,
@@ -60,14 +60,57 @@ pub struct ServerInner {
 }
 
 pub struct ReplyState {
-    pub pending: RefCell<HashMap<u32, unsync::oneshot::Sender<NotifyReply>>>,
+    pub pending: RefCell<HashMap<u32, unsync::oneshot::Sender<crate::Result<NotifyReply>>>>,
     pub next_id: Cell<u32>,
 }
 
 pub(crate) enum Message {
     Shutdown,
     Interrupt(u64),
-    Reply(u32, SharedNotifyReply),
+    Reply(u32, crate::Result<SharedNotifyReply>),
+}
+
+/// Interrupts for requests this worker hasn't seen yet.
+///
+/// An interrupt can reach a worker before the request it interrupts, either
+/// because another worker is still decoding it or because the interrupt was
+/// relayed. The id is held here until the request shows up, and the request
+/// cancels itself the moment it does.
+///
+/// Ids the kernel never follows with a request (an interrupt that lost a race
+/// with the reply) would otherwise accumulate, so the oldest is dropped once
+/// the set is full. Dropping one only means that interrupt is not honoured,
+/// which is what happened before it was recorded at all.
+#[derive(Debug, Default)]
+pub struct EarlyInterrupts {
+    ids: VecDeque<u64>,
+}
+
+/// How many interrupts a worker remembers for requests it hasn't seen yet.
+const MAX_EARLY_INTERRUPTS: usize = 64;
+
+impl EarlyInterrupts {
+    fn record(&mut self, id: u64) {
+        if self.ids.contains(&id) {
+            return;
+        }
+
+        if self.ids.len() == MAX_EARLY_INTERRUPTS {
+            let dropped = self.ids.pop_front();
+            log::debug!("dropping unclaimed interrupt for request {dropped:?}");
+        }
+
+        self.ids.push_back(id);
+    }
+
+    fn take(&mut self, id: u64) -> bool {
+        if let Some(pos) = self.ids.iter().position(|&pending| pending == id) {
+            self.ids.remove(pos);
+            true
+        } else {
+            false
+        }
+    }
 }
 
 impl<F, U> std::ops::Deref for Server<F, U> {
@@ -99,6 +142,7 @@ where
             // A write request is a header plus up to `max_write` bytes.
             buf_size: h.config.max_write() + BUF_HEADER_SIZE,
             open_reqs: RefCell::new(HashMap::new()),
+            early_interrupts: RefCell::new(EarlyInterrupts::default()),
             cancel_tokens: RefCell::new(Vec::new()),
             replies: ReplyState {
                 pending: RefCell::new(HashMap::new()),
@@ -182,20 +226,35 @@ where
             match this.mesh_rx.recv().await {
                 Ok(Message::Shutdown) | Err(_) => return,
                 Ok(Message::Interrupt(id)) => {
-                    if let Some(token) = this.open_reqs.borrow_mut().remove(&id) {
-                        token.cancel();
-                    }
+                    Self::interrupt(this, id);
                 }
                 Ok(Message::Reply(id, reply)) => {
-                    let reply = reply.bind(&this.inner.buf_pool);
-                    drop(this.inner.buf_pool.checkout().steal());
+                    let reply = reply.map(|reply| {
+                        drop(this.inner.buf_pool.checkout().steal());
+                        reply.bind(&this.inner.buf_pool)
+                    });
                     Self::handle_reply(this, id, reply);
                 }
             }
         }
     }
 
-    fn handle_reply(&self, id: u32, reply: NotifyReply) {
+    /// Cancels the request with the given id, returning whether this worker was
+    /// running it.
+    ///
+    /// When it wasn't, the id is remembered so that the request cancels itself
+    /// as soon as it is registered.
+    fn interrupt(this: &AsyncRc<Self>, id: u64) -> bool {
+        if let Some(token) = this.open_reqs.borrow_mut().remove(&id) {
+            token.cancel();
+            true
+        } else {
+            this.early_interrupts.borrow_mut().record(id);
+            false
+        }
+    }
+
+    fn handle_reply(&self, id: u32, reply: crate::Result<NotifyReply>) {
         if let Some(tx) = self.inner.replies.pending.borrow_mut().remove(&id) {
             let _ = tx.send(reply);
         }
@@ -218,9 +277,11 @@ where
     }
 
     async fn handle_req(this: &AsyncRc<Self>, buf: Buf) -> ControlFlow<bool> {
-        // TODO: a 0-byte read (EOF, e.g. the peer of a socket-based mock device
-        // closed) is logged and retried here, which spins forever.
         if buf.len() < std::mem::size_of::<crate::proto::request::RawHeader>() {
+            if buf.is_empty() {
+                return ControlFlow::Break(false);
+            }
+
             log::error!(
                 "worker {} received incomplete request from kernel: {} bytes received",
                 this.inner.id,
@@ -229,28 +290,56 @@ where
             return ControlFlow::Continue(());
         }
 
-        let id = unsafe { (*(buf.as_ptr() as *const crate::proto::request::RawHeader)).unique };
+        let crate::proto::request::RawHeader {
+            unique: id,
+            opcode: op,
+            ..
+        } = unsafe { std::ptr::read(buf.as_ptr().cast()) };
 
         let full_req = match AnyRequest::decode(buf, this.minor_ver, this.flags) {
             Ok(req) => req,
             Err(err) => {
-                // TODO: FORGET, BATCH_FORGET and NOTIFY_REPLY take no reply, so
-                // a decode failure for them shouldn't send one. A NOTIFY_REPLY
-                // that fails to decode also leaves `Context::get_cache` waiting
-                // forever.
-                // TODO: macFUSE 5 sends FUSE_MONITOR (60), which libfuse answers
-                // with no reply when unimplemented; this replies ENOSYS to it.
                 log::error!(
-                    "worker {} received invalid request from kernel: id={}",
+                    "worker {} received invalid request from kernel: id={}, opcode={}",
                     this.inner.id,
-                    id
+                    id,
+                    op,
                 );
 
-                let this = this.clone();
-                compio::runtime::spawn(async move {
-                    let _ = this.dev.write_buf(err.into_reply(id)).await;
-                })
-                .detach();
+                match op {
+                    Opcode::FORGET | Opcode::BATCH_FORGET => {}
+                    #[cfg(target_os = "macos")]
+                    Opcode::MONITOR => {}
+                    Opcode::NOTIFY_REPLY => {
+                        let worker = (id >> 32) as usize;
+                        let reply_id = id as u32;
+                        if worker == this.inner.id {
+                            Self::handle_reply(this, reply_id, Err(err));
+                        } else {
+                            let this = this.clone();
+                            compio::runtime::spawn(async move {
+                                // NOTIFY_REPLY takes no reply, so a bad worker
+                                // index can only be logged.
+                                let Some(tx) = this.mesh_tx.get(worker) else {
+                                    log::error!(
+                                        "received NOTIFY_REPLY for unknown worker {worker}"
+                                    );
+                                    return;
+                                };
+                                let _ = tx.send(Message::Reply(reply_id, Err(err))).await;
+                            })
+                            .detach();
+                        }
+                    }
+                    _ => {
+                        let this = this.clone();
+                        compio::runtime::spawn(async move {
+                            let _ = this.dev.write_buf(err.into_reply(id)).await;
+                        })
+                        .detach();
+                    }
+                }
+
                 return ControlFlow::Continue(());
             }
         };
@@ -261,16 +350,13 @@ where
 
         match body {
             Body::Interrupt(intr) => {
-                // TODO: an interrupt that arrives before its request has been
-                // registered in `open_reqs` (the other worker is still decoding
-                // it) is broadcast, found nowhere and dropped. libfuse instead
-                // queues unmatched interrupts and flags the request when it
-                // shows up (`check_interrupt`).
                 if !this.ignore_interrupts {
                     let id = intr.id();
-                    if let Some(token) = this.open_reqs.borrow_mut().remove(&id) {
-                        token.cancel();
-                    } else {
+
+                    // The request may belong to another worker, or may not have
+                    // been decoded yet, so relay the interrupt when this worker
+                    // doesn't hold it.
+                    if !Self::interrupt(this, id) {
                         let this = this.clone();
                         compio::runtime::spawn(async move {
                             for tx in this
@@ -291,15 +377,14 @@ where
                 let worker = (id >> 32) as usize;
                 let reply_id = id as u32;
                 if worker == this.inner.id {
-                    Self::handle_reply(this, reply_id, notify);
+                    Self::handle_reply(this, reply_id, Ok(notify));
                 } else {
                     let this = this.clone();
                     compio::runtime::spawn(async move {
                         let Some(tx) = this.mesh_tx.get(worker) else {
-                            this.send(id, Error::EINVAL).await;
                             return;
                         };
-                        let _ = tx.send(Message::Reply(reply_id, notify.share())).await;
+                        let _ = tx.send(Message::Reply(reply_id, Ok(notify.share()))).await;
                     })
                     .detach();
                 }
@@ -318,6 +403,12 @@ where
                     .pop()
                     .unwrap_or_else(CancelToken::new);
                 if !this.ignore_interrupts {
+                    // An interrupt for this request may have arrived before the
+                    // request itself.
+                    if this.inner.early_interrupts.borrow_mut().take(id) {
+                        token.cancel();
+                    }
+
                     this.inner.open_reqs.borrow_mut().insert(id, token.clone());
                 }
                 compio::runtime::spawn(Self::handle_fs_op(this.clone(), token, req, body)).detach();
@@ -975,7 +1066,7 @@ const fn unsupported_rename() -> Error {
 }
 
 impl ReplyState {
-    pub fn channel(&self) -> (u32, unsync::oneshot::Receiver<NotifyReply>) {
+    pub fn channel(&self) -> (u32, unsync::oneshot::Receiver<crate::Result<NotifyReply>>) {
         let id = self.next_id.get();
         self.next_id.set(id.wrapping_add(1));
 
@@ -984,5 +1075,79 @@ impl ReplyState {
         self.pending.borrow_mut().insert(id, tx);
 
         (id, rx)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn an_early_interrupt_is_claimed_once() {
+        let mut early = EarlyInterrupts::default();
+
+        early.record(7);
+
+        assert!(early.take(7));
+        assert!(!early.take(7));
+    }
+
+    #[test]
+    fn unrelated_requests_dont_claim_an_interrupt() {
+        let mut early = EarlyInterrupts::default();
+
+        early.record(7);
+
+        assert!(!early.take(8));
+        assert!(early.take(7));
+    }
+
+    #[test]
+    fn repeating_an_interrupt_keeps_one_entry() {
+        let mut early = EarlyInterrupts::default();
+
+        early.record(7);
+        early.record(7);
+
+        assert!(early.take(7));
+        assert!(!early.take(7));
+    }
+
+    #[test]
+    fn interrupts_are_claimed_in_any_order() {
+        let mut early = EarlyInterrupts::default();
+
+        early.record(1);
+        early.record(2);
+        early.record(3);
+
+        assert!(early.take(2));
+        assert!(early.take(1));
+        assert!(early.take(3));
+        assert!(early.ids.is_empty());
+    }
+
+    #[test]
+    fn unclaimed_interrupts_are_bounded() {
+        let mut early = EarlyInterrupts::default();
+
+        for id in 0..(MAX_EARLY_INTERRUPTS as u64 * 4) {
+            early.record(id);
+        }
+
+        assert_eq!(early.ids.len(), MAX_EARLY_INTERRUPTS);
+    }
+
+    #[test]
+    fn the_oldest_unclaimed_interrupt_is_dropped_first() {
+        let mut early = EarlyInterrupts::default();
+
+        for id in 0..=(MAX_EARLY_INTERRUPTS as u64) {
+            early.record(id);
+        }
+
+        assert!(!early.take(0));
+        assert!(early.take(1));
+        assert!(early.take(MAX_EARLY_INTERRUPTS as u64));
     }
 }

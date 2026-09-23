@@ -10,12 +10,12 @@ of this review.
 
 ## Critical: wrong behaviour on current kernels
 
-1. ~~**Interrupted requests never get a reply**~~ — **addressed.**
-   `InterruptMode` (Cancel / Abort / Ignore) on `Config`, plus the cancellation
-   API on `Req` (`is_cancelled`, `cancelled`, `run_until_cancelled`). Abort mode
-   now replies EINTR when the handler didn't finish. Token reuse is safe: the
-   interrupt path holds a clone, so `try_reset` can't recycle a token that is
-   still reachable. Three smaller follow-ups remain, listed as items 30–32.
+1. ~~**Interrupted requests never get a reply**~~ — **addressed.** Interrupts now
+   signal the handler through the cancellation API on `Req` (`is_cancelled`,
+   `cancelled`, `run_until_cancelled`), so the handler always gets to reply, or
+   are ignored entirely (`ignore_interrupts`). Aborting was dropped as a footgun.
+   Token reuse is safe: the interrupt path holds a clone, so `try_reset` can't
+   recycle a token that is still reachable. Follow-ups are items 30–35.
 
 2. **`SETXATTR` value is one byte short, and an empty value panics**
    (`src/proto/request/setxattr.rs:124`)
@@ -116,18 +116,14 @@ of this review.
     - `TODO(e2e)`: whether kqueue works on `/dev/macfuseN` (and on the FSKit
       socket) is unverified.
 
-15. **macFUSE 5 `FUSE_MONITOR` (60)** (`src/server.rs:226`)
-    - libfuse answers it with *no reply* when the handler is unimplemented. The
-      crate replies ENOSYS: an unexpected write that the kext rejects at best.
-    - It should be decoded (`fuse_monitor_in {flags, padding}`) and ignored, or
-      exposed.
+15. ~~**macFUSE 5 `FUSE_MONITOR` (60)**~~ — **fixed.** The opcode is defined and
+    answered with no reply on macOS, matching libfuse. Decoding its
+    `fuse_monitor_in {flags, padding}` body and exposing it is still optional.
 
-16. **Replies to no-reply requests on decode failure** (`src/server.rs:226`)
-    - FORGET, BATCH_FORGET and NOTIFY_REPLY decode errors still send a reply.
-    - A NOTIFY_REPLY that fails to decode also leaves `Context::get_cache` waiting
-      forever.
-    - (`NotifyReply` for an unknown worker likewise replies EINVAL in
-      `handle_req`.)
+16. ~~**Replies to no-reply requests on decode failure**~~ — **fixed.** FORGET,
+    BATCH_FORGET, macOS MONITOR and NOTIFY_REPLY no longer get an error reply,
+    and a NOTIFY_REPLY that fails to decode now fails the waiting
+    `Context::get_cache` instead of leaving it hung.
 
 17. **`Read::decode` length check is inverted** (`src/proto/request/read.rs:62`)
     - The check is `>` where it should be `<`. Modern kernels send exactly
@@ -227,14 +223,24 @@ of this review.
     can be lost when the slab is put back, because after `cancel` sets the flag
     `poll` returns ready without inserting.
 
-32. **Interrupts that arrive before their request is registered are lost**
-    (`src/server.rs`)
-    - A request is inserted into `open_reqs` only after it is decoded. An
-      INTERRUPT that arrives first is broadcast, matches nothing, and is dropped.
-    - libfuse keeps unmatched interrupts in a list and flags the request when it
-      arrives (`check_interrupt`).
-    - With Abort gone the effect is just a missed cancellation signal, so this is
-      now minor.
+32. ~~**Early interrupts are dropped**~~ — **fixed.** An interrupt for a request
+    this worker isn't running is recorded in `EarlyInterrupts`, and the request
+    cancels itself the moment it registers. The three-state `OpenReq` marker and
+    the `ClearInterrupt` message were replaced by that set, which removes the
+    ordering cases they existed for: stale ids are harmless because the kernel
+    never reuses a `unique`.
+
+33. ~~**`Blocked` markers leak**~~ — **fixed.** `EarlyInterrupts` holds at most
+    `MAX_EARLY_INTERRUPTS` (64) ids per worker and drops the oldest when full, so
+    an interrupt that loses its race with a reply can't accumulate. Dropping one
+    only means it isn't honoured, which is what happened before any of them were
+    recorded.
+
+34. ~~**A repeated interrupt forgets the pending one**~~ — **fixed.** Recording
+    an id that is already pending is a no-op, so a resent interrupt keeps it.
+
+35. ~~**NOTIFY_REPLY for an unknown worker still gets a reply**~~ — **fixed.**
+    Both paths now log and drop it.
 
 ## Checked and correct
 

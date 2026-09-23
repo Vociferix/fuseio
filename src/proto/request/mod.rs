@@ -259,11 +259,9 @@ opcodes! {
     STATX: 52,
     COPY_FILE_RANGE_64: 53,
 
-    #[cfg(target_os = "macos")]
+    MONITOR: 60,
     SETVOLNAME: 61,
-    #[cfg(target_os = "macos")]
     GETXTIMES: 62,
-    #[cfg(target_os = "macos")]
     EXCHANGE: 63,
 
     CUSE_INIT: 4096,

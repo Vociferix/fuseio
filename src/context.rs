@@ -183,7 +183,7 @@ impl Context {
 
         std::mem::forget(guard);
 
-        Ok(CacheData { reply })
+        Ok(CacheData { reply: reply? })
     }
 }
 
