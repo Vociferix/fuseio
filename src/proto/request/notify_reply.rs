@@ -15,7 +15,7 @@ pub struct NotifyReply {
     buf: Buf,
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct SharedNotifyReply {
     offset: u64,
     buf: AVec<u8, ConstAlign<{ crate::buf::ALIGN }>>,

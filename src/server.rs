@@ -64,6 +64,7 @@ pub struct ReplyState {
     pub next_id: Cell<u32>,
 }
 
+#[derive(Clone)]
 pub(crate) enum Message {
     Shutdown,
     Interrupt(u64),
@@ -167,16 +168,7 @@ where
         loop {
             match Self::serve_one(this).await {
                 ControlFlow::Break(true) => {
-                    for tx in this
-                        .inner
-                        .mesh_tx
-                        .iter()
-                        .enumerate()
-                        .filter_map(|(id, tx)| (id != this.inner.id).then_some(tx))
-                    {
-                        let _ = tx.send(Message::Shutdown).await;
-                    }
-
+                    this.broadcast(Message::Shutdown).await;
                     return;
                 }
                 ControlFlow::Break(false) => return,
@@ -357,18 +349,7 @@ where
                     // been decoded yet, so relay the interrupt when this worker
                     // doesn't hold it.
                     if !Self::interrupt(this, id) {
-                        let this = this.clone();
-                        compio::runtime::spawn(async move {
-                            for tx in this
-                                .mesh_tx
-                                .iter()
-                                .enumerate()
-                                .filter_map(|(idx, tx)| (idx != this.id).then_some(tx))
-                            {
-                                let _ = tx.send(Message::Interrupt(id)).await;
-                            }
-                        })
-                        .detach();
+                        Self::broadcast_detached(this, Message::Interrupt(id));
                     }
                 }
             }
@@ -1037,6 +1018,22 @@ where
                 err
             );
         }
+    }
+
+    async fn broadcast(&self, msg: Message) {
+        for tx in self
+            .mesh_tx
+            .iter()
+            .enumerate()
+            .filter_map(|(idx, tx)| (idx != self.id).then_some(tx))
+        {
+            let _ = tx.send(msg.clone()).await;
+        }
+    }
+
+    fn broadcast_detached(this: &AsyncRc<Self>, msg: Message) {
+        let this = this.clone();
+        compio::runtime::spawn(async move { this.broadcast(msg).await }).detach();
     }
 }
 
