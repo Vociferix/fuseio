@@ -88,27 +88,33 @@ where
         B: BindFs<BoundFs = F>,
         F: Fs,
     {
+        let inner = Rc::new(ServerInner {
+            id: h.id,
+            dev: h.dev.bind()?,
+            minor_ver: h.minor_ver,
+            flags: h.flags,
+            caps: h.config.caps(),
+            ignore_interrupts: h.config.ignore_interrupts(),
+            buf_pool: BufPool::new(),
+            // A write request is a header plus up to `max_write` bytes.
+            buf_size: h.config.max_write() + BUF_HEADER_SIZE,
+            open_reqs: RefCell::new(HashMap::new()),
+            cancel_tokens: RefCell::new(Vec::new()),
+            replies: ReplyState {
+                pending: RefCell::new(HashMap::new()),
+                next_id: Cell::new(0),
+            },
+            mesh_rx: h.mesh_rx,
+            mesh_tx: h.mesh_tx,
+        });
+
+        let fs =
+            h.fs.bind(crate::context::Context::new(inner.clone()))
+                .await?;
+
         Ok(AsyncRc::new(Self {
-            inner: Rc::new(ServerInner {
-                id: h.id,
-                dev: h.dev.bind()?,
-                minor_ver: h.minor_ver,
-                flags: h.flags,
-                caps: h.config.caps(),
-                ignore_interrupts: h.config.ignore_interrupts(),
-                buf_pool: BufPool::new(),
-                // A write request is a header plus up to `max_write` bytes.
-                buf_size: h.config.max_write() + BUF_HEADER_SIZE,
-                open_reqs: RefCell::new(HashMap::new()),
-                cancel_tokens: RefCell::new(Vec::new()),
-                replies: ReplyState {
-                    pending: RefCell::new(HashMap::new()),
-                    next_id: Cell::new(0),
-                },
-                mesh_rx: h.mesh_rx,
-                mesh_tx: h.mesh_tx,
-            }),
-            fs: h.fs.bind().await?,
+            inner,
+            fs,
             once: h.once,
         }))
     }

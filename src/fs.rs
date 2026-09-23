@@ -339,5 +339,5 @@ pub trait BindFs {
     /// different [`compio`] runtime from the one under which it was created (i.e.
     /// the runtime under which [`MountFs::mount`] was called). This function
     /// should also handle transitioning to the new runtime, if needed.
-    async fn bind(self) -> Result<Self::BoundFs>;
+    async fn bind(self, ctx: types::Context) -> Result<Self::BoundFs>;
 }
