@@ -20,6 +20,12 @@ pub struct FuseChannel {
 }
 
 impl DevFuse {
+    // TODO: the fd is never made O_NONBLOCK. compio's poll-based drivers
+    // (FreeBSD, macOS, Linux without io_uring) wait for readability and then
+    // read(), so with `dup`'d fds sharing one queue, every worker wakes but only
+    // one gets the request; the rest block their thread in read().
+    // TODO(e2e): kqueue support for /dev/macfuseN (and the FSKit socket) is
+    // unverified.
     pub fn new(fd: OwnedFd) -> Self {
         Self { fd }
     }

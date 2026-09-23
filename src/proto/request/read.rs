@@ -59,6 +59,9 @@ impl Read {
 
 impl Read {
     pub(super) fn decode(buf: Buf, ino: Option<Ino>, cfg: Cfg) -> Result<Self> {
+        // TODO: this check is inverted (should be `<`). Before 7.9 `fuse_read_in`
+        // is 24 bytes (no lock_owner/flags), so older kernels also read past the
+        // request.
         if buf.len() > const { HDR_LEN + std::mem::size_of::<Raw>() } {
             return Err(Error::EPROTO);
         }

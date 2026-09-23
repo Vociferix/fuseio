@@ -39,6 +39,7 @@ impl Created {
         }
     }
 
+    // TODO: sets the entry TTL; should call `attrs_ttl`.
     pub fn attr_ttl(self, ttl: Duration) -> Self {
         Self {
             entry: self.entry.entry_ttl(ttl),

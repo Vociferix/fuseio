@@ -14,6 +14,10 @@ pub struct InvalInode {
 }
 
 impl InvalInode {
+    // TODO: a negative offset invalidates only the attributes (libfuse
+    // documents this); there's no way to express that here, so every
+    // invalidation also drops cached data. `range` also overflows for an
+    // inclusive end of u64::MAX.
     pub fn new(ino: Ino) -> Self {
         Self {
             ino: ino.as_raw(),

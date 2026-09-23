@@ -81,6 +81,9 @@ impl GetLk {
             _ => return Err(Error::EINVAL),
         };
 
+        // TODO: libfuse passes `owner` to flock handlers too (it's what a later
+        // RELEASE with FLOCK_UNLOCK carries); it's dropped here and `FlockReq`
+        // has no `lock_owner()`.
         Ok(if raw.lk_flags.contains(LockFlags::FLOCK) {
             Self {
                 ino,

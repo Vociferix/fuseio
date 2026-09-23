@@ -25,6 +25,7 @@ pub struct Config {
     congestion_threshold: u16,
     max_write: u32,
     time_gran: u32,
+    ignore_interrupts: bool,
 }
 
 pub struct Init<F> {
@@ -131,6 +132,7 @@ impl KernelConfig {
             congestion_threshold: 0,
             max_write: crate::server::MAX_WRITE_SIZE as u32,
             time_gran: 1,
+            ignore_interrupts: false,
         }
     }
 }
@@ -167,6 +169,10 @@ impl Config {
     /// Returns the granularity of the filesystem's timestamps.
     pub fn time_gran(&self) -> Duration {
         Duration::from_nanos(self.time_gran.into())
+    }
+
+    pub fn ignore_interrupts(&self) -> bool {
+        self.ignore_interrupts
     }
 
     /// Sets the features the filesystem enables, replacing the defaults.
@@ -244,6 +250,11 @@ impl Config {
             .unwrap_or(MAX_TIME_GRAN);
         self
     }
+
+    pub fn with_ignore_interrupts(mut self, ignore: bool) -> Self {
+        self.ignore_interrupts = ignore;
+        self
+    }
 }
 
 pub async fn handshake<F: MountFs>(
@@ -254,6 +265,12 @@ pub async fn handshake<F: MountFs>(
     let msg = loop {
         let msg = read_init_req(dev.clone()).await?;
 
+        // TODO: every 7.x minor is accepted, but several compat paths for old
+        // minors are wrong: the <7.9 entry/attr reply sizes (`InodeAttrsCompat`
+        // lacks nlink/uid/gid/rdev), CREATE before 7.12 (`fuse_open_in`
+        // layout), RELEASE before 7.8 (16-byte body) and READ before 7.9.
+        // Current kernels are all ≥ 7.12 (Linux ≥ 2.6.31, macOS 7.19, FreeBSD
+        // 12.1+ 7.28), so requiring 7.12 would let these paths be deleted.
         // `max_readahead` and `flags` only exist from 7.6.
         let min_len = size_of::<ReqHdr>() + if msg.minor >= 6 { 16 } else { 8 };
 

@@ -9,6 +9,9 @@ pub struct StatX {
     attr_valid: u64,
     attr_valid_nsec: u32,
     flags: u32, // unused for now
+    // TODO: `fuse_statx_out.spare` is `uint64_t[2]` (16 bytes), so every field
+    // after this is 8 bytes early and the reply is 8 bytes short. Timestamps are
+    // `int64_t` and are clamped at the epoch by `From<SystemTime>`.
     _unused0: [u32; 2],
     mask: StatXMask,
     blksize: u32,
@@ -162,6 +165,7 @@ impl StatX {
         self
     }
 
+    // TODO: sets rdev instead of dev_major/dev_minor.
     pub fn fs_device_number(mut self, major: u32, minor: u32) -> Self {
         self.rdev_major = major;
         self.rdev_minor = minor;

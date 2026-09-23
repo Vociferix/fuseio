@@ -107,6 +107,12 @@ impl Context {
         Ok(())
     }
 
+    // TODO: kernels without EXPIRE_ONLY (before 7.38) ignore the flag and fully
+    // invalidate; libfuse returns ENOSYS instead. None of the notifications
+    // check the minimum protocol version (inval: 7.12, store/retrieve: 7.15,
+    // delete: 7.18). Also worth documenting: on Linux, inval_entry/delete lock
+    // the parent directory, so sending them from a handler for an operation on
+    // that directory deadlocks.
     pub async fn expire_entry<N>(&self, parent: Ino, name: N) -> Result<()>
     where
         N: AsRef<OsStr>,

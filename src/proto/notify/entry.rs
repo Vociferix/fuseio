@@ -43,6 +43,9 @@ impl<B: IntoIoBuf, const EXPIRE: bool> EncodeNotify for Entry<B, EXPIRE> {
         }
 
         let buf = self.name.into_io_buf_with_nul();
+        // TODO: `namelen` must exclude the trailing NUL; the kernel requires
+        // `size == sizeof(out) + namelen + 1` and fails the write with EINVAL
+        // otherwise, so every inval/expire entry notification is rejected.
         let namelen = buf.total_len();
 
         let Ok(namelen) = u32::try_from(namelen) else {

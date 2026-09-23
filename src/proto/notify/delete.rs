@@ -49,6 +49,8 @@ impl<B: IntoIoBuf> EncodeNotify for Delete<B> {
         }
 
         let buf = self.name.into_io_buf_with_nul();
+        // TODO: `namelen` must exclude the trailing NUL (see notify/entry.rs);
+        // the kernel rejects this notification with EINVAL as written.
         let namelen = buf.total_len();
 
         let Ok(namelen) = u32::try_from(namelen) else {

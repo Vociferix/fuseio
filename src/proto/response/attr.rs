@@ -143,6 +143,11 @@ impl InodeAttrs {
         self
     }
 
+    // TODO: there's no setter for the permission bits or `rdev`, and this
+    // overwrites the whole mode, so every attr/entry reply reports mode 0000 and
+    // device nodes have no device number.
+    // TODO: pre-1970 times are clamped to the epoch here; the wire fields are
+    // signed seconds (libfuse passes `st_*time` through), with nsec in [0, 1e9).
     pub fn kind(mut self, kind: InodeKind) -> Self {
         // TODO(e2e): assumes host-native mode values; verify once end-to-end tests
         // can be done.

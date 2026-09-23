@@ -18,4 +18,5 @@ log = "0.4"
 memchr = "2"
 nix = { version = "0.31", features = ["user", "process", "fs", "ioctl", "poll"] }
 page_size = "0.6"
+slab = "0.4.12"
 unsync = "0.2"

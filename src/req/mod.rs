@@ -1,10 +1,7 @@
-use crate::Result;
-use crate::buf::{BufPool, IntoIoBuf};
-use crate::context::{CacheData, Context};
-use crate::passthrough::PassthroughFd;
-use crate::types::{FileRange, Gid, Ino, Pid, Request, Uid, Version};
-
-use std::ffi::OsStr;
+use crate::cancel_token::CancelToken;
+use crate::context::Context;
+use crate::server::Server;
+use crate::types::{Gid, Pid, Request, Uid};
 
 mod access;
 mod close;
@@ -97,13 +94,15 @@ pub use xattr_keys_len::XattrKeysLenReq;
 #[derive(Clone)]
 pub struct Req {
     ctx: Context,
+    token: CancelToken,
     req: Request,
 }
 
 impl Req {
-    pub(crate) fn new<F, U>(server: &crate::server::Server<F, U>, req: Request) -> Self {
+    pub(crate) fn new<F, U>(server: &Server<F, U>, token: CancelToken, req: Request) -> Self {
         Self {
             ctx: Context::new(server.inner.clone()),
+            token,
             req,
         }
     }
@@ -126,6 +125,25 @@ impl Req {
 
     pub fn pid(&self) -> Pid {
         self.req.pid()
+    }
+
+    pub fn is_cancelled(&self) -> bool {
+        self.token.is_cancelled()
+    }
+
+    pub fn cancel(&self) {
+        self.token.cancel();
+    }
+
+    pub async fn cancelled(&self) {
+        self.token.cancelled().await
+    }
+
+    pub async fn run_until_cancelled<F>(&self, future: F) -> Option<F::Output>
+    where
+        F: Future,
+    {
+        self.token.run_until_cancelled(future).await
     }
 }
 

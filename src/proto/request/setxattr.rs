@@ -121,6 +121,14 @@ impl SetXattr {
             _ => return Err(Error::EINVAL),
         };
 
+        // TODO: the value starts after the key's NUL, so it ends at
+        // `key_end + 1 + size`; the check and truncate below are one byte short,
+        // which drops the value's last byte and panics in `value()` when
+        // `size == 0` (e.g. `setfattr -n user.x`).
+        // TODO: macOS `fuse_setxattr_in` is `{size, flags, position, padding}`
+        // (16 bytes) and SETXATTR_EXT is never negotiated there, so the key is
+        // read 8 bytes early. `position` (resource fork offset) also needs to be
+        // exposed like `GetXattr::offset`.
         let Some(key_len) = memchr::memchr(0, &buf[key_offset..]) else {
             return Err(Error::EPROTO);
         };

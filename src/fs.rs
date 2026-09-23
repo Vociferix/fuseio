@@ -108,6 +108,11 @@ pub trait Fs: Sized + 'static {
         Err(Error::ENOSYS)
     }
 
+    // TODO: libfuse's default for a missing open/opendir is success with fh 0.
+    // ENOSYS works on Linux (no_open) and FreeBSD with 7.23+, but on macOS
+    // (7.19) it fails every open(2). The same applies to `statfs`, where libfuse
+    // replies with defaults (namelen 255, bsize 512) so `df` and macOS mounting
+    // work.
     async fn open(&self, req: req::OpenReq) -> Result<types::Opened> {
         let _ = (self, req);
         Err(Error::ENOSYS)

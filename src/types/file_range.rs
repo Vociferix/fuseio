@@ -39,6 +39,9 @@ impl FileRange {
     }
 }
 
+// TODO: empty ranges can't be represented: `5..5` becomes `5..=4` (so `len()`
+// underflows) and `0..0` becomes the one-byte `0..=0`. `len()` also overflows for
+// `0..=u64::MAX`.
 impl From<std::ops::Range<u64>> for FileRange {
     fn from(range: std::ops::Range<u64>) -> Self {
         Self::Closed(range.start..=range.end.saturating_sub(1))

@@ -18,6 +18,10 @@ bitflags::bitflags! {
         const MTIME_NOW = 1 << 8;
         //const FORCE = 1 << 9;
         const CTIME = 1 << 10;
+        // TODO: the protocol has a single FATTR_KILL_SUIDGID (bit 11) meaning
+        // "clear suid, and sgid if group-executable"; bit 12 is never sent, so
+        // `remove_sgid()` is always false. Bits 9 and 13-17 in the comments are
+        // kernel-internal ATTR_* flags, not FATTR_* (bit 9 is FATTR_LOCKOWNER).
         const KILL_SUID = 1 << 11;
         const KILL_SGID = 1 << 12;
         //const FILE = 1 << 13;
@@ -281,6 +285,13 @@ impl SetAttr {
     }
 }
 
+// TODO: the seconds are a signed time64_t sent as u64, so pre-1970 times
+// (e.g. `touch -d 1969-01-01`) arrive as huge values and fail with EINVAL. Decode
+// them as i64.
+// TODO: macOS never sends FATTR_CTIME (bit 10, protocol 7.23); its ctime arrives
+// as CHGTIME (bit 29, `chgtime`), so `ctime()` is always None on macOS. macFUSE 5
+// maps FATTR_DARWIN_CTIME onto FATTR_CTIME; doing the same here would make
+// `ctime()` portable.
 fn make_time(secs: u64, nsecs: u32) -> Result<SystemTime> {
     if nsecs >= 1_000_000_000 {
         return Err(Error::EINVAL);

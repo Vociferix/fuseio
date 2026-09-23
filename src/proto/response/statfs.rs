@@ -35,6 +35,9 @@ impl FsAttrs {
             ffree: 0,
             bsize: 4096,
             namelen: 255,
+            // TODO: FreeBSD's fusefs reports `frsize` as the fundamental block
+            // size (f_bsize), so 0 likely shows the filesystem as zero-sized
+            // there; consider defaulting to `bsize`. Verify on FreeBSD.
             frsize: 0,
             _unused: 0,
         }

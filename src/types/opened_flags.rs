@@ -9,5 +9,7 @@ bitflags::bitflags! {
         const STREAM = 1 << 4;
         const NO_FLUSH = 1 << 5;
         const PARALLEL_DIRECT_WRITES = 1 << 6;
+        // TODO: macOS FOPEN_PURGE_ATTR (1 << 30) and FOPEN_PURGE_UBC (1 << 31)
+        // are missing.
     }
 }
