@@ -38,6 +38,10 @@ impl SetXattrReq {
     pub fn value(&self) -> &[u8] {
         self.setxattr.value()
     }
+
+    pub fn offset(&self) -> usize {
+        self.setxattr.offset()
+    }
 }
 
 impl std::ops::Deref for SetXattrReq {

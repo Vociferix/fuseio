@@ -2,7 +2,7 @@ use super::{Cfg, HDR_LEN, Ino};
 use crate::types::{FileFlag, FileHandle, FileTime, Gid, Mode, Uid};
 use crate::{Error, Result, buf::Buf};
 
-use std::time::{Duration, SystemTime};
+use std::time::SystemTime;
 
 bitflags::bitflags! {
     #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Default)]
@@ -16,19 +16,14 @@ bitflags::bitflags! {
         const FH = 1 << 6;
         const ATIME_NOW = 1 << 7;
         const MTIME_NOW = 1 << 8;
-        //const FORCE = 1 << 9;
+        // Bit 9 is LOCKOWNER, which is only used for mandatory locking during a
+        // truncate and is ignored here, as libfuse does.
         const CTIME = 1 << 10;
-        // TODO: the protocol has a single FATTR_KILL_SUIDGID (bit 11) meaning
-        // "clear suid, and sgid if group-executable"; bit 12 is never sent, so
-        // `remove_sgid()` is always false. Bits 9 and 13-17 in the comments are
-        // kernel-internal ATTR_* flags, not FATTR_* (bit 9 is FATTR_LOCKOWNER).
-        const KILL_SUID = 1 << 11;
-        const KILL_SGID = 1 << 12;
-        //const FILE = 1 << 13;
-        //const KILL_PRIV = 1 << 14;
-        //const OPEN = 1 << 15;
-        //const TIMES_SET = 1 << 16;
-        //const TOUCH = 1 << 17;
+        // One flag covers both bits: "clear setuid, and setgid if the file is
+        // group-executable". libfuse's `FUSE_SET_ATTR_KILL_SUID`/`_SGID` name
+        // bits 11 and 12, but those mirror the Linux VFS's internal `ATTR_*`
+        // numbering; on the wire bit 12 is unused.
+        const KILL_SUIDGID = 1 << 11;
 
         // macos only flags
         #[cfg(target_os = "macos")]
@@ -56,8 +51,6 @@ pub struct SetAttr {
     gid: Gid,
     #[cfg(target_os = "macos")]
     bkuptime: SystemTime,
-    #[cfg(target_os = "macos")]
-    chgtime: SystemTime,
     #[cfg(target_os = "macos")]
     crtime: SystemTime,
     #[cfg(target_os = "macos")]
@@ -122,8 +115,17 @@ impl SetAttr {
             .then_some(self.mtime)
     }
 
+    /// The change time to set.
+    ///
+    /// macOS sends this as its own Darwin flag, since its protocol version
+    /// predates the portable one; both arrive here.
     pub fn ctime(&self) -> Option<SystemTime> {
-        self.valid.contains(ValidFlags::CTIME).then_some(self.ctime)
+        #[cfg(target_os = "macos")]
+        let valid = ValidFlags::CTIME | ValidFlags::CHGTIME;
+        #[cfg(not(target_os = "macos"))]
+        let valid = ValidFlags::CTIME;
+
+        (!(self.valid & valid).is_empty()).then_some(self.ctime)
     }
 
     pub fn bkuptime(&self) -> Option<SystemTime> {
@@ -132,20 +134,6 @@ impl SetAttr {
             self.valid
                 .contains(ValidFlags::BKUPTIME)
                 .then_some(self.bkuptime)
-        }
-
-        #[cfg(not(target_os = "macos"))]
-        {
-            None
-        }
-    }
-
-    pub fn chgtime(&self) -> Option<SystemTime> {
-        #[cfg(target_os = "macos")]
-        {
-            self.valid
-                .contains(ValidFlags::CHGTIME)
-                .then_some(self.chgtime)
         }
 
         #[cfg(not(target_os = "macos"))]
@@ -180,12 +168,14 @@ impl SetAttr {
         self.valid.contains(ValidFlags::GID).then_some(self.gid)
     }
 
-    pub fn remove_suid(&self) -> bool {
-        self.valid.contains(ValidFlags::KILL_SUID)
-    }
-
-    pub fn remove_sgid(&self) -> bool {
-        self.valid.contains(ValidFlags::KILL_SGID)
+    /// Whether to clear the setuid bit, and the setgid bit if the file is
+    /// group-executable.
+    ///
+    /// Only sent when [`FsCaps::HANDLE_KILLPRIV_V2`](crate::types::FsCaps::HANDLE_KILLPRIV_V2)
+    /// is enabled, and only by Linux: FreeBSD never sets it, and macOS predates
+    /// it.
+    pub fn remove_suid_sgid(&self) -> bool {
+        self.valid.contains(ValidFlags::KILL_SUIDGID)
     }
 
     pub fn flags(&self) -> Option<FileFlag> {
@@ -226,6 +216,16 @@ impl SetAttr {
             FileTime::Specific(make_time(raw.mtime, raw.mtimensec)?)
         };
 
+        // macFUSE maps its Darwin change time onto the portable one, so a
+        // filesystem doesn't have to know which flag its kernel uses.
+        #[cfg(target_os = "macos")]
+        let ctime = if valid.contains(ValidFlags::CHGTIME) {
+            make_time(raw.chgtime, raw.chgtimensec)?
+        } else {
+            SystemTime::UNIX_EPOCH
+        };
+
+        #[cfg(not(target_os = "macos"))]
         let ctime = if valid.contains(ValidFlags::CTIME) {
             make_time(raw.ctime, raw.ctimensec)?
         } else {
@@ -235,20 +235,12 @@ impl SetAttr {
         #[cfg(target_os = "macos")]
         let bkuptime;
         #[cfg(target_os = "macos")]
-        let chgtime;
-        #[cfg(target_os = "macos")]
         let crtime;
 
         #[cfg(target_os = "macos")]
         {
             bkuptime = if valid.contains(ValidFlags::BKUPTIME) {
                 make_time(raw.bkuptime, raw.bkuptimensec)?
-            } else {
-                SystemTime::UNIX_EPOCH
-            };
-
-            chgtime = if valid.contains(ValidFlags::CHGTIME) {
-                make_time(raw.chgtime, raw.chgtimensec)?
             } else {
                 SystemTime::UNIX_EPOCH
             };
@@ -276,8 +268,6 @@ impl SetAttr {
             #[cfg(target_os = "macos")]
             bkuptime,
             #[cfg(target_os = "macos")]
-            chgtime,
-            #[cfg(target_os = "macos")]
             crtime,
             #[cfg(target_os = "macos")]
             flags: FileFlag::from_bits_retain(raw.flags),
@@ -285,20 +275,142 @@ impl SetAttr {
     }
 }
 
-// TODO: the seconds are a signed time64_t sent as u64, so pre-1970 times
-// (e.g. `touch -d 1969-01-01`) arrive as huge values and fail with EINVAL. Decode
-// them as i64.
-// TODO: macOS never sends FATTR_CTIME (bit 10, protocol 7.23); its ctime arrives
-// as CHGTIME (bit 29, `chgtime`), so `ctime()` is always None on macOS. macFUSE 5
-// maps FATTR_DARWIN_CTIME onto FATTR_CTIME; doing the same here would make
-// `ctime()` portable.
 fn make_time(secs: u64, nsecs: u32) -> Result<SystemTime> {
-    if nsecs >= 1_000_000_000 {
-        return Err(Error::EINVAL);
+    crate::proto::time::join_raw(secs, nsecs)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    use std::time::Duration;
+
+    use crate::buf::BufPool;
+    use crate::types::ReplyInitFlags;
+
+    const KILL_SUIDGID: u32 = 1 << 11;
+    const CTIME: u32 = 1 << 10;
+    #[cfg(target_os = "macos")]
+    const CHGTIME: u32 = 1 << 29;
+    const MODE: u32 = 1 << 0;
+    const SIZE: u32 = 1 << 3;
+
+    fn cfg() -> Cfg {
+        Cfg {
+            minor_ver: crate::handshake::MINOR_VER,
+            flags: ReplyInitFlags::empty(),
+        }
     }
 
-    Duration::from_secs(secs)
-        .checked_add(Duration::from_nanos(nsecs.into()))
-        .and_then(|ts| SystemTime::UNIX_EPOCH.checked_add(ts))
-        .ok_or(Error::EINVAL)
+    fn decode(valid: u32) -> SetAttr {
+        decode_with_times(valid, 0, 0)
+    }
+
+    fn decode_with_times(valid: u32, ctime: u64, chgtime: u64) -> SetAttr {
+        let mut buf = BufPool::new().checkout_with_capacity(256);
+
+        buf.extend_from_slice(&[0u8; HDR_LEN]);
+        buf.extend_from_slice(&valid.to_ne_bytes());
+        buf.extend_from_slice(&0u32.to_ne_bytes()); // padding
+        buf.extend_from_slice(&0u64.to_ne_bytes()); // fh
+        buf.extend_from_slice(&4096u64.to_ne_bytes()); // size
+        buf.extend_from_slice(&0u64.to_ne_bytes()); // lock_owner
+        buf.extend_from_slice(&0u64.to_ne_bytes()); // atime
+        buf.extend_from_slice(&0u64.to_ne_bytes()); // mtime
+        buf.extend_from_slice(&ctime.to_ne_bytes());
+        buf.extend_from_slice(&0u32.to_ne_bytes()); // atimensec
+        buf.extend_from_slice(&0u32.to_ne_bytes()); // mtimensec
+        buf.extend_from_slice(&0u32.to_ne_bytes()); // ctimensec
+        buf.extend_from_slice(&0o640u32.to_ne_bytes()); // mode
+        buf.extend_from_slice(&0u32.to_ne_bytes()); // unused
+        buf.extend_from_slice(&0u32.to_ne_bytes()); // uid
+        buf.extend_from_slice(&0u32.to_ne_bytes()); // gid
+        buf.extend_from_slice(&0u32.to_ne_bytes()); // unused
+
+        #[cfg(target_os = "macos")]
+        {
+            buf.extend_from_slice(&0u64.to_ne_bytes()); // bkuptime
+            buf.extend_from_slice(&chgtime.to_ne_bytes());
+            buf.extend_from_slice(&0u64.to_ne_bytes()); // crtime
+            buf.extend_from_slice(&[0u8; 4 * 4]); // the nsec fields and flags
+        }
+        let _ = chgtime;
+
+        SetAttr::decode(buf, Ino::from_raw(1), cfg()).unwrap()
+    }
+
+    #[test]
+    fn the_kill_flag_is_read() {
+        assert!(decode(KILL_SUIDGID).remove_suid_sgid());
+    }
+
+    #[test]
+    fn without_the_flag_nothing_is_cleared() {
+        assert!(!decode(0).remove_suid_sgid());
+        assert!(!decode(MODE | SIZE).remove_suid_sgid());
+    }
+
+    #[test]
+    fn the_unused_bit_beside_it_is_ignored() {
+        // libfuse's `FUSE_SET_ATTR_KILL_SGID` names this bit, but it belongs to
+        // the Linux VFS's internal flags and never reaches the wire.
+        assert!(!decode(1 << 12).remove_suid_sgid());
+    }
+
+    #[test]
+    fn the_other_fields_still_decode_alongside_it() {
+        let req = decode(KILL_SUIDGID | MODE | SIZE);
+
+        assert!(req.remove_suid_sgid());
+        assert_eq!(req.size(), Some(4096));
+        assert_eq!(req.mode().map(|mode| mode.bits()), Some(0o640));
+    }
+
+    #[test]
+    fn no_flag_means_no_change_time() {
+        assert!(decode(0).ctime().is_none());
+    }
+
+    #[cfg(not(target_os = "macos"))]
+    #[test]
+    fn the_portable_flag_carries_it() {
+        let req = decode_with_times(CTIME, 1_700_000_000, 0);
+
+        assert_eq!(
+            req.ctime(),
+            Some(SystemTime::UNIX_EPOCH + Duration::from_secs(1_700_000_000))
+        );
+    }
+
+    // macOS predates the portable flag and sends its own, which decodes to the
+    // same accessor.
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn the_darwin_flag_carries_it() {
+        let req = decode_with_times(CHGTIME, 0, 1_700_000_000);
+
+        assert_eq!(
+            req.ctime(),
+            Some(SystemTime::UNIX_EPOCH + Duration::from_secs(1_700_000_000))
+        );
+    }
+
+    #[test]
+    fn a_change_time_before_the_epoch_decodes() {
+        // 1969-12-31T23:59:59.5, which the kernel sends as -1 seconds.
+        let secs = (-1i64).cast_unsigned();
+
+        #[cfg(target_os = "macos")]
+        let req = decode_with_times(CHGTIME, 0, secs);
+        #[cfg(not(target_os = "macos"))]
+        let req = decode_with_times(CTIME, secs, 0);
+
+        let ctime = req.ctime().unwrap();
+
+        assert!(ctime < SystemTime::UNIX_EPOCH);
+        assert_eq!(
+            SystemTime::UNIX_EPOCH.duration_since(ctime).unwrap(),
+            Duration::from_secs(1)
+        );
+    }
 }

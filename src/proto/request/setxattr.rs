@@ -13,13 +13,28 @@ pub struct SetXattr {
     buf: Buf,
     key_start: usize,
     key_end: usize,
+    #[cfg(target_os = "macos")]
+    offset: usize,
 }
 
 #[repr(C)]
 struct Raw {
     size: u32,
     flags: u32,
+    #[cfg(target_os = "macos")]
+    position: u32,
+    #[cfg(target_os = "macos")]
+    _unused: u32,
 }
+
+const _: () = {
+    // macOS appends `position` and its padding.
+    #[cfg(not(target_os = "macos"))]
+    assert!(std::mem::size_of::<Raw>() == 8);
+
+    #[cfg(target_os = "macos")]
+    assert!(std::mem::size_of::<Raw>() == 16);
+};
 
 #[repr(C)]
 struct RawExt {
@@ -57,6 +72,22 @@ impl SetXattr {
     pub fn value(&self) -> &[u8] {
         &self.buf[(self.key_end + 1)..]
     }
+
+    /// The offset within the attribute to write at.
+    ///
+    /// Only macOS sends one, and only for the resource fork; it is zero
+    /// everywhere else.
+    pub fn offset(&self) -> usize {
+        #[cfg(target_os = "macos")]
+        {
+            self.offset
+        }
+
+        #[cfg(not(target_os = "macos"))]
+        {
+            0
+        }
+    }
 }
 
 impl SetXattr {
@@ -86,6 +117,14 @@ impl SetXattr {
 
         let Some(ino) = ino else {
             return Err(Error::EINVAL);
+        };
+
+        // macOS always carries `position`, since it never negotiates the
+        // extended layout.
+        #[cfg(target_os = "macos")]
+        let offset = {
+            let raw = unsafe { &*(buf.as_ptr().add(HDR_LEN) as *const Raw) };
+            raw.position as usize
         };
 
         // TODO(e2e): assumes each kernel sends host-native setxattr(2) flags;
@@ -121,23 +160,20 @@ impl SetXattr {
             _ => return Err(Error::EINVAL),
         };
 
-        // TODO: the value starts after the key's NUL, so it ends at
-        // `key_end + 1 + size`; the check and truncate below are one byte short,
-        // which drops the value's last byte and panics in `value()` when
-        // `size == 0` (e.g. `setfattr -n user.x`).
-        // TODO: macOS `fuse_setxattr_in` is `{size, flags, position, padding}`
-        // (16 bytes) and SETXATTR_EXT is never negotiated there, so the key is
-        // read 8 bytes early. `position` (resource fork offset) also needs to be
-        // exposed like `GetXattr::offset`.
         let Some(key_len) = memchr::memchr(0, &buf[key_offset..]) else {
             return Err(Error::EPROTO);
         };
         let key_end = key_offset + key_len;
 
-        if buf.len() < key_offset + key_len + size {
+        // The value follows the key's NUL terminator.
+        let Some(value_end) = (key_end + 1).checked_add(size) else {
+            return Err(Error::EPROTO);
+        };
+
+        if buf.len() < value_end {
             return Err(Error::EPROTO);
         }
-        buf.truncate(key_offset + key_len + size);
+        buf.truncate(value_end);
 
         let remove_sgid = setxattr_flags.contains(RawFlags::ACL_KILL_SGID)
             && &buf[key_offset..key_end] == b"system.posix_acl_access";
@@ -149,6 +185,141 @@ impl SetXattr {
             buf,
             key_start: key_offset,
             key_end,
+            #[cfg(target_os = "macos")]
+            offset,
         })
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    use crate::buf::BufPool;
+
+    const KEY: &[u8] = b"user.test";
+
+    fn cfg() -> Cfg {
+        Cfg {
+            minor_ver: crate::handshake::MINOR_VER,
+            flags: ReplyInitFlags::empty(),
+        }
+    }
+
+    fn request_at(key: &[u8], value: &[u8], size: u32, position: u32) -> Buf {
+        let mut buf = BufPool::new().checkout_with_capacity(256);
+
+        buf.extend_from_slice(&[0u8; HDR_LEN]);
+
+        buf.extend_from_slice(&size.to_ne_bytes());
+        buf.extend_from_slice(&0u32.to_ne_bytes());
+        #[cfg(target_os = "macos")]
+        {
+            buf.extend_from_slice(&position.to_ne_bytes());
+            buf.extend_from_slice(&0u32.to_ne_bytes());
+        }
+        let _ = position;
+
+        buf.extend_from_slice(key);
+        buf.push(0);
+        buf.extend_from_slice(value);
+
+        buf
+    }
+
+    fn request(key: &[u8], value: &[u8], size: u32) -> Buf {
+        request_at(key, value, size, 0)
+    }
+
+    fn decode(key: &[u8], value: &[u8]) -> Result<SetXattr> {
+        let size = value.len() as u32;
+        SetXattr::decode(request(key, value, size), Ino::from_raw(1), cfg())
+    }
+
+    #[test]
+    fn decodes_the_key_and_the_whole_value() {
+        let req = decode(KEY, b"hello").unwrap();
+
+        assert_eq!(req.key().as_bytes(), KEY);
+        assert_eq!(req.value(), b"hello");
+    }
+
+    #[test]
+    fn decodes_an_empty_value() {
+        let req = decode(KEY, b"").unwrap();
+
+        assert_eq!(req.key().as_bytes(), KEY);
+        assert_eq!(req.value(), b"");
+    }
+
+    #[test]
+    fn decodes_the_offset() {
+        let buf = request_at(KEY, b"hello", 5, 4096);
+        let req = SetXattr::decode(buf, Ino::from_raw(1), cfg()).unwrap();
+
+        assert_eq!(req.key().as_bytes(), KEY);
+        assert_eq!(req.value(), b"hello");
+        assert_eq!(
+            req.offset(),
+            if cfg!(target_os = "macos") { 4096 } else { 0 }
+        );
+    }
+
+    #[test]
+    fn decodes_a_value_holding_nul_bytes() {
+        let req = decode(KEY, b"a\0b").unwrap();
+
+        assert_eq!(req.value(), b"a\0b");
+    }
+
+    #[test]
+    fn rejects_a_value_shorter_than_its_size() {
+        let buf = request(KEY, b"hello", 6);
+
+        assert_eq!(
+            SetXattr::decode(buf, Ino::from_raw(1), cfg()).unwrap_err(),
+            Error::EPROTO
+        );
+    }
+
+    #[test]
+    fn rejects_a_size_that_would_overflow() {
+        let buf = request(KEY, b"hello", u32::MAX);
+
+        assert_eq!(
+            SetXattr::decode(buf, Ino::from_raw(1), cfg()).unwrap_err(),
+            Error::EPROTO
+        );
+    }
+
+    #[test]
+    fn rejects_an_unterminated_key() {
+        let mut buf = BufPool::new().checkout_with_capacity(256);
+        buf.extend_from_slice(&[0u8; HDR_LEN]);
+        buf.extend_from_slice(&0u32.to_ne_bytes());
+        buf.extend_from_slice(&0u32.to_ne_bytes());
+        #[cfg(target_os = "macos")]
+        {
+            buf.extend_from_slice(&0u32.to_ne_bytes());
+            buf.extend_from_slice(&0u32.to_ne_bytes());
+        }
+        buf.extend_from_slice(KEY);
+
+        assert_eq!(
+            SetXattr::decode(buf, Ino::from_raw(1), cfg()).unwrap_err(),
+            Error::EPROTO
+        );
+    }
+
+    #[test]
+    fn rejects_a_truncated_body() {
+        let mut buf = BufPool::new().checkout_with_capacity(256);
+        buf.extend_from_slice(&[0u8; HDR_LEN]);
+        buf.extend_from_slice(&0u32.to_ne_bytes());
+
+        assert_eq!(
+            SetXattr::decode(buf, Ino::from_raw(1), cfg()).unwrap_err(),
+            Error::EPROTO
+        );
     }
 }

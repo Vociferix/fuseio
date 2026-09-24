@@ -912,10 +912,11 @@ where
             .await;
     }
 
-    // TODO: FUSE_COPY_FILE_RANGE (47) replies with `fuse_write_out` (u32 size +
-    // padding), not a u64, and libfuse clamps its length to 0xfffff000 so the
-    // result fits. Only COPY_FILE_RANGE_64 (53) uses `fuse_copy_file_range_out`.
-    // Both opcodes currently share the u64 reply and pass the length unclamped.
+    /// Serves `FUSE_COPY_FILE_RANGE`, whose reply counts the copied bytes in a
+    /// `u32`.
+    ///
+    /// The requested length is clamped when it is decoded, so a filesystem that
+    /// respects it can always report its result.
     async fn copy_file_range(
         this: &AsyncRc<Self>,
         token: CancelToken,
@@ -924,11 +925,20 @@ where
     ) {
         let id = req.id;
         let req = req::CopyFileRangeReq::new(Req::new(this, token, req), body);
-        this.send(
-            id,
-            this.fs.copy_file_range(req).await.map(CopyFileRange::new),
-        )
-        .await;
+        let resp = match this.fs.copy_file_range(req).await {
+            Ok(copied) => match u32::try_from(copied) {
+                Ok(copied) => Ok(Write::new(copied as usize)),
+                Err(_) => {
+                    log::error!(
+                        "filesystem copied {copied} bytes, which COPY_FILE_RANGE cannot report"
+                    );
+                    Err(Error::EIO)
+                }
+            },
+            Err(err) => Err(err),
+        };
+
+        this.send(id, resp).await;
     }
 
     async fn syncfs(this: &AsyncRc<Self>, token: CancelToken, req: Request, body: request::SyncFs) {

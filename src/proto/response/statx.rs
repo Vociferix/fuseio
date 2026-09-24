@@ -9,10 +9,7 @@ pub struct StatX {
     attr_valid: u64,
     attr_valid_nsec: u32,
     flags: u32, // unused for now
-    // TODO: `fuse_statx_out.spare` is `uint64_t[2]` (16 bytes), so every field
-    // after this is 8 bytes early and the reply is 8 bytes short. Timestamps are
-    // `int64_t` and are clamped at the epoch by `From<SystemTime>`.
-    _unused0: [u32; 2],
+    _unused0: [u64; 2],
     mask: StatXMask,
     blksize: u32,
     attributes: StatXAttrs,
@@ -36,10 +33,17 @@ pub struct StatX {
     // _unused2: [u64; 14]
 }
 
+const _: () = {
+    // `fuse_statx_out` without `fuse_statx`'s trailing `__spare2[14]`, which
+    // `encode` appends.
+    assert!(std::mem::size_of::<StatX>() == 176);
+    assert!(std::mem::size_of::<StatXTime>() == 16);
+};
+
 #[repr(C)]
 #[derive(Debug, Default)]
 struct StatXTime {
-    secs: u64,
+    secs: i64,
     nsecs: u32,
     _unused: u32,
 }
@@ -165,10 +169,9 @@ impl StatX {
         self
     }
 
-    // TODO: sets rdev instead of dev_major/dev_minor.
     pub fn fs_device_number(mut self, major: u32, minor: u32) -> Self {
-        self.rdev_major = major;
-        self.rdev_minor = minor;
+        self.dev_major = major;
+        self.dev_minor = minor;
         self
     }
 
@@ -224,6 +227,10 @@ impl EncodeResp for StatX {
             }
         }
 
+        // `fuse_out_header` plus `fuse_statx_out`; the kernel rejects any other
+        // size.
+        const _: () = assert!(std::mem::size_of::<Out>() == 16 + 288);
+
         Ok(Out {
             hdr: RawHeader {
                 len: const { std::mem::size_of::<Out>() as u32 },
@@ -246,13 +253,99 @@ impl StatXTime {
 
 impl From<SystemTime> for StatXTime {
     fn from(time: SystemTime) -> Self {
-        let ts = time
-            .duration_since(SystemTime::UNIX_EPOCH)
-            .unwrap_or(Duration::ZERO);
+        let (secs, nanos) = crate::proto::time::split(time);
+
         Self {
-            secs: ts.as_secs(),
-            nsecs: ts.subsec_nanos(),
+            secs,
+            nsecs: nanos,
             _unused: 0,
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    use crate::types::ReplyInitFlags;
+
+    use compio::buf::IoVectoredBuf;
+
+    // Offsets within the reply of the `fuse_statx` fields this exercises.
+    const STAT: usize = 16 + 32;
+    const MASK: usize = STAT;
+    const MODE: usize = STAT + 28;
+    const INO: usize = STAT + 32;
+    const SIZE: usize = STAT + 40;
+    const RDEV_MAJOR: usize = STAT + 128;
+    const DEV_MAJOR: usize = STAT + 136;
+
+    fn cfg() -> Cfg {
+        Cfg {
+            minor_ver: crate::handshake::MINOR_VER,
+            flags: ReplyInitFlags::empty(),
+        }
+    }
+
+    fn encode(statx: StatX) -> Vec<u8> {
+        let buf = statx.encode(7, cfg()).unwrap().into_io_buf();
+
+        buf.iter_slice().flatten().copied().collect()
+    }
+
+    fn u32_at(bytes: &[u8], offset: usize) -> u32 {
+        u32::from_ne_bytes(bytes[offset..offset + 4].try_into().unwrap())
+    }
+
+    fn u64_at(bytes: &[u8], offset: usize) -> u64 {
+        u64::from_ne_bytes(bytes[offset..offset + 8].try_into().unwrap())
+    }
+
+    #[test]
+    fn the_reply_is_the_size_the_kernel_expects() {
+        let bytes = encode(StatX::new());
+
+        assert_eq!(bytes.len(), 16 + 288);
+        assert_eq!(u32_at(&bytes, 0), (16 + 288) as u32);
+        assert_eq!(u64_at(&bytes, 8), 7);
+    }
+
+    #[test]
+    fn the_fields_land_where_the_kernel_reads_them() {
+        let ino = Ino::from_raw(42).unwrap();
+        let bytes = encode(StatX::new().ino(ino).size(4096).inode_kind(InodeKind::Dir));
+
+        assert_eq!(u64_at(&bytes, INO), 42);
+        assert_eq!(u64_at(&bytes, SIZE), 4096);
+        assert_eq!(
+            u32_at(&bytes, MODE) as u16,
+            SFlag::from(InodeKind::Dir).bits() as u16
+        );
+    }
+
+    #[test]
+    fn setters_accumulate_the_mask() {
+        let ino = Ino::from_raw(42).unwrap();
+        let bytes = encode(StatX::new().ino(ino).size(4096));
+
+        let mask = StatXMask::from_bits_retain(u32_at(&bytes, MASK));
+
+        assert!(mask.contains(StatXMask::INO));
+        assert!(mask.contains(StatXMask::SIZE));
+        assert!(!mask.contains(StatXMask::NLINK));
+    }
+
+    #[test]
+    fn inode_and_filesystem_device_numbers_are_separate() {
+        let bytes = encode(
+            StatX::new()
+                .inode_device_number(1, 2)
+                .fs_device_number(3, 4),
+        );
+
+        assert_eq!(u32_at(&bytes, RDEV_MAJOR), 1);
+        assert_eq!(u32_at(&bytes, RDEV_MAJOR + 4), 2);
+        assert_eq!(u32_at(&bytes, DEV_MAJOR), 3);
+        assert_eq!(u32_at(&bytes, DEV_MAJOR + 4), 4);
     }
 }

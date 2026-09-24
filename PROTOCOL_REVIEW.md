@@ -17,86 +17,101 @@ of this review.
    Token reuse is safe: the interrupt path holds a clone, so `try_reset` can't
    recycle a token that is still reachable. Follow-ups are items 30–35.
 
-2. **`SETXATTR` value is one byte short, and an empty value panics**
-   (`src/proto/request/setxattr.rs:124`)
-   - The value starts after the key's NUL, so it ends at `key_end + 1 + size`.
-     The length check and `truncate` stop at `key_end + size`.
-   - As a result, every value loses its last byte.
-   - With `size == 0` (e.g. `setfattr -n user.x`), `value()` slices
-     `[key_end+1..key_end]` and panics. This affects all platforms.
+2. ~~**`SETXATTR` value is one byte short, and an empty value panics**~~ —
+   **fixed.** The value's end is computed from the key's NUL
+   (`key_end + 1 + size`, with a `checked_add` against a malformed `size`), so
+   values arrive whole and an empty one decodes to `&[]`. Covered by tests in
+   `setxattr.rs`.
 
-3. **macOS `SETXATTR` layout is wrong** (`src/proto/request/setxattr.rs:124`)
-   - On macOS, `fuse_setxattr_in` is `{size, flags, position, padding}`
-     (16 bytes).
-   - SETXATTR_EXT is never negotiated on macOS (wire bit 29 is
-     `DARWIN_CASE_INSENSITIVE` there), so the 8-byte layout is used. The key is
-     therefore read from `position`, and usually decodes as an empty string.
-   - `position` (the resource fork offset) should be exposed on `SetXattrReq`,
-     like `GetXattrReq::offset`.
+3. ~~**macOS `SETXATTR` layout is wrong**~~ — **fixed.** `Raw` now carries
+   `position` and its padding on macOS (16 bytes, asserted), matching
+   `getxattr.rs`, so the key is read at the right offset. The resource-fork
+   offset is exposed as `SetXattrReq::offset()`, which is 0 off macOS, and the
+   decoder tests build the macOS body under `cfg`.
 
-4. **Entry and delete notifications are always rejected**
-   (`src/proto/notify/entry.rs:46`, `src/proto/notify/delete.rs:52`)
-   - `namelen` is taken from the buffer that already includes the trailing NUL.
-   - The kernel requires `size == sizeof(out) + namelen + 1` and returns EINVAL
-     otherwise. libfuse sends `namelen = strlen(name)` followed by `namelen + 1`
-     bytes.
-   - As a result, `invalidate_entry`, `expire_entry` and `delete_inode` all fail.
+4. ~~**Entry and delete notifications are always rejected**~~ — **fixed.**
+   `namelen` now comes from `IoBufferWithNul::len_without_nul`, so it counts the
+   name alone while the payload still carries the terminator, which is what the
+   kernel's `size == sizeof(out) + namelen + 1` check expects. Wire-level tests
+   in `notify/entry.rs` and `notify/delete.rs` pin the lengths, the payload, the
+   notify code and the expire flag.
 
-5. **`STATX` reply layout is wrong** (`src/proto/response/statx.rs:12`)
-   - `fuse_statx_out.spare` is `uint64_t[2]`, but the crate uses `[u32; 2]`.
-   - Every field after it is therefore 8 bytes early, and the reply is 8 bytes
-     short, so the kernel rejects it.
-   - Separately, `fs_device_number` writes `rdev_*` instead of `dev_*`
-     (`statx.rs:168`).
+5. ~~**`STATX` reply layout is wrong**~~ — **fixed.** `spare` is `[u64; 2]`, so
+   the fields line up and the reply is the 304 bytes the kernel expects
+   (`fuse_out_header` + `fuse_statx_out`), asserted at compile time along with
+   `StatX` (176) and `StatXTime` (16). `fs_device_number` now writes `dev_*`.
+   `__spare2` stays in the encoder's `Out` rather than `StatX`, to keep the
+   user-held struct small. Tests check the reply size, field offsets, mask
+   accumulation and the two device numbers.
 
-6. **`InodeAttrs` can't set permission bits or `rdev`**
-   (`src/proto/response/attr.rs:146`)
-   - `kind()` overwrites the whole mode, and nothing else writes `mode` or `rdev`.
-   - As a result, every getattr, setattr, lookup, create, mknod and readdirplus
-     reply reports mode `0000`, and device nodes have no device number.
+6. ~~**`InodeAttrs` can't set permission bits**~~ — **fixed.** `InodeAttrs::mode`
+   sets the permission bits (including setuid/setgid/sticky) and `kind` sets only
+   the `S_IFMT` bits, so the two compose in either order and neither can corrupt
+   the other. Tests read the encoded `mode` field on both layouts. Device numbers
+   moved to item 36.
 
-7. **`COPY_FILE_RANGE` (47) reply is encoded as `COPY_FILE_RANGE_64`'s**
-   (`src/server.rs:733`)
-   - Opcode 47 replies with `fuse_write_out` (`u32 size` + padding). Only 53
-     replies with `fuse_copy_file_range_out` (`u64`).
-   - Both share the `u64` reply. On little-endian hosts the bytes match only when
-     the count fits in `u32`.
-   - libfuse clamps opcode 47's length to `0xfffff000`; the crate passes it
-     unclamped. A copy of 4 GiB or more is therefore reported to the kernel as a
-     truncated count.
+7. ~~**`COPY_FILE_RANGE` (47) reply is encoded as `COPY_FILE_RANGE_64`'s**~~ —
+   **fixed.** Opcode 47 now replies with `Write` (`fuse_write_out`) and 53 with
+   `CopyFileRange` (`fuse_copy_file_range_out`). `CopyFileRange::decode` clamps
+   the requested length to `0xfffff000` as libfuse does, `decode_64` passes it
+   through, and the two `Body` variants share the type while the opcode picks the
+   decoder. A filesystem that reports more than `u32::MAX` on opcode 47 gets a
+   logged EIO rather than a truncated count.
 
-8. **Out-of-range error values hang the caller** (`src/proto/response/error.rs:12`)
-   - Linux validates `oh.error` (it must be in `-511..=0`) *before* looking up the
-     request. An invalid value fails the write, and the request is never
-     completed.
-   - `Error` accepts any non-zero `i32`, including negatives and values ≥ 512.
-   - libfuse maps bad values to ERANGE and logs them. The crate should do the same
-     for anything outside `1..512`.
+8. ~~**Out-of-range error values hang the caller**~~ — **fixed.** Replies clamp
+   the errno to `1..=MAX_ERRNO` (133) through `Error::wire_errno`, logging and
+   substituting EIO otherwise, and `from_raw_os_error` rejects anything outside
+   that range so most `Error`s are valid by construction. The handshake's error
+   replies share the same path.
+   - 133 rather than Linux's 511, because the kernels checked disagree and two of
+     them reject *before* matching the reply to its request, which is what hangs
+     the caller: Linux allows 1..=511 (`fs/fuse/dev.c`, `oh.error <= -512`);
+     FreeBSD allows 1..=`ELAST` (97) and quietly substitutes EIO above that, but
+     under the `linux_errnos` mount option only translates 1..=133
+     (`LINUX_ELAST`) and fails the write otherwise; the old osxfuse kext checks
+     nothing. 133 is the highest errno any of them defines, so nothing valid is
+     refused.
 
-9. **`Created::attr_ttl` sets the entry TTL** (`src/proto/response/create.rs:42`)
-   - It calls `entry_ttl` instead of `attrs_ttl`.
+9. ~~**`Created::attr_ttl` sets the entry TTL**~~ — **fixed.** It calls
+   `attrs_ttl`, and is itself renamed `attrs_ttl` to match `Entry`. Tests check
+   that the two timeouts land in their own fields in either order, and that the
+   reply is `entry_out + open_out` long on both layouts.
 
 ## High: incorrect semantics or platform behaviour
 
-10. **`setattr` kill-suid/sgid bits** (`src/proto/request/setattr.rs:21`)
-    - The protocol has one flag, FATTR_KILL_SUIDGID (bit 11), meaning "clear suid,
-      and sgid if group-executable". Bit 12 is never sent, so `remove_sgid()` is
-      always false.
-    - The commented-out bits 9 and 13–17 are kernel-internal `ATTR_*` flags, not
-      protocol bits. Bit 9 is FATTR_LOCKOWNER.
+10. ~~**`setattr` kill-suid/sgid bits**~~ — **fixed.** `remove_suid()` and
+    `remove_sgid()` are replaced by `remove_suid_sgid()`, reading the single
+    `FATTR_KILL_SUIDGID` (bit 11), matching `Write::remove_suid_sgid()`. The
+    mislabelled bit comments are corrected.
+    - Verified against all three kernels: bit 11 is the highest `FATTR_*` in
+      Linux's `include/uapi/linux/fuse.h:381`, FreeBSD's `fuse_kernel.h:287` and
+      libfuse's own copy, and nothing defines bit 12. libfuse's
+      `FUSE_SET_ATTR_KILL_SUID`/`_SGID` (bits 11 and 12) mirror the Linux VFS's
+      internal `ATTR_*` numbering, so its `_SGID` is dead even in libfuse, whose
+      only use of it is a pass-through mask.
+    - Who sends it: Linux only, with `HANDLE_KILLPRIV_V2`, on a non-directory
+      chown and on a truncate without `CAP_FSETID` (`fs/fuse/dir.c:2234,2243`).
+      FreeBSD never sets it; the macOS kext predates it.
+    - Also fixed a typo while here: `WriteReq::remove_suid_guid` is now
+      `remove_suid_sgid`.
 
-11. **macOS `setattr` ctime** (`src/proto/request/setattr.rs:288`)
-    - macOS (protocol 7.19) never sends FATTR_CTIME (bit 10). It sends
-      CHGTIME (bit 29) instead, so `ctime()` is always `None` on macOS.
-    - macFUSE 5 maps FATTR_DARWIN_CTIME onto FATTR_CTIME. Doing the same would
-      make `ctime()` portable and let `chgtime()` go.
+11. ~~**macOS `setattr` ctime**~~ — **fixed.** On macOS the Darwin change time
+    (bit 29) decodes into the portable `ctime` field and `ctime()` accepts either
+    flag, as macFUSE 5's library does. `chgtime()` is gone, since it would return
+    exactly the same value. `bkuptime()` and `crtime()` stay, having no portable
+    equivalent.
 
-12. **Pre-1970 timestamps** (`setattr.rs:288`, `attr.rs:146`, `statx.rs:12`,
-    `xtimes.rs`)
-    - The time fields are signed seconds sent as `u64`, with nanoseconds in
-      `[0, 1e9)`.
-    - Decoding them as unsigned makes `touch -d 1969-…` fail with EINVAL.
-    - Encoding clamps pre-epoch times to 0.
+12. ~~**Pre-1970 timestamps**~~ — **fixed.** A new `proto::time` module converts
+    both directions, treating the seconds as the signed value they are and
+    keeping the nanosecond remainder moving forward, as `timespec` does: half a
+    second before the epoch is `-1` seconds plus 500 ms. `setattr` decodes
+    through it, and `attr`, `statx` and `xtimes` encode through it, so a pre-1970
+    time no longer fails with EINVAL or silently becomes 1970. `StatXTime.secs`
+    is now `i64`, matching `fuse_sx_time`.
+    - Its own tests round-trip the epoch, later times, whole and fractional
+      pre-epoch times, the two's-complement bits, an out-of-range remainder and
+      the extremes of `i64`. Decode and encode are also covered end to end
+      through `SetAttr` and `InodeAttrs`.
 
 13. **`Fs` defaults differ from libfuse where it matters** (`src/fs.rs:111`)
     - `open`/`opendir`: libfuse succeeds with fh 0 when they're unimplemented. The
@@ -241,6 +256,22 @@ of this review.
 
 35. ~~**NOTIFY_REPLY for an unknown worker still gets a reply**~~ — **fixed.**
     Both paths now log and drop it.
+
+## Consistency
+
+36. **Device numbers should be exposed unpacked, and consistently**
+    - `MakeNod`/`MakeNodeReq` expose `rdev()` as a packed `u32`, `InodeAttrs` has
+      no setter at all, and `StatX` takes `major, minor` pairs, because
+      `fuse_statx` stores them split.
+    - The wire `rdev` is an encoded `dev_t` whose packing is platform-specific:
+      Linux's 32-bit form is 12 bits of major and 20 of minor (split, with the
+      low 8 minor bits first), while macOS uses 8 and 24. nix's `major`/`minor`
+      operate on the host's 64-bit `dev_t`, which is a different layout again, so
+      they can't be used directly on this field.
+    - Plan: a `DeviceNumber` type with per-platform pack/unpack, exposed as
+      `MakeNodeReq::device_number() -> Option<DeviceNumber>`,
+      `InodeAttrs::device_number(DeviceNumber)` and the same for `StatX`, with
+      `TODO(e2e)` notes on the packing until end-to-end tests can confirm it.
 
 ## Checked and correct
 

@@ -486,7 +486,7 @@ async fn write_init_err(dev: AsyncArc<DevFuse>, unique: u64, err: crate::Error) 
         InitRespRaw {
             hdr: RespHdr {
                 len: const { size_of::<RespHdr>() as u32 },
-                err: -err.raw_os_error(),
+                err: -err.wire_errno(),
                 unique,
             },
             ..InitRespRaw::default()

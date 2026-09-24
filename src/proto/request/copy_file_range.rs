@@ -34,8 +34,24 @@ impl CopyFileRange {
     }
 }
 
+/// The largest length `FUSE_COPY_FILE_RANGE` can report back, since its reply
+/// counts bytes in a `u32`.
+///
+/// libfuse clamps the request the same way.
+pub(super) const MAX_COMPAT_LEN: u64 = 0xfffff000;
+
 impl CopyFileRange {
-    pub(super) fn decode(buf: Buf, ino: Option<Ino>, _: Cfg) -> Result<Self> {
+    /// Decodes `FUSE_COPY_FILE_RANGE`, whose reply is a `fuse_write_out`.
+    pub(super) fn decode(buf: Buf, ino: Option<Ino>, cfg: Cfg) -> Result<Self> {
+        let mut req = Self::decode_64(buf, ino, cfg)?;
+
+        req.len = req.len.min(MAX_COMPAT_LEN);
+
+        Ok(req)
+    }
+
+    /// Decodes `FUSE_COPY_FILE_RANGE_64`, whose reply can report the full range.
+    pub(super) fn decode_64(buf: Buf, ino: Option<Ino>, _: Cfg) -> Result<Self> {
         if buf.len() < const { HDR_LEN + std::mem::size_of::<Raw>() } {
             return Err(Error::EPROTO);
         }
@@ -63,5 +79,58 @@ impl CopyFileRange {
             },
             len: raw.len,
         })
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::buf::BufPool;
+    use crate::types::ReplyInitFlags;
+
+    fn cfg() -> Cfg {
+        Cfg {
+            minor_ver: crate::handshake::MINOR_VER,
+            flags: ReplyInitFlags::empty(),
+        }
+    }
+
+    fn request(len: u64) -> Buf {
+        let mut buf = BufPool::new().checkout_with_capacity(128);
+
+        buf.extend_from_slice(&[0u8; HDR_LEN]);
+        buf.extend_from_slice(&1u64.to_ne_bytes()); // fh_in
+        buf.extend_from_slice(&2u64.to_ne_bytes()); // off_in
+        buf.extend_from_slice(&3u64.to_ne_bytes()); // ino_out
+        buf.extend_from_slice(&4u64.to_ne_bytes()); // fh_out
+        buf.extend_from_slice(&5u64.to_ne_bytes()); // off_out
+        buf.extend_from_slice(&len.to_ne_bytes());
+        buf.extend_from_slice(&0u64.to_ne_bytes()); // flags
+
+        buf
+    }
+
+    #[test]
+    fn a_short_copy_is_left_alone() {
+        let req = CopyFileRange::decode(request(4096), Ino::from_raw(9), cfg()).unwrap();
+
+        assert_eq!(req.len(), 4096);
+        assert_eq!(req.src().ino, Ino::from_raw(9).unwrap());
+        assert_eq!(req.dst().ino, Ino::from_raw(3).unwrap());
+    }
+
+    #[test]
+    fn a_copy_too_large_to_report_is_clamped() {
+        let req = CopyFileRange::decode(request(u64::MAX), Ino::from_raw(9), cfg()).unwrap();
+
+        assert_eq!(req.len(), MAX_COMPAT_LEN);
+        assert!(u32::try_from(req.len()).is_ok());
+    }
+
+    #[test]
+    fn the_64_bit_op_keeps_the_whole_length() {
+        let req = CopyFileRange::decode_64(request(u64::MAX), Ino::from_raw(9), cfg()).unwrap();
+
+        assert_eq!(req.len(), u64::MAX);
     }
 }

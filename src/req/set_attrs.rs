@@ -47,10 +47,6 @@ impl SetAttrsReq {
         self.set_attr.bkuptime()
     }
 
-    pub fn chgtime(&self) -> Option<SystemTime> {
-        self.set_attr.chgtime()
-    }
-
     pub fn crtime(&self) -> Option<SystemTime> {
         self.set_attr.crtime()
     }
@@ -67,12 +63,8 @@ impl SetAttrsReq {
         self.set_attr.gid()
     }
 
-    pub fn remove_suid(&self) -> bool {
-        self.set_attr.remove_suid()
-    }
-
-    pub fn remove_sgid(&self) -> bool {
-        self.set_attr.remove_sgid()
+    pub fn remove_suid_sgid(&self) -> bool {
+        self.set_attr.remove_suid_sgid()
     }
 
     pub fn flags(&self) -> Option<FileFlag> {

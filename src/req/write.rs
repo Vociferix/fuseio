@@ -45,7 +45,7 @@ impl WriteReq {
         self.write.cache_writeback()
     }
 
-    pub fn remove_suid_guid(&self) -> bool {
+    pub fn remove_suid_sgid(&self) -> bool {
         self.write.remove_suid_sgid()
     }
 }

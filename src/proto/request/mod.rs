@@ -345,7 +345,7 @@ impl AnyRequest {
             Opcode::TMPFILE => Body::TmpFile(TmpFile::decode(buf, ino, cfg)?),
             Opcode::STATX => Body::StatX(StatX::decode(buf, ino, cfg)?),
             Opcode::COPY_FILE_RANGE_64 => {
-                Body::CopyFileRange64(CopyFileRange64::decode(buf, ino, cfg)?)
+                Body::CopyFileRange64(CopyFileRange64::decode_64(buf, ino, cfg)?)
             }
 
             #[cfg(target_os = "macos")]

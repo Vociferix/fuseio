@@ -39,10 +39,9 @@ impl Created {
         }
     }
 
-    // TODO: sets the entry TTL; should call `attrs_ttl`.
-    pub fn attr_ttl(self, ttl: Duration) -> Self {
+    pub fn attrs_ttl(self, ttl: Duration) -> Self {
         Self {
-            entry: self.entry.entry_ttl(ttl),
+            entry: self.entry.attrs_ttl(ttl),
             open: self.open,
         }
     }
@@ -144,5 +143,90 @@ impl EncodeResp for Created {
             },
             (OpenedOut(open),),
         )))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    use crate::types::{FileHandle, ReplyInitFlags};
+
+    use compio::buf::IoVectoredBuf;
+    use std::time::Duration;
+
+    // `fuse_entry_out` behind a 16-byte header, then `fuse_open_out`.
+    const ENTRY_VALID: usize = 16 + 16;
+    const ATTR_VALID: usize = 16 + 24;
+    const ENTRY_VALID_NSEC: usize = 16 + 32;
+    const ATTR_VALID_NSEC: usize = 16 + 36;
+    const ENTRY_OUT_LEN: usize = 40 + if cfg!(target_os = "macos") { 104 } else { 88 };
+    const OPEN_OUT_LEN: usize = 16;
+
+    fn cfg() -> Cfg {
+        Cfg {
+            minor_ver: crate::handshake::MINOR_VER,
+            flags: ReplyInitFlags::empty(),
+        }
+    }
+
+    fn created() -> Created {
+        Created::new(Ino::from_raw(9).unwrap(), FileHandle(3))
+    }
+
+    fn encode(created: Created) -> Vec<u8> {
+        let buf = created.encode(7, cfg()).unwrap().into_io_buf();
+
+        buf.iter_slice().flatten().copied().collect()
+    }
+
+    fn u64_at(bytes: &[u8], offset: usize) -> u64 {
+        u64::from_ne_bytes(bytes[offset..offset + 8].try_into().unwrap())
+    }
+
+    fn u32_at(bytes: &[u8], offset: usize) -> u32 {
+        u32::from_ne_bytes(bytes[offset..offset + 4].try_into().unwrap())
+    }
+
+    #[test]
+    fn the_reply_is_an_entry_and_an_open() {
+        let bytes = encode(created());
+
+        assert_eq!(bytes.len(), 16 + ENTRY_OUT_LEN + OPEN_OUT_LEN);
+        assert_eq!(u32_at(&bytes, 0), bytes.len() as u32);
+    }
+
+    #[test]
+    fn the_two_timeouts_are_separate() {
+        let bytes = encode(
+            created()
+                .entry_ttl(Duration::new(5, 100))
+                .attrs_ttl(Duration::new(9, 200)),
+        );
+
+        assert_eq!(u64_at(&bytes, ENTRY_VALID), 5);
+        assert_eq!(u32_at(&bytes, ENTRY_VALID_NSEC), 100);
+        assert_eq!(u64_at(&bytes, ATTR_VALID), 9);
+        assert_eq!(u32_at(&bytes, ATTR_VALID_NSEC), 200);
+    }
+
+    #[test]
+    fn the_timeouts_dont_disturb_each_other_in_either_order() {
+        let bytes = encode(
+            created()
+                .attrs_ttl(Duration::from_secs(9))
+                .entry_ttl(Duration::from_secs(5)),
+        );
+
+        assert_eq!(u64_at(&bytes, ENTRY_VALID), 5);
+        assert_eq!(u64_at(&bytes, ATTR_VALID), 9);
+    }
+
+    #[test]
+    fn a_timeout_defaults_to_zero() {
+        let bytes = encode(created().entry_ttl(Duration::from_secs(5)));
+
+        assert_eq!(u64_at(&bytes, ENTRY_VALID), 5);
+        assert_eq!(u64_at(&bytes, ATTR_VALID), 0);
     }
 }

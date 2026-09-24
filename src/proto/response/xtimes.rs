@@ -1,6 +1,6 @@
 use super::{Cfg, EncodeResp, IntoIoBuf, IoBuf, RawHeader};
 
-use std::time::{Duration, SystemTime};
+use std::time::SystemTime;
 
 #[derive(Debug)]
 #[repr(C)]
@@ -17,20 +17,16 @@ impl XTimes {
     }
 
     pub fn bkuptime(mut self, bkuptime: SystemTime) -> Self {
-        let ts = bkuptime
-            .duration_since(SystemTime::UNIX_EPOCH)
-            .unwrap_or(Duration::ZERO);
-        self.bkuptime = ts.as_secs();
-        self.bkuptimensec = ts.subsec_nanos();
+        let (secs, nanos) = crate::proto::time::split_raw(bkuptime);
+        self.bkuptime = secs;
+        self.bkuptimensec = nanos;
         self
     }
 
     pub fn crtime(mut self, crtime: SystemTime) -> Self {
-        let ts = crtime
-            .duration_since(SystemTime::UNIX_EPOCH)
-            .unwrap_or(Duration::ZERO);
-        self.crtime = ts.as_secs();
-        self.crtimensec = ts.subsec_nanos();
+        let (secs, nanos) = crate::proto::time::split_raw(crtime);
+        self.crtime = secs;
+        self.crtimensec = nanos;
         self
     }
 }

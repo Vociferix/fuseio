@@ -93,6 +93,12 @@ where
     fn new(buf: IoBuffer<B, V>) -> Self {
         Self { buf }
     }
+
+    /// The length without the terminator, which is what the kernel's `namelen`
+    /// fields count.
+    pub(crate) fn len_without_nul(&self) -> usize {
+        self.buf.total_len()
+    }
 }
 
 pub trait IntoIoBuf: sealed::Sealed + Sized {

@@ -221,7 +221,13 @@ impl Error {
         self.0.get()
     }
 
+    /// Returns [`None`] unless `error` is an errno every supported kernel
+    /// accepts in a reply, which is `1..=133`.
     pub const fn from_raw_os_error(error: i32) -> Option<Self> {
+        if error < 1 || error > MAX_ERRNO {
+            return None;
+        }
+
         if let Some(error) = NonZeroI32::new(error) {
             Some(Self(error))
         } else {
@@ -229,6 +235,39 @@ impl Error {
         }
     }
 }
+
+impl Error {
+    /// The errno to put in a reply header.
+    ///
+    /// A kernel that rejects the value may never match the reply to its request,
+    /// leaving the caller waiting forever, so anything it can't accept becomes
+    /// `EIO`.
+    pub(crate) fn wire_errno(self) -> i32 {
+        let errno = self.raw_os_error();
+
+        if (1..=MAX_ERRNO).contains(&errno) {
+            errno
+        } else {
+            log::error!("replacing errno {errno}, which no kernel accepts, with EIO");
+            Self::EIO.raw_os_error()
+        }
+    }
+}
+
+/// The largest errno every supported kernel accepts in a reply.
+///
+/// Higher values are rejected, and Linux and FreeBSD both reject them *before*
+/// matching the reply to its request, which leaves the caller waiting forever:
+///
+/// - Linux allows 1..=511 (`fs/fuse/dev.c`, `oh.error <= -512`).
+/// - FreeBSD allows 1..=`ELAST` (97) and quietly substitutes `EIO` above that,
+///   but with the `linux_errnos` mount option it only translates 1..=133
+///   (`LINUX_ELAST`) and fails the write otherwise.
+/// - macOS performs no range check.
+///
+/// 133 (Linux's `EHWPOISON`) is the highest errno any of them defines, so
+/// nothing valid is lost by refusing more.
+pub(crate) const MAX_ERRNO: i32 = 133;
 
 impl From<NonZeroI32> for Error {
     fn from(err: NonZeroI32) -> Self {
@@ -343,5 +382,57 @@ impl From<bytemuck::PodCastError> for Error {
     fn from(err: bytemuck::PodCastError) -> Self {
         let _ = err;
         Self::EINVAL
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn a_real_errno_round_trips() {
+        let err = Error::from_raw_os_error(Error::ENOENT.raw_os_error()).unwrap();
+
+        assert_eq!(err, Error::ENOENT);
+    }
+
+    #[test]
+    fn zero_is_not_an_error() {
+        assert!(Error::from_raw_os_error(0).is_none());
+    }
+
+    #[test]
+    fn errnos_no_kernel_accepts_are_rejected() {
+        assert!(Error::from_raw_os_error(-5).is_none());
+        assert!(Error::from_raw_os_error(MAX_ERRNO + 1).is_none());
+        assert!(Error::from_raw_os_error(9999).is_none());
+    }
+
+    #[test]
+    fn the_highest_accepted_errno_is_allowed() {
+        assert!(Error::from_raw_os_error(MAX_ERRNO).is_some());
+    }
+
+    #[test]
+    fn every_platform_errno_is_within_the_limit() {
+        for err in [
+            Error::EPERM,
+            Error::EIO,
+            Error::ENOSYS,
+            Error::ERANGE,
+            Error::ENOTSUP,
+            Error::ENOXATTR,
+            Error::EPROTO,
+        ] {
+            assert_eq!(err.wire_errno(), err.raw_os_error(), "{err:?}");
+        }
+    }
+
+    #[test]
+    fn an_io_error_outside_the_limit_falls_back_to_its_kind() {
+        let io = std::io::Error::from_raw_os_error(9999);
+        let err = Error::from(io);
+
+        assert!((1..=MAX_ERRNO).contains(&err.raw_os_error()));
     }
 }

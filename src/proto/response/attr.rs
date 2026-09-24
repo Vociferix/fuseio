@@ -1,5 +1,5 @@
 use super::{Cfg, EncodeResp, IntoIoBuf, IoBuf, RawHeader};
-use crate::types::{FileFlag, Gid, Ino, InodeKind, SFlag, Uid};
+use crate::types::{FileFlag, Gid, Ino, InodeKind, Mode, SFlag, Uid};
 
 use std::time::{Duration, SystemTime};
 
@@ -46,6 +46,9 @@ pub struct InodeAttrs {
     blksize: u32,
     flags: AttrsFlags,
 }
+
+/// The `S_IFMT` bits, which hold the inode's kind rather than its permissions.
+const FORMAT_MASK: u32 = SFlag::S_IFMT.bits() as u32;
 
 const _: () = {
     #[cfg(not(target_os = "macos"))]
@@ -99,40 +102,32 @@ impl InodeAttrs {
     }
 
     pub fn atime(mut self, atime: SystemTime) -> Self {
-        let ts = atime
-            .duration_since(SystemTime::UNIX_EPOCH)
-            .unwrap_or(Duration::ZERO);
-        self.atime = ts.as_secs();
-        self.atimensec = ts.subsec_nanos();
+        let (secs, nanos) = crate::proto::time::split_raw(atime);
+        self.atime = secs;
+        self.atimensec = nanos;
         self
     }
 
     pub fn mtime(mut self, mtime: SystemTime) -> Self {
-        let ts = mtime
-            .duration_since(SystemTime::UNIX_EPOCH)
-            .unwrap_or(Duration::ZERO);
-        self.mtime = ts.as_secs();
-        self.mtimensec = ts.subsec_nanos();
+        let (secs, nanos) = crate::proto::time::split_raw(mtime);
+        self.mtime = secs;
+        self.mtimensec = nanos;
         self
     }
 
     pub fn ctime(mut self, ctime: SystemTime) -> Self {
-        let ts = ctime
-            .duration_since(SystemTime::UNIX_EPOCH)
-            .unwrap_or(Duration::ZERO);
-        self.ctime = ts.as_secs();
-        self.ctimensec = ts.subsec_nanos();
+        let (secs, nanos) = crate::proto::time::split_raw(ctime);
+        self.ctime = secs;
+        self.ctimensec = nanos;
         self
     }
 
     pub fn crtime(mut self, crtime: SystemTime) -> Self {
         #[cfg(target_os = "macos")]
         {
-            let ts = crtime
-                .duration_since(SystemTime::UNIX_EPOCH)
-                .unwrap_or(Duration::ZERO);
-            self.crtime = ts.as_secs();
-            self.crtimensec = ts.subsec_nanos();
+            let (secs, nanos) = crate::proto::time::split_raw(crtime);
+            self.crtime = secs;
+            self.crtimensec = nanos;
         }
 
         #[cfg(not(target_os = "macos"))]
@@ -143,15 +138,21 @@ impl InodeAttrs {
         self
     }
 
-    // TODO: there's no setter for the permission bits or `rdev`, and this
-    // overwrites the whole mode, so every attr/entry reply reports mode 0000 and
-    // device nodes have no device number.
     // TODO: pre-1970 times are clamped to the epoch here; the wire fields are
     // signed seconds (libfuse passes `st_*time` through), with nsec in [0, 1e9).
     pub fn kind(mut self, kind: InodeKind) -> Self {
         // TODO(e2e): assumes host-native mode values; verify once end-to-end tests
         // can be done.
-        self.mode = SFlag::from(kind).bits().into();
+        self.mode =
+            (self.mode & !FORMAT_MASK) | (u32::from(SFlag::from(kind).bits()) & FORMAT_MASK);
+        self
+    }
+
+    /// Sets the permission bits, leaving the inode's kind alone.
+    pub fn mode(mut self, mode: Mode) -> Self {
+        // TODO(e2e): assumes host-native mode values; verify once end-to-end tests
+        // can be done.
+        self.mode = (self.mode & FORMAT_MASK) | (u32::from(mode.bits()) & !FORMAT_MASK);
         self
     }
 
@@ -299,5 +300,138 @@ impl Default for InodeAttrs {
         }
 
         attrs
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    use crate::types::ReplyInitFlags;
+
+    use compio::buf::IoVectoredBuf;
+
+    // `fuse_attr` follows the 16-byte header and `attr_valid`; macOS inserts
+    // `crtime` and `crtimensec` ahead of the fields after them.
+    const ATTR: usize = 16 + 16;
+    const MODE: usize = ATTR + if cfg!(target_os = "macos") { 72 } else { 60 };
+    const CTIME: usize = ATTR + 40;
+    const CTIMENSEC: usize = ATTR + if cfg!(target_os = "macos") { 64 } else { 56 };
+
+    fn cfg() -> Cfg {
+        Cfg {
+            minor_ver: crate::handshake::MINOR_VER,
+            flags: ReplyInitFlags::empty(),
+        }
+    }
+
+    fn encode(attrs: InodeAttrs) -> Vec<u8> {
+        let buf = Attrs::new()
+            .attrs(attrs)
+            .encode(7, cfg())
+            .unwrap()
+            .into_io_buf();
+
+        buf.iter_slice().flatten().copied().collect()
+    }
+
+    fn mode_of(attrs: InodeAttrs) -> u32 {
+        let bytes = encode(attrs);
+
+        u32::from_ne_bytes(bytes[MODE..MODE + 4].try_into().unwrap())
+    }
+
+    #[test]
+    fn permissions_reach_the_wire() {
+        let mode = mode_of(InodeAttrs::new().mode(Mode::from_bits_truncate(0o640)));
+
+        assert_eq!(mode & !FORMAT_MASK, 0o640);
+    }
+
+    #[test]
+    fn the_kind_reaches_the_wire() {
+        let mode = mode_of(InodeAttrs::new().kind(InodeKind::Dir));
+
+        assert_eq!(mode & FORMAT_MASK, u32::from(SFlag::S_IFDIR.bits()));
+    }
+
+    #[test]
+    fn the_kind_and_permissions_compose_in_either_order() {
+        let perm = Mode::from_bits_truncate(0o755);
+        let expected = u32::from(SFlag::S_IFDIR.bits()) | 0o755;
+
+        assert_eq!(
+            mode_of(InodeAttrs::new().kind(InodeKind::Dir).mode(perm)),
+            expected
+        );
+        assert_eq!(
+            mode_of(InodeAttrs::new().mode(perm).kind(InodeKind::Dir)),
+            expected
+        );
+    }
+
+    #[test]
+    fn setting_the_kind_twice_replaces_it() {
+        let attrs = InodeAttrs::new()
+            .kind(InodeKind::Dir)
+            .mode(Mode::from_bits_truncate(0o600))
+            .kind(InodeKind::File);
+
+        assert_eq!(mode_of(attrs), u32::from(SFlag::S_IFREG.bits()) | 0o600);
+    }
+
+    #[test]
+    fn a_full_mode_cant_corrupt_the_kind() {
+        let attrs = InodeAttrs::new()
+            .kind(InodeKind::Fifo)
+            .mode(Mode::from_bits_retain((FORMAT_MASK | 0o644) as _));
+
+        assert_eq!(mode_of(attrs), u32::from(SFlag::S_IFIFO.bits()) | 0o644);
+    }
+
+    #[test]
+    fn setuid_setgid_and_sticky_bits_survive() {
+        let mode = Mode::S_ISUID | Mode::S_ISGID | Mode::S_ISVTX;
+        let encoded = mode_of(InodeAttrs::new().kind(InodeKind::File).mode(mode));
+
+        assert_eq!(encoded & !FORMAT_MASK, u32::from(mode.bits()));
+    }
+
+    #[test]
+    fn a_time_before_the_epoch_survives_encoding() {
+        let ctime = SystemTime::UNIX_EPOCH - Duration::from_millis(1500);
+        let bytes = encode(InodeAttrs::new().ctime(ctime));
+
+        let secs = i64::from_ne_bytes(bytes[CTIME..CTIME + 8].try_into().unwrap());
+        let nanos = u32::from_ne_bytes(bytes[CTIMENSEC..CTIMENSEC + 4].try_into().unwrap());
+
+        // -2 seconds plus 500 ms, since the remainder always moves forward.
+        assert_eq!(secs, -2);
+        assert_eq!(nanos, 500_000_000);
+    }
+
+    #[test]
+    fn a_time_after_the_epoch_survives_encoding() {
+        let ctime = SystemTime::UNIX_EPOCH + Duration::new(1_700_000_000, 250);
+        let bytes = encode(InodeAttrs::new().ctime(ctime));
+
+        let secs = i64::from_ne_bytes(bytes[CTIME..CTIME + 8].try_into().unwrap());
+        let nanos = u32::from_ne_bytes(bytes[CTIMENSEC..CTIMENSEC + 4].try_into().unwrap());
+
+        assert_eq!(secs, 1_700_000_000);
+        assert_eq!(nanos, 250);
+    }
+
+    #[test]
+    fn the_offsets_match_the_struct() {
+        let attrs = InodeAttrs::new();
+        let base = &attrs as *const InodeAttrs as usize;
+
+        assert_eq!(&attrs.mode as *const u32 as usize - base, MODE - ATTR);
+        assert_eq!(&attrs.ctime as *const u64 as usize - base, CTIME - ATTR);
+        assert_eq!(
+            &attrs.ctimensec as *const u32 as usize - base,
+            CTIMENSEC - ATTR
+        );
     }
 }
