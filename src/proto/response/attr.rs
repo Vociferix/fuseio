@@ -59,6 +59,10 @@ const _: () = {
 };
 
 #[repr(C)]
+/// `fuse_attr` before 7.9, which ends before `blksize`.
+///
+/// Only its size is used: a reply writes the current layout and reports this
+/// length, since the older one is a prefix of it.
 pub(super) struct InodeAttrsCompat {
     ino: u64,
     size: u64,
@@ -66,11 +70,36 @@ pub(super) struct InodeAttrsCompat {
     atime: u64,
     mtime: u64,
     ctime: u64,
+    #[cfg(target_os = "macos")]
+    crtime: u64,
     atimensec: u32,
     mtimensec: u32,
     ctimensec: u32,
+    #[cfg(target_os = "macos")]
+    crtimensec: u32,
     mode: u32,
+    nlink: u32,
+    uid: u32,
+    gid: u32,
+    rdev: u32,
+    #[cfg(target_os = "macos")]
+    chflags: FileFlag,
 }
+
+const _: () = {
+    // `FUSE_COMPAT_ATTR_OUT_SIZE` and `FUSE_COMPAT_ENTRY_OUT_SIZE`, which are 16
+    // bytes larger on macOS.
+    #[cfg(not(target_os = "macos"))]
+    assert!(std::mem::size_of::<AttrsCompat>() == 96);
+    #[cfg(target_os = "macos")]
+    assert!(std::mem::size_of::<AttrsCompat>() == 112);
+
+    // The older layout has to be a prefix of the current one.
+    assert!(
+        std::mem::size_of::<InodeAttrsCompat>() + 2 * std::mem::size_of::<u32>()
+            == std::mem::size_of::<InodeAttrs>()
+    );
+};
 
 bitflags::bitflags! {
     #[repr(C)]

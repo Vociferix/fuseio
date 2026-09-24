@@ -20,10 +20,6 @@ pub struct FuseChannel {
 }
 
 impl DevFuse {
-    // TODO: the fd is never made O_NONBLOCK. compio's poll-based drivers
-    // (FreeBSD, macOS, Linux without io_uring) wait for readability and then
-    // read(), so with `dup`'d fds sharing one queue, every worker wakes but only
-    // one gets the request; the rest block their thread in read().
     // TODO(e2e): kqueue support for /dev/macfuseN (and the FSKit socket) is
     // unverified.
     pub fn new(fd: OwnedFd) -> Self {
@@ -37,7 +33,14 @@ impl DevFuse {
             .unwrap()
     }
 
+    /// Hands the device to the runtime, which reads and writes it without
+    /// blocking.
     pub fn bind(self) -> Result<FuseChannel> {
+        // compio's poll-based drivers wait for readability and then read, so a
+        // worker whose readiness was consumed by another sharing the same open
+        // file would otherwise block its thread. compio doesn't set this itself.
+        set_nonblocking(self.as_fd())?;
+
         Ok(FuseChannel {
             dev: AsyncFd::new(self)?,
         })
@@ -87,6 +90,15 @@ impl DevFuse {
 
         Ok(Self { fd })
     }
+}
+
+fn set_nonblocking(fd: BorrowedFd<'_>) -> Result<()> {
+    let flags = nix::fcntl::fcntl(fd, nix::fcntl::FcntlArg::F_GETFL)?;
+    let flags = OFlag::from_bits_retain(flags) | OFlag::O_NONBLOCK;
+
+    nix::fcntl::fcntl(fd, nix::fcntl::FcntlArg::F_SETFL(flags))?;
+
+    Ok(())
 }
 
 impl AsFd for DevFuse {
@@ -151,5 +163,89 @@ impl AsFd for FuseChannel {
 impl AsRawFd for FuseChannel {
     fn as_raw_fd(&self) -> RawFd {
         self.dev.as_raw_fd()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    use std::os::fd::OwnedFd;
+
+    fn is_nonblocking(fd: BorrowedFd<'_>) -> bool {
+        let flags = nix::fcntl::fcntl(fd, nix::fcntl::FcntlArg::F_GETFL).unwrap();
+
+        OFlag::from_bits_retain(flags).contains(OFlag::O_NONBLOCK)
+    }
+
+    fn pipe() -> (OwnedFd, OwnedFd) {
+        nix::unistd::pipe().unwrap()
+    }
+
+    #[test]
+    fn a_device_starts_blocking() {
+        let (read, _write) = pipe();
+
+        assert!(!is_nonblocking(read.as_fd()));
+    }
+
+    #[test]
+    fn binding_makes_the_device_nonblocking() {
+        let (read, _write) = pipe();
+
+        set_nonblocking(read.as_fd()).unwrap();
+
+        assert!(is_nonblocking(read.as_fd()));
+    }
+
+    #[test]
+    fn the_other_flags_are_kept() {
+        // Something with flags worth losing: the access mode and O_APPEND.
+        let file = std::fs::OpenOptions::new()
+            .write(true)
+            .append(true)
+            .open("/dev/null")
+            .unwrap();
+
+        let before = nix::fcntl::fcntl(file.as_fd(), nix::fcntl::FcntlArg::F_GETFL).unwrap();
+        let before = OFlag::from_bits_retain(before);
+
+        assert!(before.contains(OFlag::O_APPEND));
+        assert!(!before.contains(OFlag::O_NONBLOCK));
+
+        set_nonblocking(file.as_fd()).unwrap();
+
+        let after = nix::fcntl::fcntl(file.as_fd(), nix::fcntl::FcntlArg::F_GETFL).unwrap();
+        let after = OFlag::from_bits_retain(after);
+
+        assert!(after.contains(OFlag::O_NONBLOCK));
+        assert!(after.contains(OFlag::O_APPEND));
+        assert_eq!(
+            after & OFlag::O_ACCMODE,
+            before & OFlag::O_ACCMODE,
+            "the access mode changed"
+        );
+    }
+
+    // A `dup` shares the open file, which is how the workers that can't use the
+    // clone ioctl get the flag.
+    #[test]
+    fn a_dup_shares_the_flag() {
+        let (read, _write) = pipe();
+        let clone = nix::unistd::dup(&read).unwrap();
+
+        set_nonblocking(read.as_fd()).unwrap();
+
+        assert!(is_nonblocking(clone.as_fd()));
+    }
+
+    #[test]
+    fn setting_it_twice_is_harmless() {
+        let (read, _write) = pipe();
+
+        set_nonblocking(read.as_fd()).unwrap();
+        set_nonblocking(read.as_fd()).unwrap();
+
+        assert!(is_nonblocking(read.as_fd()));
     }
 }

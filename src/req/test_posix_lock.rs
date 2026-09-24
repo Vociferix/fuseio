@@ -1,6 +1,6 @@
 use super::Req;
 use crate::proto::request::GetLk;
-use crate::types::{FileHandle, FileRange, Ino, LockKind, LockOwner, Pid};
+use crate::types::{FileHandle, FileRange, Ino, LockKind, LockOwner, Tgid};
 
 #[derive(Debug)]
 pub struct TestPosixLockReq {
@@ -37,8 +37,10 @@ impl TestPosixLockReq {
         self.getlk.lock_kind()
     }
 
-    pub fn pid(&self) -> Pid {
-        unsafe { self.getlk.pid().unwrap_unchecked() }
+    /// The thread group that asked for the lock, if any: a kernel sends none
+    /// when releasing one.
+    pub fn tgid(&self) -> Option<Tgid> {
+        self.getlk.tgid()
     }
 }
 

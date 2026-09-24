@@ -113,23 +113,28 @@ of this review.
       the extremes of `i64`. Decode and encode are also covered end to end
       through `SetAttr` and `InodeAttrs`.
 
-13. **`Fs` defaults differ from libfuse where it matters** (`src/fs.rs:111`)
-    - `open`/`opendir`: libfuse succeeds with fh 0 when they're unimplemented. The
-      crate's ENOSYS default is fine on Linux and on FreeBSD with 7.23+, but on
-      macOS it makes every `open(2)` fail.
-    - `statfs`: libfuse replies with defaults (namelen 255, bsize 512). The crate's
-      ENOSYS breaks `df` and may break mounting on macOS.
+13. ~~**`Fs` defaults differ from libfuse where it matters**~~ — **fixed.**
+    `open` (and so `opendir`) hands out a zero file handle, `close` succeeds to
+    match it, and `statfs` reports `FsAttrs::new()`'s placeholders. Each carries
+    a doc comment saying why ENOSYS would be wrong there. Every other ENOSYS
+    default is left alone: for those the kernels treat it as "not supported" and
+    stop asking.
+    - Not unit-tested: reaching a default needs a `Req`, which needs a live
+      `Server` and device fd. The planned mock device is what would cover these.
 
-14. **Worker threads can block on poll-based backends** (`src/dev_fuse.rs:23`)
-    - The device fd is never set `O_NONBLOCK`.
-    - compio's poll driver (FreeBSD, macOS, and Linux without io_uring) waits for
-      readability, then calls `read()`.
-    - With `dup`'d fds sharing one queue (every non-Linux multi-worker setup), all
-      workers wake up but only one gets the request. The rest block their thread
-      in `read()`, stalling that worker's in-flight tasks.
-    - Once the fd is set `O_NONBLOCK`, EAGAIN is already handled as "retry".
-    - `TODO(e2e)`: whether kqueue works on `/dev/macfuseN` (and on the FSKit
-      socket) is unverified.
+14. ~~**Worker threads can block on poll-based backends**~~ — **fixed.**
+    `DevFuse::bind` sets `O_NONBLOCK`, so the device is blocking while the
+    handshake reads it synchronously and non-blocking once the runtime owns it.
+    Each worker binds its own clone, which covers both the Linux clone ioctl (a
+    separate open file) and the `dup` fallback (a shared one).
+    - Confirmed compio doesn't do this itself: `AsyncFd::new` goes to
+      `Attacher::new` and then the driver's `attach`, which is a no-op on the
+      poll driver; its only `set_nonblocking` calls are for accepted sockets.
+    - `/dev/fuse` implements `.poll` (`fs/fuse/dev.c:2415`), so io_uring arms
+      poll on EAGAIN rather than failing, and compio's poll driver already maps
+      EAGAIN back to "wait for readability".
+    - `TODO(e2e)`: kqueue support for `/dev/macfuseN` and the FSKit socket is
+      still unverified.
 
 15. ~~**macFUSE 5 `FUSE_MONITOR` (60)**~~ — **fixed.** The opcode is defined and
     answered with no reply on macOS, matching libfuse. Decoding its
@@ -140,42 +145,77 @@ of this review.
     and a NOTIFY_REPLY that fails to decode now fails the waiting
     `Context::get_cache` instead of leaving it hung.
 
-17. **`Read::decode` length check is inverted** (`src/proto/request/read.rs:62`)
-    - The check is `>` where it should be `<`. Modern kernels send exactly
-      40 bytes, so it passes today.
-    - Before 7.9, `fuse_read_in` is 24 bytes, and the decoder reads past the
-      request.
+17. ~~**`Read::decode` length check is inverted**~~ — **fixed.** The check now
+    rejects a body that is too short rather than one that is too long, and a
+    `RawCompat` covers the 24-byte pre-7.9 body (no lock owner, no open flags),
+    as `Write` already did. Tests cover both layouts, the lock-owner flag, a
+    short body and a longer one.
 
 ## Medium
 
-18. **Default `max_write` is 16 MiB** (`src/server.rs:29`)
-    - Every read buffer is `max_write + 4 KiB` and is held for the whole life of
-      each in-flight request.
-    - Linux caps writes at 1 MiB by default (`max_pages_limit`), and at 128 KiB
-      without MAX_PAGES (macOS, FreeBSD).
-    - libfuse uses 1 MiB + 4 KiB and clamps the reported `max_write` to what the
-      kernel will send.
+18. ~~**Default `max_write` is 16 MiB**~~ — **fixed.** The default is 1 MiB,
+    matching what Linux will actually send (`max_pages` defaults to 256) and what
+    libfuse uses, so a worker's read buffer is 1 MiB + 4 KiB rather than 16 MiB.
+    A const assertion now pins `BUF_HEADER_SIZE` to at least the request and
+    write headers, which is what Linux requires before it will fill a buffer
+    (`fs/fuse/dev.c:1569`, else the read fails with EINVAL).
+    - I did **not** clamp `max_write` to 32 pages when MAX_PAGES isn't
+      negotiated, which libfuse effectively does. That suits libfuse's fixed
+      buffer but would hurt here: FreeBSD doesn't implement MAX_PAGES
+      (`fuse_internal.c:1121`) and chunks writes by `max_write` alone
+      (`fuse_io.c:357`), so clamping would cut its writes to 128 KiB. The macOS
+      kext sizes I/O from its own `iosize` mount option instead. Linux bounds
+      writes by `max_pages` as well as `max_write`, so an over-large value only
+      ever cost us buffer space.
 
-19. **Read replies aren't size-checked** (`src/server.rs:481`)
-    - A reply larger than the requested size makes the kernel fail the read with
-      EIO.
-    - Checking and logging it would match the existing ioctl and getxattr handling.
+19. ~~**Read replies aren't size-checked**~~ — **fixed.** A read reply longer
+    than the size requested is now logged and answered with EIO, rather than sent
+    for the kernel to reject with an unexplained EIO, matching the ioctl and
+    getxattr paths. Rejecting rather than truncating, since returning more than
+    was asked for is a filesystem bug worth surfacing.
+    - Not unit-tested, for the same reason as item 13: the handler needs a live
+      `Server`. `read_dir` and `read_dir_plus` need no such check, as their
+      buffers are built against the requested capacity.
 
-20. **Compatibility with old protocol versions is broken in several places**
-    (`src/handshake.rs:257`)
-    - Every 7.x minor is accepted, but several old-version paths are wrong:
-      - Before 7.9: `InodeAttrsCompat` lacks nlink/uid/gid/rdev, so the entry and
-        attr reply sizes are wrong.
-      - Before 7.12: CREATE uses `fuse_open_in` (name at offset 8).
-      - Before 7.8: RELEASE has a 16-byte body.
-      - Before 7.9: READ has a 24-byte body (see 17).
-    - Every supported kernel speaks 7.12 or later (Linux ≥ 2.6.31, macOS 7.19,
-      FreeBSD 12.1+ 7.28). Requiring 7.12 would let all of these paths be deleted.
+20. ~~**Compatibility with old protocol versions is broken in several places**~~
+    — **fixed.** Enumerated from the kernel's own changelog
+    (`include/uapi/linux/fuse.h`) and libfuse's `proto_minor` checks, rather than
+    only the cases first spotted:
+    - **Before 7.9**, `fuse_attr` ends before `blksize`: `InodeAttrsCompat` now
+      carries `nlink`, `uid`, `gid` and `rdev` (and the Darwin fields), so the
+      entry and attr replies report `FUSE_COMPAT_ENTRY_OUT_SIZE` (120, or 136 on
+      macOS) and `FUSE_COMPAT_ATTR_OUT_SIZE` (96/112). Const assertions pin all
+      four, plus that the old layout is a prefix of the current one.
+    - **Before 7.12**, CREATE sends a `fuse_open_in` carrying the mode in its
+      second field and no umask, with the name 8 bytes earlier.
+    - **Before 7.8**, RELEASE has no release flags and no lock owner.
+    - **Before 7.7**, FLUSH has no lock owner.
+    - **Before 7.9**, the lock bodies have no `lk_flags`, so no lock is a flock.
+    - Already correct and re-checked: WRITE and READ (<7.9), MKNOD and MKDIR
+      (<7.12), GETATTR (<7.9), STATFS (<7.4), negative entries (<7.4), and the
+      INIT reply sizes (<7.5, <7.23). `fuse_setattr_in` needs no compat path: its
+      `lock_owner` replaced a padding field at the same offset, and it is ignored
+      here anyway.
+    - Each path has decoder tests for both layouts; disabling all four compat
+      branches fails exactly those tests, and shortening the compat attr layout
+      fails the build.
+    - Still only exercised against synthetic requests. A VM running an old kernel
+      would be the way to test these for real.
 
-21. **flock requests drop the lock owner** (`src/proto/request/getlk.rs:84`)
-    - libfuse passes `owner` to flock handlers. It's what a later RELEASE with
-      FLOCK_UNLOCK carries.
-    - `FlockReq` has no `lock_owner()`.
+21. ~~**flock requests drop the lock owner**~~ — **fixed.** A flock keeps its
+    owner, which names the open file and is what a later RELEASE with
+    `FLOCK_UNLOCK` carries, and `FlockReq` exposes `lock_owner()`.
+    - The lock body's `pid` is now a distinct `Tgid` type, exposed as `tgid()` on
+      the flock and POSIX lock requests and on the `PosixLock`/`Flock` replies.
+      The kernels disagree with the request header here: Linux puts a *thread*
+      id in the header (`fs/fuse/req.c:13`) and a *thread group* id in a lock
+      (`fs/fuse/file.c:2533`), while FreeBSD and macOS put a process id in both.
+      With one type for both, comparing them looked reasonable and silently
+      failed for threaded callers on Linux; now it doesn't compile. `Req::pid()`
+      documents the difference.
+    - A kernel sends `pid` 0 when releasing a lock, which now reads as `None`.
+      The wrappers previously called `unwrap_unchecked()` on that `Option`, which
+      would have been unsound once unlocks produced `None`.
 
 22. **`FsAttrs` default `frsize` is 0** (`src/proto/response/statfs.rs:38`)
     - FreeBSD's fusefs uses `frsize` as `f_bsize`, so the filesystem likely shows

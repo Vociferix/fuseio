@@ -524,3 +524,58 @@ fn write_init_resp_sync(dev: &DevFuse, resp: InitRespRaw) -> Result<()> {
         }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    use crate::types::KernelInitFlags;
+
+    fn kernel() -> KernelConfig {
+        KernelConfig {
+            ver: Version(MAJOR_VER, MINOR_VER),
+            max_readahead: 128 * 1024,
+            caps: KernelCaps::new(KernelInitFlags::empty(), MINOR_VER),
+        }
+    }
+
+    #[test]
+    fn the_default_write_size_matches_the_kernels_own_limit() {
+        // Linux sends at most `max_pages` (256 by default) of 4 KiB.
+        assert_eq!(kernel().to_config().max_write(), 1024 * 1024);
+    }
+
+    #[test]
+    fn a_read_buffer_holds_the_largest_write() {
+        let config = kernel().to_config();
+        let buf_size = config.max_write() + crate::server::BUF_HEADER_SIZE;
+
+        // What Linux requires of a buffer before it will fill it.
+        assert!(buf_size >= config.max_write() + size_of::<ReqHdr>() + 40);
+        assert!(buf_size >= MIN_READ_BUFFER);
+    }
+
+    #[test]
+    fn a_tiny_write_size_is_raised_to_the_minimum() {
+        let config = kernel().to_config().with_max_write(0);
+
+        assert_eq!(config.max_write(), MIN_MAX_WRITE as usize);
+    }
+
+    #[test]
+    fn a_larger_write_size_is_kept() {
+        let config = kernel().to_config().with_max_write(4 * 1024 * 1024);
+
+        assert_eq!(config.max_write(), 4 * 1024 * 1024);
+    }
+
+    #[test]
+    fn the_page_count_covers_the_write_size() {
+        let config = kernel().to_config();
+        let page_size = page_size::get();
+        let max_pages = config.max_write().div_ceil(page_size);
+
+        assert!(max_pages * page_size >= config.max_write());
+        assert!(u16::try_from(max_pages).is_ok());
+    }
+}

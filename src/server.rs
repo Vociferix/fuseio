@@ -26,15 +26,26 @@ use std::os::fd::AsFd;
 use std::rc::Rc;
 use std::sync::Arc;
 
-// TODO: this is the default `max_write`, and every read buffer is
-// `max_write + BUF_HEADER_SIZE`, held for the lifetime of each in-flight request.
-// Linux caps writes at `max_pages_limit` (256 pages, 1 MiB by default), and at
-// 32 pages without MAX_PAGES (macOS, FreeBSD, old Linux), so most of each 16 MiB
-// buffer is never used. libfuse defaults to 1 MiB + 4 KiB.
-pub const MAX_WRITE_SIZE: usize = 16 * 1024 * 1024;
+/// The default `max_write`, which also sets the size of every read buffer.
+///
+/// Linux won't send more than `max_pages` (256 by default, so 1 MiB) in one
+/// write however large this is, and libfuse defaults to the same. FreeBSD has no
+/// page limit and chunks writes by `max_write` alone, so raising this raises its
+/// write size too.
+pub const MAX_WRITE_SIZE: usize = 1024 * 1024;
 
 /// `FUSE_BUFFER_HEADER_SIZE`: the room a request needs on top of `max_write`.
+///
+/// Linux refuses to fill a buffer smaller than a request header plus a write
+/// header plus `max_write`, so this has to cover both headers.
 pub const BUF_HEADER_SIZE: usize = 4096;
+
+const _: () = assert!(
+    BUF_HEADER_SIZE >= std::mem::size_of::<crate::proto::request::RawHeader>() + WRITE_HEADER_SIZE
+);
+
+/// `sizeof(struct fuse_write_in)`.
+const WRITE_HEADER_SIZE: usize = 40;
 
 pub struct Server<F, U> {
     pub inner: Rc<ServerInner>,
@@ -599,11 +610,27 @@ where
 
     async fn read(this: &AsyncRc<Self>, token: CancelToken, req: Request, body: request::Read) {
         let id = req.id;
+        let len = body.len();
         let req = req::ReadReq::new(Req::new(this, token, req), body);
-        // TODO: a reply longer than the requested size makes the kernel fail the
-        // read with EIO; check it (and log) like the ioctl and getxattr paths.
-        let data = this.fs.read(req).await.map(Data::new);
-        this.send(id, data).await;
+
+        let resp = match this.fs.read(req).await {
+            Ok(data) => {
+                let data = data.into_io_buf();
+                let read = data.total_len();
+
+                // The kernel fails a read whose reply overruns the size it asked
+                // for, without saying why, so name the filesystem's mistake.
+                if read > len {
+                    log::error!("read reply is {read} bytes, but only {len} were requested");
+                    Err(Error::EIO)
+                } else {
+                    Ok(Data::new(data))
+                }
+            }
+            Err(err) => Err(err),
+        };
+
+        this.send(id, resp).await;
     }
 
     async fn write(this: &AsyncRc<Self>, token: CancelToken, req: Request, body: request::Write) {

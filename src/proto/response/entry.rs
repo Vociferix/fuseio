@@ -16,6 +16,14 @@ pub struct Entry {
     attr: InodeAttrs,
 }
 
+const _: () = {
+    // `FUSE_COMPAT_ENTRY_OUT_SIZE`, 16 bytes larger on macOS.
+    #[cfg(not(target_os = "macos"))]
+    assert!(std::mem::size_of::<EntryCompat>() == 120);
+    #[cfg(target_os = "macos")]
+    assert!(std::mem::size_of::<EntryCompat>() == 136);
+};
+
 #[repr(C)]
 pub struct EntryCompat {
     ino: u64,

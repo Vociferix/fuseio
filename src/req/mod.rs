@@ -123,6 +123,11 @@ impl Req {
         self.req.gid()
     }
 
+    /// The caller's process, as the kernel reports it.
+    ///
+    /// Linux sends the calling *thread's* id here, while the BSDs and macOS send
+    /// the process id, so this is not comparable with the
+    /// [`Tgid`](crate::types::Tgid) a lock request carries.
     pub fn pid(&self) -> Pid {
         self.req.pid()
     }

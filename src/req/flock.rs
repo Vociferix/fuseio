@@ -1,6 +1,6 @@
 use super::Req;
 use crate::proto::request::SetLk;
-use crate::types::{FileHandle, Ino, LockKind};
+use crate::types::{FileHandle, Ino, LockKind, LockOwner, Tgid};
 
 #[derive(Debug)]
 pub struct FlockReq {
@@ -27,6 +27,18 @@ impl FlockReq {
 
     pub fn lock_kind(&self) -> LockKind {
         self.setlk.lock_kind()
+    }
+
+    /// The open file the lock belongs to, which a later close reports when it
+    /// releases the lock.
+    pub fn lock_owner(&self) -> Option<LockOwner> {
+        self.setlk.lock_owner()
+    }
+
+    /// The thread group that asked for the lock, if any: a kernel sends none
+    /// when releasing one.
+    pub fn tgid(&self) -> Option<Tgid> {
+        self.setlk.tgid()
     }
 }
 

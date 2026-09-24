@@ -1,22 +1,20 @@
 use super::{Cfg, EncodeResp, IntoIoBuf, IoBuf, RawHeader};
-use crate::types::{FileRange, LockKind, Pid};
+use crate::types::{FileRange, LockKind, Tgid};
 
 #[derive(Debug)]
 pub struct Flock {
     kind: LockKind,
-    pid: Pid,
+    tgid: Option<Tgid>,
 }
 
 impl Flock {
     pub fn new(kind: LockKind) -> Self {
-        Self {
-            kind,
-            pid: Pid::from_raw(0),
-        }
+        Self { kind, tgid: None }
     }
 
-    pub fn pid(mut self, pid: Pid) -> Self {
-        self.pid = pid;
+    /// Sets the thread group holding the conflicting lock.
+    pub fn tgid(mut self, tgid: Tgid) -> Self {
+        self.tgid = Some(tgid);
         self
     }
 }
@@ -71,7 +69,7 @@ impl EncodeResp for Flock {
             start: 0,
             end: FileRange::OFFSET_MAX,
             kind: i32::from(kind).cast_unsigned(),
-            pid: self.pid.as_raw(),
+            pid: self.tgid.map_or(0, Tgid::as_raw),
         })
     }
 }

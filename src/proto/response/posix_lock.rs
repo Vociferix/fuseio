@@ -1,5 +1,5 @@
 use super::{Cfg, EncodeResp, IntoIoBuf, IoBuf, RawHeader};
-use crate::types::{FileRange, LockKind, Pid};
+use crate::types::{FileRange, LockKind, Tgid};
 
 #[repr(C)]
 #[derive(Debug)]
@@ -37,8 +37,9 @@ impl PosixLock {
         self
     }
 
-    pub fn pid(mut self, pid: Pid) -> Self {
-        self.pid = pid.as_raw();
+    /// Sets the thread group holding the conflicting lock.
+    pub fn tgid(mut self, tgid: Tgid) -> Self {
+        self.pid = tgid.as_raw();
         self
     }
 }

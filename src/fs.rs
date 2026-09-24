@@ -12,7 +12,7 @@ pub mod types {
         Abi, AccessFlags, CopyFileRangePos, FileFlag, FileHandle, FileRange, FileTime, ForgetIno,
         FsCaps, Gid, Ino, InodeKind, IoctlCmd, IoctlDirection, KernelCaps, LockKind, LockOwner,
         Mode, OFlag, OpenAccessMode, OpenFlags, OpenedFlags, Pid, PollFlags, PollNotify,
-        RenameMode, SFlag, StatXAttrs, StatXSync, Uid, Version, Whence, XattrMode,
+        RenameMode, SFlag, StatXAttrs, StatXSync, Tgid, Uid, Version, Whence, XattrMode,
     };
 
     pub use crate::handshake::{Config, KernelConfig};
@@ -108,14 +108,15 @@ pub trait Fs: Sized + 'static {
         Err(Error::ENOSYS)
     }
 
-    // TODO: libfuse's default for a missing open/opendir is success with fh 0.
-    // ENOSYS works on Linux (no_open) and FreeBSD with 7.23+, but on macOS
-    // (7.19) it fails every open(2). The same applies to `statfs`, where libfuse
-    // replies with defaults (namelen 255, bsize 512) so `df` and macOS mounting
-    // work.
+    /// Opens a file or directory.
+    ///
+    /// The default hands out a zero file handle and keeps no state, as libfuse
+    /// does. Replying `ENOSYS` instead would fail every `open(2)` on macOS,
+    /// whose protocol version predates the kernel treating that as "opening
+    /// needs no reply".
     async fn open(&self, req: req::OpenReq) -> Result<types::Opened> {
         let _ = (self, req);
-        Err(Error::ENOSYS)
+        Ok(types::Opened::new(types::FileHandle(0)))
     }
 
     async fn read(&self, req: req::ReadReq) -> Result<impl IntoIoBuf> {
@@ -133,9 +134,12 @@ pub trait Fs: Sized + 'static {
         Err(Error::ENOSYS)
     }
 
+    /// Closes a file or directory opened by [`open`](Self::open).
+    ///
+    /// The default succeeds, to match an `open` that keeps no state.
     async fn close(&self, req: req::CloseReq) -> Result<()> {
         let _ = (self, req);
-        Err(Error::ENOSYS)
+        Ok(())
     }
 
     async fn fsync(&self, req: req::FsyncReq) -> Result<()> {
@@ -148,9 +152,14 @@ pub trait Fs: Sized + 'static {
         Err(Error::ENOSYS)
     }
 
+    /// Reports filesystem-wide statistics.
+    ///
+    /// The default reports the placeholder values libfuse uses, since `ENOSYS`
+    /// would break `df` and can fail the mount on macOS, which asks during
+    /// mounting.
     async fn statfs(&self, req: req::StatFsReq) -> Result<types::FsAttrs> {
         let _ = (self, req);
-        Err(Error::ENOSYS)
+        Ok(types::FsAttrs::new())
     }
 
     async fn get_xattr_len(&self, req: req::GetXattrLenReq) -> Result<usize> {
