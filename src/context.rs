@@ -1,13 +1,13 @@
 use crate::buf::{BufPool, IntoIoBuf};
 use crate::dev_fuse::FuseChannel;
-use crate::fs::types::PassthroughFd;
+use crate::fs::types::{PassthroughFd, NotifyError};
 use crate::proto::notify::{
     Delete, EncodeNotify, ExpireEntry, IncrementEpoch, InvalEntry, InvalInode, Retrieve, Store,
 };
 use crate::proto::request::{Cfg, NotifyReply};
 use crate::server::ServerInner;
 use crate::types::{FileRange, Ino, Version};
-use crate::{NotifyError, Result};
+use crate::Result;
 
 use std::ffi::OsStr;
 use std::os::unix::ffi::OsStrExt;
