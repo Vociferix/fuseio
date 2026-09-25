@@ -74,3 +74,71 @@ impl EncodeResp for Opened {
         })
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    use crate::types::ReplyInitFlags;
+
+    use compio::buf::IoVectoredBuf;
+
+    const OPEN_FLAGS: usize = 16 + 8;
+
+    fn cfg() -> Cfg {
+        Cfg {
+            minor_ver: crate::handshake::MINOR_VER,
+            flags: ReplyInitFlags::empty(),
+        }
+    }
+
+    fn encode(opened: Opened) -> Vec<u8> {
+        let buf = opened.encode(7, cfg()).unwrap().into_io_buf();
+
+        buf.iter_slice().flatten().copied().collect()
+    }
+
+    fn flags_of(opened: Opened) -> u32 {
+        let bytes = encode(opened);
+
+        u32::from_ne_bytes(bytes[OPEN_FLAGS..OPEN_FLAGS + 4].try_into().unwrap())
+    }
+
+    #[test]
+    fn the_reply_carries_the_handle() {
+        let bytes = encode(Opened::new(FileHandle(9)));
+
+        assert_eq!(bytes.len(), 32);
+        assert_eq!(u64::from_ne_bytes(bytes[16..24].try_into().unwrap()), 9);
+    }
+
+    #[test]
+    fn the_flags_reach_the_wire() {
+        let flags = flags_of(
+            Opened::new(FileHandle(9)).flags(OpenedFlags::DIRECT_IO | OpenedFlags::NONSEEKABLE),
+        );
+
+        assert_eq!(flags, 1 | (1 << 2));
+    }
+
+    // macOS reads these; the other kernels ignore them.
+    #[test]
+    fn the_macos_purge_flags_reach_the_wire() {
+        let flags = flags_of(
+            Opened::new(FileHandle(9)).flags(OpenedFlags::PURGE_UBC | OpenedFlags::PURGE_ATTR),
+        );
+
+        assert_eq!(flags, (1 << 31) | (1 << 30));
+    }
+
+    #[test]
+    fn added_flags_accumulate() {
+        let flags = flags_of(
+            Opened::new(FileHandle(9))
+                .flags(OpenedFlags::DIRECT_IO)
+                .add_flags(OpenedFlags::PURGE_UBC),
+        );
+
+        assert_eq!(flags, 1 | (1 << 31));
+    }
+}

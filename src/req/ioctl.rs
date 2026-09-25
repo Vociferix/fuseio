@@ -40,11 +40,11 @@ impl IoctlReq {
         }
     }
 
-    pub fn directory(&self) -> bool {
+    pub fn is_directory(&self) -> bool {
         self.ioctl.flags().contains(IoctlFlags::DIRECTORY)
     }
 
-    pub fn unrestricted(&self) -> bool {
+    pub fn is_unrestricted(&self) -> bool {
         self.ioctl.flags().contains(IoctlFlags::UNRESTRICTED)
     }
 

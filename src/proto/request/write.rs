@@ -93,8 +93,15 @@ impl Write {
 
             let raw = unsafe { std::ptr::read(buf.as_ptr().add(HDR_LEN) as *const RawCompat) };
 
-            let len = raw.size as usize;
-            buf.truncate(DATA_OFFSET + len);
+            let Some(end) = DATA_OFFSET.checked_add(raw.size as usize) else {
+                return Err(Error::EPROTO);
+            };
+
+            if buf.len() < end {
+                return Err(Error::EPROTO);
+            }
+
+            buf.truncate(end);
 
             Ok(Self {
                 ino,
@@ -120,8 +127,15 @@ impl Write {
 
             let raw = unsafe { std::ptr::read(buf.as_ptr().add(HDR_LEN) as *const Raw) };
 
-            let len = raw.size as usize;
-            buf.truncate(DATA_OFFSET + len);
+            let Some(end) = DATA_OFFSET.checked_add(raw.size as usize) else {
+                return Err(Error::EPROTO);
+            };
+
+            if buf.len() < end {
+                return Err(Error::EPROTO);
+            }
+
+            buf.truncate(end);
 
             let lock_owner = if raw.write_flags.contains(RawFlags::HAVE_LOCKOWNER) {
                 LockOwner::try_from(raw.lock_owner).ok()
@@ -143,5 +157,95 @@ impl Write {
                 remove_suid_sgid: raw.write_flags.contains(RawFlags::KILL_SUIDGID),
             })
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    use crate::buf::BufPool;
+    use crate::types::ReplyInitFlags;
+
+    fn cfg(minor_ver: u32) -> Cfg {
+        Cfg {
+            minor_ver,
+            flags: ReplyInitFlags::empty(),
+        }
+    }
+
+    fn request(size: u32, data: &[u8], compat: bool) -> Buf {
+        let mut buf = BufPool::new().checkout_with_capacity(128);
+
+        buf.extend_from_slice(&[0u8; HDR_LEN]);
+        buf.extend_from_slice(&9u64.to_ne_bytes()); // fh
+        buf.extend_from_slice(&4096u64.to_ne_bytes()); // offset
+        buf.extend_from_slice(&size.to_ne_bytes());
+        buf.extend_from_slice(&0u32.to_ne_bytes()); // write_flags
+
+        if !compat {
+            buf.extend_from_slice(&0u64.to_ne_bytes()); // lock_owner
+            buf.extend_from_slice(&0u32.to_ne_bytes()); // flags
+            buf.extend_from_slice(&0u32.to_ne_bytes()); // padding
+        }
+
+        buf.extend_from_slice(data);
+
+        buf
+    }
+
+    #[test]
+    fn the_payload_decodes() {
+        let req = Write::decode(request(5, b"hello", false), Ino::from_raw(1), cfg(45)).unwrap();
+
+        assert_eq!(req.file_handle(), FileHandle(9));
+        assert_eq!(req.offset(), 4096);
+        assert_eq!(req.data(), b"hello");
+    }
+
+    #[test]
+    fn an_empty_payload_decodes() {
+        let req = Write::decode(request(0, b"", false), Ino::from_raw(1), cfg(45)).unwrap();
+
+        assert_eq!(req.data(), b"");
+    }
+
+    #[test]
+    fn a_payload_shorter_than_its_size_is_rejected() {
+        let buf = request(6, b"hello", false);
+
+        assert_eq!(
+            Write::decode(buf, Ino::from_raw(1), cfg(45)).unwrap_err(),
+            Error::EPROTO
+        );
+    }
+
+    #[test]
+    fn an_absurd_size_is_rejected() {
+        let buf = request(u32::MAX, b"hello", false);
+
+        assert_eq!(
+            Write::decode(buf, Ino::from_raw(1), cfg(45)).unwrap_err(),
+            Error::EPROTO
+        );
+    }
+
+    // Before 7.9 the header stops after the write flags.
+    #[test]
+    fn an_old_kernels_payload_decodes() {
+        let req = Write::decode(request(5, b"hello", true), Ino::from_raw(1), cfg(8)).unwrap();
+
+        assert_eq!(req.data(), b"hello");
+        assert!(req.lock_owner().is_none());
+    }
+
+    #[test]
+    fn a_payload_shorter_than_its_size_is_rejected_on_an_old_kernel() {
+        let buf = request(6, b"hello", true);
+
+        assert_eq!(
+            Write::decode(buf, Ino::from_raw(1), cfg(8)).unwrap_err(),
+            Error::EPROTO
+        );
     }
 }

@@ -6,13 +6,13 @@ use std::os::unix::ffi::OsStrExt;
 
 #[derive(Debug)]
 pub struct RmDir {
-    ino: Ino,
+    parent: Ino,
     buf: Buf,
 }
 
 impl RmDir {
-    pub fn ino(&self) -> Ino {
-        self.ino
+    pub fn parent(&self) -> Ino {
+        self.parent
     }
 
     pub fn name(&self) -> &OsStr {
@@ -30,6 +30,6 @@ impl RmDir {
             buf.truncate(HDR_LEN + name_len);
         }
 
-        Ok(Self { ino, buf })
+        Ok(Self { parent: ino, buf })
     }
 }

@@ -1,5 +1,6 @@
 mod abi;
 mod copy_file_range_pos;
+mod device_number;
 mod fallocate_flags;
 mod file_flags;
 mod file_handle;
@@ -17,7 +18,6 @@ mod lock_flags;
 mod lock_kind;
 mod lock_owner;
 mod open_access_mode;
-mod open_flags;
 mod opened_flags;
 mod rename_mode;
 mod request;
@@ -39,6 +39,7 @@ pub use nix::{
 
 pub use abi::Abi;
 pub use copy_file_range_pos::CopyFileRangePos;
+pub use device_number::DeviceNumber;
 pub use fallocate_flags::FallocateFlags;
 pub use file_flags::FileFlag;
 pub use file_handle::FileHandle;
@@ -56,7 +57,6 @@ pub(crate) use lock_flags::LockFlags;
 pub use lock_kind::LockKind;
 pub use lock_owner::LockOwner;
 pub use open_access_mode::OpenAccessMode;
-pub use open_flags::OpenFlags;
 pub use opened_flags::OpenedFlags;
 pub use rename_mode::RenameMode;
 pub use request::Request;

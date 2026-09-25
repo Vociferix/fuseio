@@ -46,15 +46,18 @@ impl Release {
         self.fh
     }
 
-    pub fn flags(&self) -> OFlag {
+    /// The flags the file was opened with.
+    pub fn open_flags(&self) -> OFlag {
         self.flags
     }
 
-    pub fn flush(&self) -> bool {
+    /// Whether the filesystem should flush the file before closing it.
+    pub fn should_flush(&self) -> bool {
         self.flush
     }
 
-    pub fn flock_unlock(&self) -> bool {
+    /// Whether this also releases the file's `flock`.
+    pub fn releases_flock(&self) -> bool {
         self.flock_unlock
     }
 
@@ -152,8 +155,8 @@ mod tests {
         let req = Release::decode(request(Some(FLUSH), 42), Ino::from_raw(1), cfg(45)).unwrap();
 
         assert_eq!(req.file_handle(), FileHandle(9));
-        assert!(req.flush());
-        assert!(!req.flock_unlock());
+        assert!(req.should_flush());
+        assert!(!req.releases_flock());
         assert_eq!(req.lock_owner().map(u64::from), Some(42));
     }
 
@@ -162,8 +165,8 @@ mod tests {
         let req =
             Release::decode(request(Some(FLOCK_UNLOCK), 42), Ino::from_raw(1), cfg(45)).unwrap();
 
-        assert!(req.flock_unlock());
-        assert!(!req.flush());
+        assert!(req.releases_flock());
+        assert!(!req.should_flush());
         assert_eq!(req.lock_owner().map(u64::from), Some(42));
     }
 
@@ -173,8 +176,8 @@ mod tests {
         let req = Release::decode(request(None, 0), Ino::from_raw(1), cfg(7)).unwrap();
 
         assert_eq!(req.file_handle(), FileHandle(9));
-        assert!(!req.flush());
-        assert!(!req.flock_unlock());
+        assert!(!req.should_flush());
+        assert!(!req.releases_flock());
         assert!(req.lock_owner().is_none());
     }
 

@@ -19,8 +19,8 @@ impl UnlinkNodeReq {
         &self.req
     }
 
-    pub fn ino(&self) -> Ino {
-        self.unlink.ino()
+    pub fn parent(&self) -> Ino {
+        self.unlink.parent()
     }
 
     pub fn name(&self) -> &OsStr {

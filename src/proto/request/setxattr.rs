@@ -57,7 +57,8 @@ impl SetXattr {
         self.ino
     }
 
-    pub fn mode(&self) -> XattrMode {
+    /// Whether the attribute may be created, replaced, or either.
+    pub fn xattr_mode(&self) -> XattrMode {
         self.xattr_mode
     }
 

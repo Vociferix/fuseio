@@ -19,8 +19,8 @@ impl RemoveDirReq {
         &self.req
     }
 
-    pub fn ino(&self) -> Ino {
-        self.rmdir.ino()
+    pub fn parent(&self) -> Ino {
+        self.rmdir.parent()
     }
 
     pub fn name(&self) -> &OsStr {

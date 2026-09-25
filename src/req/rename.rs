@@ -19,8 +19,8 @@ impl RenameReq {
         &self.req
     }
 
-    pub fn ino(&self) -> Ino {
-        self.rename.ino()
+    pub fn old_parent(&self) -> Ino {
+        self.rename.old_parent()
     }
 
     pub fn new_parent(&self) -> Ino {

@@ -12,7 +12,7 @@ use std::os::unix::ffi::OsStrExt;
 /// `FUSE_EXCHANGE`.
 #[derive(Debug)]
 pub struct Rename {
-    ino: Ino,
+    old_parent: Ino,
     new_parent: Ino,
     buf: Buf,
     old_name_start: usize,
@@ -21,8 +21,8 @@ pub struct Rename {
 }
 
 impl Rename {
-    pub fn ino(&self) -> Ino {
-        self.ino
+    pub fn old_parent(&self) -> Ino {
+        self.old_parent
     }
 
     pub fn new_parent(&self) -> Ino {
@@ -180,7 +180,7 @@ impl Rename {
         }
 
         Ok(Self {
-            ino,
+            old_parent: ino,
             new_parent,
             buf,
             old_name_start,

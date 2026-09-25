@@ -1,12 +1,15 @@
 use super::{Cfg, HDR_LEN, Ino};
-use crate::types::{OFlag, OpenFlags};
+use crate::types::OFlag;
 use crate::{Error, Result, buf::Buf};
+
+/// `FUSE_OPEN_KILL_SUIDGID`.
+pub(super) const KILL_SUIDGID: u32 = 1 << 0;
 
 #[derive(Debug)]
 pub struct Open {
     ino: Ino,
     flags: OFlag,
-    op_flags: OpenFlags,
+    remove_suid_sgid: bool,
 }
 
 #[repr(C)]
@@ -20,12 +23,15 @@ impl Open {
         self.ino
     }
 
-    pub fn flags(&self) -> OFlag {
+    /// The flags the file was opened with.
+    pub fn open_flags(&self) -> OFlag {
         self.flags
     }
 
-    pub fn op_flags(&self) -> OpenFlags {
-        self.op_flags
+    /// Whether to clear the setuid bit, and the setgid bit if the file is
+    /// group-executable.
+    pub fn remove_suid_sgid(&self) -> bool {
+        self.remove_suid_sgid
     }
 }
 
@@ -46,7 +52,7 @@ impl Open {
             // TODO(e2e): assumes host-native open flag values; verify once end-to-end
             // tests can be done.
             flags: OFlag::from_bits_retain(raw.flags.cast_signed()),
-            op_flags: OpenFlags::from_bits_retain(raw.open_flags),
+            remove_suid_sgid: raw.open_flags & KILL_SUIDGID != 0,
         })
     }
 }

@@ -122,7 +122,7 @@ impl GetLk {
                 ino,
                 fh: FileHandle(body.fh),
                 owner,
-                range: FileRange::Open(0..),
+                range: FileRange::Open { offset: 0 },
                 kind,
                 tgid,
                 is_flock: true,

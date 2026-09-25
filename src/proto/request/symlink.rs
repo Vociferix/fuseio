@@ -7,14 +7,14 @@ use std::path::Path;
 
 #[derive(Debug)]
 pub struct Symlink {
-    ino: Ino,
+    parent: Ino,
     buf: Buf,
     name_len: usize,
 }
 
 impl Symlink {
-    pub fn ino(&self) -> Ino {
-        self.ino
+    pub fn parent(&self) -> Ino {
+        self.parent
     }
 
     pub fn name(&self) -> &OsStr {
@@ -46,6 +46,10 @@ impl Symlink {
             buf.truncate(HDR_LEN + name_len + link_len + 1);
         }
 
-        Ok(Self { ino, buf, name_len })
+        Ok(Self {
+            parent: ino,
+            buf,
+            name_len,
+        })
     }
 }

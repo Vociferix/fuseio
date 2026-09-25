@@ -1,5 +1,5 @@
 use super::{Cfg, HDR_LEN, Ino};
-use crate::types::{Mode, OFlag, OpenFlags, SFlag};
+use crate::types::{Mode, OFlag, SFlag};
 use crate::{Error, Result, buf::Buf};
 
 use std::ffi::OsStr;
@@ -11,7 +11,7 @@ pub struct Create {
     mode: Mode,
     umask: Mode,
     flags: OFlag,
-    op_flags: OpenFlags,
+    remove_suid_sgid: bool,
     buf: Buf,
     name_start: usize,
 }
@@ -21,7 +21,7 @@ struct Raw {
     flags: u32,
     mode: u32,
     umask: u32,
-    op_flags: OpenFlags,
+    open_flags: u32,
 }
 
 /// The body before 7.12, which is a `fuse_open_in` carrying the mode in place of
@@ -40,20 +40,24 @@ impl Create {
         self.parent
     }
 
+    /// The permissions to create the file with, before the umask.
     pub fn mode(&self) -> Mode {
-        self.mode
+        self.mode & Mode::all()
     }
 
     pub fn umask(&self) -> Mode {
         self.umask
     }
 
-    pub fn flags(&self) -> OFlag {
+    /// The flags the file is being opened with.
+    pub fn open_flags(&self) -> OFlag {
         self.flags
     }
 
-    pub fn op_flags(&self) -> OpenFlags {
-        self.op_flags
+    /// Whether to clear the setuid bit, and the setgid bit if the file is
+    /// group-executable.
+    pub fn remove_suid_sgid(&self) -> bool {
+        self.remove_suid_sgid
     }
 
     pub fn name(&self) -> &OsStr {
@@ -81,12 +85,12 @@ impl Create {
         // The older body is a prefix of the current one, so the fields they share
         // are read the same way.
         let raw = unsafe { std::ptr::read(buf.as_ptr().add(HDR_LEN) as *const RawCompat) };
-        let (umask, op_flags) = if compat {
-            (0, OpenFlags::empty())
+        let (umask, open_flags) = if compat {
+            (0, 0)
         } else {
             let raw = unsafe { std::ptr::read(buf.as_ptr().add(HDR_LEN) as *const Raw) };
 
-            (raw.umask, raw.op_flags)
+            (raw.umask, raw.open_flags)
         };
 
         // TODO(e2e): assumes host-native mode and open flag values; verify once
@@ -104,7 +108,7 @@ impl Create {
             mode: Mode::from_bits_retain(raw.mode as nix::libc::mode_t),
             umask: Mode::from_bits_retain(umask as nix::libc::mode_t),
             flags: OFlag::from_bits_retain(raw.flags.cast_signed()),
-            op_flags,
+            remove_suid_sgid: open_flags & super::open::KILL_SUIDGID != 0,
             buf,
             name_start,
         })
@@ -119,7 +123,8 @@ mod tests {
     use crate::types::ReplyInitFlags;
 
     const NAME: &[u8] = b"new-file";
-    const MODE: u32 = 0o100_644;
+    const PERMS: u32 = 0o644;
+    const MODE: u32 = 0o100_000 | PERMS;
 
     fn cfg(minor_ver: u32) -> Cfg {
         Cfg {
@@ -151,7 +156,8 @@ mod tests {
         let req = Create::decode(request(Some(0o022)), Ino::from_raw(1), cfg(45)).unwrap();
 
         assert_eq!(req.name().as_bytes(), NAME);
-        assert_eq!(req.mode().bits() as u32, MODE);
+        // The permissions alone: the kernel only sends regular files here.
+        assert_eq!(req.mode().bits() as u32, PERMS);
         assert_eq!(req.umask().bits() as u32, 0o022);
     }
 
@@ -161,9 +167,9 @@ mod tests {
         let req = Create::decode(request(None), Ino::from_raw(1), cfg(11)).unwrap();
 
         assert_eq!(req.name().as_bytes(), NAME);
-        assert_eq!(req.mode().bits() as u32, MODE);
+        assert_eq!(req.mode().bits() as u32, PERMS);
         assert!(req.umask().is_empty());
-        assert!(req.op_flags().is_empty());
+        assert!(!req.remove_suid_sgid());
     }
 
     #[test]

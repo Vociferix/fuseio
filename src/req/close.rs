@@ -25,16 +25,16 @@ impl CloseReq {
         self.release.file_handle()
     }
 
-    pub fn flags(&self) -> OFlag {
-        self.release.flags()
+    pub fn open_flags(&self) -> OFlag {
+        self.release.open_flags()
     }
 
-    pub fn flush(&self) -> bool {
-        self.release.flush()
+    pub fn should_flush(&self) -> bool {
+        self.release.should_flush()
     }
 
-    pub fn flock_unlock(&self) -> bool {
-        self.release.flock_unlock()
+    pub fn releases_flock(&self) -> bool {
+        self.release.releases_flock()
     }
 
     pub fn lock_owner(&self) -> Option<LockOwner> {

@@ -19,12 +19,12 @@ impl LinkReq {
         &self.req
     }
 
-    pub fn dst(&self) -> Ino {
-        self.link.dst()
+    pub fn parent(&self) -> Ino {
+        self.link.parent()
     }
 
-    pub fn src(&self) -> Ino {
-        self.link.src()
+    pub fn ino(&self) -> Ino {
+        self.link.ino()
     }
 
     pub fn name(&self) -> &OsStr {

@@ -3,26 +3,36 @@ use crate::types::{FileRange, Ino};
 
 use compio::buf::IoBuf;
 
-use std::ops::{Bound, RangeBounds};
+/// An offset no data reaches, which every kernel reads as "the attributes only".
+const ATTRS_ONLY: i64 = -1;
+
+/// A length every kernel reads as "to the end of the file".
+const TO_THE_END: i64 = 0;
 
 #[repr(C)]
 #[derive(Debug)]
 pub struct InvalInode {
     ino: u64,
-    offset: u64,
-    len: u64,
+    offset: i64,
+    len: i64,
 }
 
 impl InvalInode {
-    // TODO: a negative offset invalidates only the attributes (libfuse
-    // documents this); there's no way to express that here, so every
-    // invalidation also drops cached data. `range` also overflows for an
-    // inclusive end of u64::MAX.
+    /// Invalidates the cached attributes and every cached byte.
     pub fn new(ino: Ino) -> Self {
         Self {
             ino: ino.as_raw(),
             offset: 0,
-            len: 0,
+            len: TO_THE_END,
+        }
+    }
+
+    /// Invalidates the cached attributes, leaving cached data alone.
+    pub fn attrs(ino: Ino) -> Self {
+        Self {
+            ino: ino.as_raw(),
+            offset: ATTRS_ONLY,
+            len: TO_THE_END,
         }
     }
 
@@ -32,20 +42,14 @@ impl InvalInode {
     {
         let range = range.into();
 
-        let start = match range.start_bound() {
-            Bound::Unbounded => 0,
-            Bound::Included(start) => *start,
-            Bound::Excluded(start) => *start + 1,
-        };
-
-        let len = match range.end_bound() {
-            Bound::Unbounded => 0,
-            Bound::Included(end) => *end + 1 - start,
-            Bound::Excluded(end) => *end - start,
-        };
-
-        self.offset = start;
-        self.len = len;
+        // A length that doesn't fit the signed field, like one reaching the
+        // largest offset, is sent as "to the end of the file", which is what it
+        // means anyway.
+        self.offset = i64::try_from(range.start_offset()).unwrap_or(i64::MAX);
+        self.len = range
+            .len()
+            .and_then(|len| i64::try_from(len).ok())
+            .unwrap_or(TO_THE_END);
 
         self
     }
@@ -83,5 +87,90 @@ impl EncodeNotify for InvalInode {
             },
             notify: self,
         })
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    use crate::types::ReplyInitFlags;
+
+    use compio::buf::IoVectoredBuf;
+
+    const OFFSET: usize = 16 + 8;
+    const LEN: usize = 16 + 16;
+
+    fn cfg() -> Cfg {
+        Cfg {
+            minor_ver: crate::handshake::MINOR_VER,
+            flags: ReplyInitFlags::empty(),
+        }
+    }
+
+    fn encode(notify: InvalInode) -> (i64, i64) {
+        let buf = notify.encode(cfg()).unwrap().into_io_buf();
+        let bytes: Vec<u8> = buf.iter_slice().flatten().copied().collect();
+
+        assert_eq!(bytes.len(), 16 + 24);
+
+        (
+            i64::from_ne_bytes(bytes[OFFSET..OFFSET + 8].try_into().unwrap()),
+            i64::from_ne_bytes(bytes[LEN..LEN + 8].try_into().unwrap()),
+        )
+    }
+
+    fn ino() -> Ino {
+        Ino::from_raw(3).unwrap()
+    }
+
+    #[test]
+    fn everything_is_invalidated_from_the_start() {
+        assert_eq!(encode(InvalInode::new(ino())), (0, TO_THE_END));
+    }
+
+    // Every kernel reads a negative offset as "don't touch cached data".
+    #[test]
+    fn only_the_attributes_can_be_invalidated() {
+        let (offset, _) = encode(InvalInode::attrs(ino()));
+
+        assert!(offset < 0);
+    }
+
+    #[test]
+    fn a_range_becomes_an_offset_and_a_length() {
+        assert_eq!(
+            encode(InvalInode::new(ino()).range(4096..8192)),
+            (4096, 4096)
+        );
+        assert_eq!(
+            encode(InvalInode::new(ino()).range(4096..=8191)),
+            (4096, 4096)
+        );
+        assert_eq!(
+            encode(InvalInode::new(ino()).range(4096..)),
+            (4096, TO_THE_END)
+        );
+    }
+
+    #[test]
+    fn a_range_reaching_the_largest_offset_doesnt_overflow() {
+        assert_eq!(
+            encode(InvalInode::new(ino()).range(0..=u64::MAX)),
+            (0, TO_THE_END)
+        );
+        assert_eq!(
+            encode(InvalInode::new(ino()).range(4096..=u64::MAX)),
+            (4096, TO_THE_END)
+        );
+    }
+
+    #[test]
+    fn an_absurd_length_becomes_to_the_end() {
+        // Longer than a signed offset can express.
+        let (offset, len) = encode(InvalInode::new(ino()).range(0..u64::MAX));
+
+        assert_eq!(offset, 0);
+        assert_eq!(len, TO_THE_END);
     }
 }

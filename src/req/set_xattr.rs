@@ -23,8 +23,8 @@ impl SetXattrReq {
         self.setxattr.ino()
     }
 
-    pub fn mode(&self) -> XattrMode {
-        self.setxattr.mode()
+    pub fn xattr_mode(&self) -> XattrMode {
+        self.setxattr.xattr_mode()
     }
 
     pub fn remove_sgid(&self) -> bool {

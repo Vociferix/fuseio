@@ -1,5 +1,5 @@
 use super::{Cfg, EncodeResp, IntoIoBuf, IoBuf, RawHeader};
-use crate::types::{FileFlag, Gid, Ino, InodeKind, Mode, SFlag, Uid};
+use crate::types::{DeviceNumber, FileFlag, Gid, Ino, InodeKind, Mode, SFlag, Uid};
 
 use std::time::{Duration, SystemTime};
 
@@ -40,7 +40,7 @@ pub struct InodeAttrs {
     nlink: u32,
     uid: u32,
     gid: u32,
-    rdev: u32,
+    rdev: DeviceNumber,
     #[cfg(target_os = "macos")]
     chflags: FileFlag,
     blksize: u32,
@@ -81,7 +81,7 @@ pub(super) struct InodeAttrsCompat {
     nlink: u32,
     uid: u32,
     gid: u32,
-    rdev: u32,
+    rdev: DeviceNumber,
     #[cfg(target_os = "macos")]
     chflags: FileFlag,
 }
@@ -182,6 +182,12 @@ impl InodeAttrs {
         // TODO(e2e): assumes host-native mode values; verify once end-to-end tests
         // can be done.
         self.mode = (self.mode & FORMAT_MASK) | (u32::from(mode.bits()) & !FORMAT_MASK);
+        self
+    }
+
+    /// Sets the device a character or block device names.
+    pub fn device_number(mut self, device: DeviceNumber) -> Self {
+        self.rdev = device;
         self
     }
 
@@ -461,6 +467,34 @@ mod tests {
         assert_eq!(
             &attrs.ctimensec as *const u32 as usize - base,
             CTIMENSEC - ATTR
+        );
+    }
+
+    const RDEV: usize = ATTR + if cfg!(target_os = "macos") { 88 } else { 76 };
+
+    #[test]
+    fn a_device_number_reaches_the_wire() {
+        let dev = crate::types::DeviceNumber::new(8, 3).unwrap();
+        let bytes = encode(
+            InodeAttrs::new()
+                .kind(InodeKind::BlockDev)
+                .device_number(dev),
+        );
+
+        let raw = u32::from_ne_bytes(bytes[RDEV..RDEV + 4].try_into().unwrap());
+
+        assert_eq!(raw, dev.as_raw());
+        assert_eq!(crate::types::DeviceNumber::from_raw(raw), dev);
+    }
+
+    #[test]
+    fn the_device_offset_matches_the_struct() {
+        let attrs = InodeAttrs::new();
+        let base = &attrs as *const InodeAttrs as usize;
+
+        assert_eq!(
+            &attrs.rdev as *const DeviceNumber as usize - base,
+            RDEV - ATTR
         );
     }
 }

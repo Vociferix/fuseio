@@ -1,5 +1,5 @@
 use super::{Cfg, HDR_LEN, Ino};
-use crate::types::{InodeKind, Mode, SFlag};
+use crate::types::{DeviceNumber, InodeKind, Mode, SFlag};
 use crate::{Error, Result, buf::Buf};
 
 use std::ffi::OsStr;
@@ -10,7 +10,7 @@ pub struct MkNod {
     parent: Ino,
     mode: Mode,
     umask: Mode,
-    rdev: u32,
+    rdev: DeviceNumber,
     buf: Buf,
     name_start: usize,
 }
@@ -40,7 +40,8 @@ impl MkNod {
         }
     }
 
-    pub fn rdev(&self) -> Option<u32> {
+    /// The device the node names, for a character or block device.
+    pub fn device_number(&self) -> Option<DeviceNumber> {
         matches!(self.kind(), InodeKind::CharDev | InodeKind::BlockDev).then_some(self.rdev)
     }
 
@@ -81,7 +82,7 @@ impl MkNod {
             // TODO(e2e): assumes host-native mode values; verify once end-to-end tests
             // can be done.
             let mode = Mode::from_bits_retain(hdr.mode as nix::libc::mode_t);
-            let rdev = hdr.rdev;
+            let rdev = DeviceNumber::from_raw(hdr.rdev);
 
             if !matches!(
                 SFlag::from_bits_truncate(hdr.mode as nix::libc::mode_t),
@@ -119,7 +120,7 @@ impl MkNod {
             // can be done.
             let mode = Mode::from_bits_retain(hdr.mode as nix::libc::mode_t);
             let umask = Mode::from_bits_truncate(hdr.umask as nix::libc::mode_t);
-            let rdev = hdr.rdev;
+            let rdev = DeviceNumber::from_raw(hdr.rdev);
 
             if !matches!(
                 SFlag::from_bits_truncate(mode.bits()),
@@ -141,5 +142,95 @@ impl MkNod {
                 name_start: NAME_OFFSET,
             })
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    use crate::buf::BufPool;
+    use crate::types::{DeviceNumber, ReplyInitFlags};
+
+    fn cfg(minor_ver: u32) -> Cfg {
+        Cfg {
+            minor_ver,
+            flags: ReplyInitFlags::empty(),
+        }
+    }
+
+    fn request(mode: u32, rdev: u32, umask: Option<u32>) -> Buf {
+        let mut buf = BufPool::new().checkout_with_capacity(128);
+
+        buf.extend_from_slice(&[0u8; HDR_LEN]);
+        buf.extend_from_slice(&mode.to_ne_bytes());
+        buf.extend_from_slice(&rdev.to_ne_bytes());
+
+        if let Some(umask) = umask {
+            buf.extend_from_slice(&umask.to_ne_bytes());
+            buf.extend_from_slice(&0u32.to_ne_bytes()); // padding
+        }
+
+        buf.extend_from_slice(b"node");
+        buf.push(0);
+
+        buf
+    }
+
+    fn decode(mode: u32, rdev: u32) -> MkNod {
+        MkNod::decode(request(mode, rdev, Some(0o022)), Ino::from_raw(1), cfg(45)).unwrap()
+    }
+
+    #[test]
+    fn a_character_device_carries_its_numbers() {
+        let dev = DeviceNumber::new(4, 65).unwrap();
+        let req = decode(0o020_600, dev.as_raw());
+
+        assert_eq!(req.kind(), InodeKind::CharDev);
+        assert_eq!(req.device_number(), Some(dev));
+        assert_eq!(req.mode().bits() as u32, 0o600);
+    }
+
+    #[test]
+    fn a_block_device_carries_its_numbers() {
+        let dev = DeviceNumber::new(8, 3).unwrap();
+        let req = decode(0o060_660, dev.as_raw());
+
+        assert_eq!(req.kind(), InodeKind::BlockDev);
+        assert_eq!(req.device_number(), Some(dev));
+    }
+
+    // Anything else has no device, whatever the field holds.
+    #[test]
+    fn a_fifo_has_no_device() {
+        let req = decode(0o010_644, 0x803);
+
+        assert_eq!(req.kind(), InodeKind::Fifo);
+        assert!(req.device_number().is_none());
+    }
+
+    #[test]
+    fn a_socket_has_no_device() {
+        assert!(decode(0o140_644, 0).device_number().is_none());
+    }
+
+    #[test]
+    fn an_old_kernels_body_decodes() {
+        let buf = request(0o020_600, 0x803, None);
+        let req = MkNod::decode(buf, Ino::from_raw(1), cfg(11)).unwrap();
+
+        assert_eq!(req.kind(), InodeKind::CharDev);
+        assert!(req.umask().is_empty());
+        assert_eq!(req.name().as_bytes(), b"node");
+    }
+
+    #[test]
+    fn a_directory_is_rejected() {
+        let buf = request(0o040_755, 0, Some(0));
+
+        assert_eq!(
+            MkNod::decode(buf, Ino::from_raw(1), cfg(45)).unwrap_err(),
+            Error::EINVAL
+        );
     }
 }

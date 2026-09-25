@@ -20,8 +20,8 @@ impl SymlinkReq {
         &self.req
     }
 
-    pub fn ino(&self) -> Ino {
-        self.symlink.ino()
+    pub fn parent(&self) -> Ino {
+        self.symlink.parent()
     }
 
     pub fn name(&self) -> &OsStr {

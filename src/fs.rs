@@ -9,9 +9,9 @@ pub mod req {
 
 pub mod types {
     pub use crate::types::{
-        Abi, AccessFlags, CopyFileRangePos, FileFlag, FileHandle, FileRange, FileTime, ForgetIno,
-        FsCaps, Gid, Ino, InodeKind, IoctlCmd, IoctlDirection, KernelCaps, LockKind, LockOwner,
-        Mode, OFlag, OpenAccessMode, OpenFlags, OpenedFlags, Pid, PollFlags, PollNotify,
+        Abi, AccessFlags, CopyFileRangePos, DeviceNumber, FileFlag, FileHandle, FileRange,
+        FileTime, ForgetIno, FsCaps, Gid, Ino, InodeKind, IoctlCmd, IoctlDirection, KernelCaps,
+        LockKind, LockOwner, Mode, OFlag, OpenAccessMode, OpenedFlags, Pid, PollFlags, PollNotify,
         RenameMode, SFlag, StatXAttrs, StatXSync, Tgid, Uid, Version, Whence, XattrMode,
     };
 
@@ -28,6 +28,8 @@ pub mod types {
     };
 
     pub use crate::passthrough::{BackingId, PassthroughFd};
+
+    pub use crate::notify_error::NotifyError;
 
     pub use crate::context::{CacheData, Context};
 
@@ -265,7 +267,7 @@ pub trait Fs: Sized + 'static {
         Err(Error::ENOSYS)
     }
 
-    async fn tmpfile(&self, req: req::TmpFileReq) -> Result<types::Created> {
+    async fn tmp_file(&self, req: req::TmpFileReq) -> Result<types::Created> {
         let _ = (self, req);
         Err(Error::ENOSYS)
     }

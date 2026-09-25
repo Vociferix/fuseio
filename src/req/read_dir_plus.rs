@@ -228,7 +228,8 @@ impl<T: AsRef<OsStr>> DirEntryPlus<T> {
 }
 
 impl<T> DirEntry<T> {
-    pub fn plus(self, entry: Entry) -> DirEntryPlus<T> {
+    /// Pairs the entry with the attributes a readdirplus reply carries.
+    pub fn with_entry(self, entry: Entry) -> DirEntryPlus<T> {
         DirEntryPlus {
             entry,
             dirent: self,

@@ -1,6 +1,6 @@
 use super::Req;
 use crate::proto::request::Create;
-use crate::types::{Ino, Mode, OFlag, OpenFlags};
+use crate::types::{Ino, Mode, OFlag};
 
 use std::ffi::OsStr;
 
@@ -31,12 +31,12 @@ impl CreateFileReq {
         self.create.umask()
     }
 
-    pub fn flags(&self) -> OFlag {
-        self.create.flags()
+    pub fn open_flags(&self) -> OFlag {
+        self.create.open_flags()
     }
 
-    pub fn op_flags(&self) -> OpenFlags {
-        self.create.op_flags()
+    pub fn remove_suid_sgid(&self) -> bool {
+        self.create.remove_suid_sgid()
     }
 
     pub fn name(&self) -> &OsStr {

@@ -8,18 +8,20 @@ const NAME_OFFSET: usize = HDR_LEN + std::mem::size_of::<u64>();
 
 #[derive(Debug)]
 pub struct Link {
-    dst: Ino,
-    src: Ino,
+    parent: Ino,
+    ino: Ino,
     buf: Buf,
 }
 
 impl Link {
-    pub fn dst(&self) -> Ino {
-        self.dst
+    /// The directory the new entry goes in.
+    pub fn parent(&self) -> Ino {
+        self.parent
     }
 
-    pub fn src(&self) -> Ino {
-        self.src
+    /// The file gaining another name.
+    pub fn ino(&self) -> Ino {
+        self.ino
     }
 
     pub fn name(&self) -> &OsStr {
@@ -47,6 +49,10 @@ impl Link {
             buf.truncate(NAME_OFFSET + name_len);
         }
 
-        Ok(Self { dst: ino, src, buf })
+        Ok(Self {
+            parent: ino,
+            ino: src,
+            buf,
+        })
     }
 }

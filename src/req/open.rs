@@ -1,6 +1,6 @@
 use super::Req;
 use crate::proto::request::Open;
-use crate::types::{Ino, OFlag, OpenFlags};
+use crate::types::{Ino, OFlag};
 
 #[derive(Debug)]
 pub struct OpenReq {
@@ -21,12 +21,12 @@ impl OpenReq {
         self.open.ino()
     }
 
-    pub fn flags(&self) -> OFlag {
-        self.open.flags()
+    pub fn open_flags(&self) -> OFlag {
+        self.open.open_flags()
     }
 
-    pub fn op_flags(&self) -> OpenFlags {
-        self.open.op_flags()
+    pub fn remove_suid_sgid(&self) -> bool {
+        self.open.remove_suid_sgid()
     }
 }
 

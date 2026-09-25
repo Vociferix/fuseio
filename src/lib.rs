@@ -8,6 +8,7 @@ mod error;
 mod handle;
 mod handshake;
 mod ioctl;
+mod notify_error;
 mod options;
 mod passthrough;
 mod proto;
@@ -21,6 +22,7 @@ pub mod mount;
 
 pub use builder::Builder;
 pub use error::Error;
+pub use notify_error::NotifyError;
 pub use options::{MountOpt, ParseMountOptError};
 
 pub type Result<T> = std::result::Result<T, Error>;

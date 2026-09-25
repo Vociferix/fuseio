@@ -1,6 +1,6 @@
 use super::Req;
 use crate::proto::request::MkNod;
-use crate::types::{Ino, InodeKind, Mode};
+use crate::types::{DeviceNumber, Ino, InodeKind, Mode};
 
 use std::ffi::OsStr;
 
@@ -35,8 +35,8 @@ impl MakeNodeReq {
         self.mknod.kind()
     }
 
-    pub fn rdev(&self) -> Option<u32> {
-        self.mknod.rdev()
+    pub fn device_number(&self) -> Option<DeviceNumber> {
+        self.mknod.device_number()
     }
 
     pub fn name(&self) -> &OsStr {

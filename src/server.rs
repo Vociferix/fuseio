@@ -482,7 +482,7 @@ where
             Body::Lseek(body) => Self::lseek(&this, token, req, body).await,
             Body::CopyFileRange(body) => Self::copy_file_range(&this, token, req, body).await,
             Body::SyncFs(body) => Self::syncfs(&this, token, req, body).await,
-            Body::TmpFile(body) => Self::tmpfile(&this, token, req, body).await,
+            Body::TmpFile(body) => Self::tmp_file(&this, token, req, body).await,
             Body::StatX(body) => Self::statx(&this, token, req, body).await,
             Body::CopyFileRange64(body) => Self::copy_file_range64(&this, token, req, body).await,
             #[cfg(target_os = "macos")]
@@ -974,7 +974,7 @@ where
         this.send(id, this.fs.syncfs(req).await).await;
     }
 
-    async fn tmpfile(
+    async fn tmp_file(
         this: &AsyncRc<Self>,
         token: CancelToken,
         req: Request,
@@ -982,7 +982,7 @@ where
     ) {
         let id = req.id;
         let req = req::TmpFileReq::new(Req::new(this, token, req), body);
-        this.send(id, this.fs.tmpfile(req).await).await;
+        this.send(id, this.fs.tmp_file(req).await).await;
     }
 
     async fn statx(this: &AsyncRc<Self>, token: CancelToken, req: Request, body: request::StatX) {

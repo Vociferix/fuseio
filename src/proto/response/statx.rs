@@ -1,5 +1,5 @@
 use super::{Cfg, EncodeResp, IntoIoBuf, IoBuf, RawHeader};
-use crate::types::{Gid, Ino, InodeKind, Mode, SFlag, StatXAttrs, StatXMask, Uid};
+use crate::types::{DeviceNumber, Gid, Ino, InodeKind, Mode, SFlag, StatXAttrs, StatXMask, Uid};
 
 use std::time::{Duration, SystemTime};
 
@@ -163,15 +163,19 @@ impl StatX {
         self
     }
 
-    pub fn inode_device_number(mut self, major: u32, minor: u32) -> Self {
-        self.rdev_major = major;
-        self.rdev_minor = minor;
+    /// Sets the device a character or block device names.
+    ///
+    /// This reply carries the two halves separately, so nothing is packed.
+    pub fn inode_device_number(mut self, device: DeviceNumber) -> Self {
+        self.rdev_major = device.major();
+        self.rdev_minor = device.minor();
         self
     }
 
-    pub fn fs_device_number(mut self, major: u32, minor: u32) -> Self {
-        self.dev_major = major;
-        self.dev_minor = minor;
+    /// Sets the device the filesystem itself lives on.
+    pub fn fs_device_number(mut self, device: DeviceNumber) -> Self {
+        self.dev_major = device.major();
+        self.dev_minor = device.minor();
         self
     }
 
@@ -339,8 +343,8 @@ mod tests {
     fn inode_and_filesystem_device_numbers_are_separate() {
         let bytes = encode(
             StatX::new()
-                .inode_device_number(1, 2)
-                .fs_device_number(3, 4),
+                .inode_device_number(DeviceNumber::new(1, 2).unwrap())
+                .fs_device_number(DeviceNumber::new(3, 4).unwrap()),
         );
 
         assert_eq!(u32_at(&bytes, RDEV_MAJOR), 1);

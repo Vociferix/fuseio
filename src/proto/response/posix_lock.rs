@@ -32,8 +32,10 @@ impl PosixLock {
         R: Into<FileRange>,
     {
         let range = range.into();
+
         self.start = range.start_offset();
-        self.end = range.end_offset().unwrap_or(FileRange::OFFSET_MAX);
+        self.end = range.wire_end();
+
         self
     }
 
