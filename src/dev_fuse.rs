@@ -1,4 +1,5 @@
 use crate::buf::{IntoIoBuf, IoBuffer};
+#[cfg(target_os = "linux")]
 use crate::ioctl::clone_fd;
 use crate::types::{Mode, OFlag};
 
@@ -61,13 +62,18 @@ impl DevFuse {
         ) else {
             return Self::try_clone_dup(oldfd);
         };
-        let mut fd = fd.into_raw_fd();
+        let fd = fd.into_raw_fd();
 
-        let res = unsafe { clone_fd(oldfd, &mut fd) };
+        // The ioctl goes to the new device and names the one to share a
+        // connection with, not the other way round.
+        let mut master = oldfd.cast_unsigned();
+        let res = unsafe { clone_fd(fd, &mut master) };
         let fd = unsafe { OwnedFd::from_raw_fd(fd) };
 
-        if res.is_err() {
+        if let Err(err) = res {
+            log::debug!("cloning the FUSE device failed ({err}), falling back to dup");
             drop(fd);
+
             return Self::try_clone_dup(oldfd);
         }
 

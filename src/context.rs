@@ -32,10 +32,32 @@ impl Context {
         Version(crate::handshake::MAJOR_VER, self.server.minor_ver)
     }
 
+    /// Hands a file to the kernel, so it serves reads and writes from it
+    /// directly instead of sending them to this filesystem.
+    ///
+    /// Only Linux supports this, from 6.9, and only when built with
+    /// `CONFIG_FUSE_PASSTHROUGH`. It also asks a lot of the caller:
+    ///
+    /// - [`FsCaps::PASSTHROUGH`](crate::types::FsCaps::PASSTHROUGH) has to be
+    ///   enabled, which this checks;
+    /// - the process needs `CAP_SYS_ADMIN`, or the kernel reports `EPERM`;
+    /// - the file has to be a regular file, not a directory (`EISDIR`) or
+    ///   anything else (`EINVAL`);
+    /// - the file can't already be on a stack of filesystems as deep as the
+    ///   kernel allows (`ELOOP`).
+    ///
+    /// Reports `ENOTSUP` where the platform or the connection has no passthrough
+    /// at all.
     pub fn open_passthrough<T>(&self, fd: T) -> Result<PassthroughFd<T>>
     where
         T: std::os::fd::AsFd,
     {
+        // The kernel reports EPERM whether the feature wasn't negotiated or the
+        // process lacks CAP_SYS_ADMIN, so rule out the first here.
+        if !self.server.caps.contains(crate::types::FsCaps::PASSTHROUGH) {
+            return Err(crate::Error::ENOTSUP);
+        }
+
         PassthroughFd::open(fd, &self.server.dev)
     }
 
