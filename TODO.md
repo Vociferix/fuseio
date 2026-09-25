@@ -15,3 +15,5 @@ Items to implement or revisit:
   * Meaning, public doc comments shouldn't explain why something is implemented in a particular way,
     it should stick to explaining behaviors that impact the user. This can sometimes include
     implementation details, but only when those details effect how the user should use the item.
+* Validate `PassthroughFd` behavior is correct on all platforms
+  * `PassthroughFd` uses ioctls that are defined identically on all platforms - suspicious
