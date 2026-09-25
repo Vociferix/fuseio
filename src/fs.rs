@@ -289,6 +289,10 @@ pub trait Fs: Sized + 'static {
         let _ = (self, req);
         Err(Error::ENOSYS)
     }
+
+    async fn monitor(&self, req: req::MonitorReq) {
+        let _ = (self, req);
+    }
 }
 
 /// Seed for mounting a FUSE filesystem.

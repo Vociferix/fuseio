@@ -489,6 +489,8 @@ where
             Body::SetVolName(body) => Self::setvolname(&this, token, req, body).await,
             #[cfg(target_os = "macos")]
             Body::GetXtimes(body) => Self::getxtimes(&this, token, req, body).await,
+            #[cfg(target_os = "macos")]
+            Body::Monitor(body) => Self::monitor(&this, token, req, body).await,
             _ => {}
         }
     }
@@ -1028,6 +1030,17 @@ where
         let id = req.id;
         let req = req::GetXTimesReq::new(Req::new(this, token, req), body);
         this.send(id, this.fs.get_xtimes(req).await).await;
+    }
+
+    #[cfg(target_os = "macos")]
+    async fn monitor(
+        this: &AsyncRc<Self>,
+        token: CancelToken,
+        req: Request,
+        body: request::Monitor,
+    ) {
+        let req = req::MonitorReq::new(Req::new(this, token, req), body);
+        this.fs.monitor(req).await;
     }
 
     async fn send<T>(&self, id: u64, resp: T)

@@ -25,6 +25,7 @@ mod lookup;
 mod lseek;
 mod mkdir;
 mod mknod;
+mod monitor;
 mod notify_reply;
 mod open;
 mod opendir;
@@ -75,6 +76,7 @@ pub use lookup::Lookup;
 pub use lseek::Lseek;
 pub use mkdir::MkDir;
 pub use mknod::MkNod;
+pub use monitor::Monitor;
 pub use notify_reply::{NotifyReply, SharedNotifyReply};
 pub use open::Open;
 pub use opendir::OpenDir;
@@ -162,6 +164,8 @@ pub enum Body {
     SetVolName(SetVolName),
     #[cfg(target_os = "macos")]
     GetXtimes(GetXtimes),
+    #[cfg(target_os = "macos")]
+    Monitor(Monitor),
     // TODO
     //CuseInit(CuseInit),
 }
@@ -354,6 +358,8 @@ impl AnyRequest {
             Opcode::GETXTIMES => Body::GetXtimes(GetXtimes::decode(buf, ino, cfg)?),
             #[cfg(target_os = "macos")]
             Opcode::EXCHANGE => Body::Rename(Rename::decode_exchange(buf, ino, cfg)?),
+            #[cfg(target_os = "macos")]
+            Opcode::MONITOR => Body::Monitor(Monitor::decode(buf, ino, cfg)?),
 
             Opcode::INIT => return Err(Error::EPROTO),
             _ => return Err(Error::ENOSYS),

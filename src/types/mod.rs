@@ -18,6 +18,7 @@ mod kernel_caps;
 mod lock_flags;
 mod lock_kind;
 mod lock_owner;
+mod monitor_flags;
 mod open_access_mode;
 mod opened_flags;
 mod rename_mode;
@@ -32,7 +33,7 @@ mod xattr_mode;
 
 #[doc(inline)]
 pub use nix::{
-    fcntl::{FlockArg, OFlag},
+    fcntl::OFlag,
     poll::PollFlags,
     sys::stat::{Mode, SFlag},
     unistd::{AccessFlags, Gid, Pid, Uid},
@@ -58,6 +59,7 @@ pub use kernel_caps::KernelCaps;
 pub(crate) use lock_flags::LockFlags;
 pub use lock_kind::LockKind;
 pub use lock_owner::LockOwner;
+pub(crate) use monitor_flags::MonitorFlags;
 pub use open_access_mode::OpenAccessMode;
 pub use opened_flags::OpenedFlags;
 pub use rename_mode::RenameMode;
