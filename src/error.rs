@@ -435,4 +435,15 @@ mod tests {
 
         assert!((1..=MAX_ERRNO).contains(&err.raw_os_error()));
     }
+
+    // `open_passthrough` documents one `ENOTSUP` for both "this connection has no
+    // passthrough" and the kernel's `EOPNOTSUPP` for a build without
+    // `CONFIG_FUSE_PASSTHROUGH`, which holds only while the two are the same
+    // errno. They differ on macOS, where passthrough doesn't exist anyway.
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn an_unsupported_operation_has_one_errno() {
+        assert_eq!(nix::libc::ENOTSUP, nix::libc::EOPNOTSUPP);
+        assert_eq!(Error::ENOTSUP.raw_os_error(), nix::libc::EOPNOTSUPP);
+    }
 }

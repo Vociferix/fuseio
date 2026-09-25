@@ -123,6 +123,21 @@ impl KernelConfig {
         self.caps
     }
 
+    /// Whether this kernel could allow a feature, were the filesystem to enable
+    /// what it needs.
+    ///
+    /// The same question [`Context::supports`](crate::fs::types::Context::supports)
+    /// answers once a connection is running, except that nothing has been
+    /// negotiated yet, so a feature's capability counts as available when the
+    /// kernel offers it.
+    pub fn supports(&self, feature: crate::types::Feature) -> bool {
+        // The two sets share bit positions, so what the kernel offered is what
+        // the filesystem could enable.
+        let offered = FsCaps::from_bits_truncate(self.caps.bits());
+
+        crate::types::feature::supports(feature, self.ver.1, offered)
+    }
+
     pub fn to_config(&self) -> Config {
         Config {
             caps: FsCaps::defaults(self.caps),
@@ -577,5 +592,49 @@ mod tests {
 
         assert!(max_pages * page_size >= config.max_write());
         assert!(u16::try_from(max_pages).is_ok());
+    }
+
+    #[test]
+    fn a_kernel_offering_no_flags_still_allows_what_its_version_implies() {
+        let kernel = kernel();
+
+        assert!(kernel.supports(crate::types::Feature::Lseek));
+
+        // `KernelCaps` infers the operations Linux and FreeBSD never negotiate
+        // from the protocol version, so these come for free off macOS.
+        assert_eq!(
+            kernel.supports(crate::types::Feature::Fallocate),
+            !cfg!(target_os = "macos")
+        );
+
+        // Nothing infers this one.
+        assert!(!kernel.supports(crate::types::Feature::Passthrough));
+    }
+
+    // Before anything is negotiated, what the kernel offers is what the
+    // filesystem could enable.
+    #[test]
+    fn a_kernel_offering_a_feature_allows_it() {
+        let kernel = KernelConfig {
+            caps: KernelCaps::from_bits_truncate((FsCaps::FALLOCATE | FsCaps::PASSTHROUGH).bits()),
+            ..kernel()
+        };
+
+        assert!(kernel.supports(crate::types::Feature::Fallocate));
+        assert_eq!(
+            kernel.supports(crate::types::Feature::Passthrough),
+            cfg!(target_os = "linux")
+        );
+    }
+
+    #[test]
+    fn an_older_kernel_allows_less() {
+        let kernel = KernelConfig {
+            ver: Version(MAJOR_VER, 19),
+            ..kernel()
+        };
+
+        assert!(kernel.supports(crate::types::Feature::Ioctl));
+        assert!(!kernel.supports(crate::types::Feature::StatX));
     }
 }

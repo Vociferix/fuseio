@@ -9,7 +9,7 @@ pub mod req {
 
 pub mod types {
     pub use crate::types::{
-        Abi, AccessFlags, CopyFileRangePos, DeviceNumber, FileFlag, FileHandle, FileRange,
+        Abi, AccessFlags, CopyFileRangePos, DeviceNumber, Feature, FileFlag, FileHandle, FileRange,
         FileTime, ForgetIno, FsCaps, Gid, Ino, InodeKind, IoctlCmd, IoctlDirection, KernelCaps,
         LockKind, LockOwner, Mode, OFlag, OpenAccessMode, OpenedFlags, Pid, PollFlags, PollNotify,
         RenameMode, SFlag, StatXAttrs, StatXSync, Tgid, Uid, Version, Whence, XattrMode,

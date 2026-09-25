@@ -7,7 +7,7 @@ use crate::proto::notify::{
 };
 use crate::proto::request::{Cfg, NotifyReply};
 use crate::server::ServerInner;
-use crate::types::{FileRange, Ino, Version};
+use crate::types::{Feature, FileRange, FsCaps, Ino, Version};
 
 use std::ffi::OsStr;
 use std::os::unix::ffi::OsStrExt;
@@ -32,29 +32,48 @@ impl Context {
         Version(crate::handshake::MAJOR_VER, self.server.minor_ver)
     }
 
+    /// The features the filesystem enabled for this connection.
+    pub fn caps(&self) -> FsCaps {
+        self.server.caps
+    }
+
+    /// Whether this connection allows a feature.
+    ///
+    /// Folds together the protocol version the kernel speaks, what was
+    /// negotiated, and the platform, so a filesystem doesn't have to know which
+    /// decides a given feature. Features that are purely negotiated are in
+    /// [`caps`](Self::caps).
+    pub fn supports(&self, feature: Feature) -> bool {
+        crate::types::feature::supports(feature, self.server.minor_ver, self.server.caps)
+    }
+
     /// Hands a file to the kernel, so it serves reads and writes from it
     /// directly instead of sending them to this filesystem.
     ///
-    /// Only Linux supports this, from 6.9, and only when built with
-    /// `CONFIG_FUSE_PASSTHROUGH`. It also asks a lot of the caller:
+    /// Only Linux has this, from 6.9, and only when built with
+    /// `CONFIG_FUSE_PASSTHROUGH`. Whether it will work can't be established
+    /// ahead of the attempt, so each failure says which requirement went unmet:
     ///
-    /// - [`FsCaps::PASSTHROUGH`](crate::types::FsCaps::PASSTHROUGH) has to be
-    ///   enabled, which this checks;
-    /// - the process needs `CAP_SYS_ADMIN`, or the kernel reports `EPERM`;
-    /// - the file has to be a regular file, not a directory (`EISDIR`) or
-    ///   anything else (`EINVAL`);
-    /// - the file can't already be on a stack of filesystems as deep as the
-    ///   kernel allows (`ELOOP`).
-    ///
-    /// Reports `ENOTSUP` where the platform or the connection has no passthrough
-    /// at all.
+    /// - `ENOTSUP`: this platform or this connection has no passthrough. Either
+    ///   [`Feature::Passthrough`](crate::types::Feature::Passthrough) isn't
+    ///   allowed here, which this checks before asking the kernel, or the kernel
+    ///   was built without `CONFIG_FUSE_PASSTHROUGH`.
+    /// - `EPERM`: the process lacks `CAP_SYS_ADMIN` **in the initial user
+    ///   namespace**. Being root inside a user namespace doesn't count, and a
+    ///   capability check in the filesystem would report it as held, so this
+    ///   error is the only reliable answer.
+    /// - `EISDIR`, or `EINVAL` for anything else: passthrough covers regular
+    ///   files only.
+    /// - `ELOOP`: the file's own filesystem is already stacked as deeply as this
+    ///   connection allows.
+    /// - `EBADF`: the file descriptor isn't open.
     pub fn open_passthrough<T>(&self, fd: T) -> Result<PassthroughFd<T>>
     where
         T: std::os::fd::AsFd,
     {
         // The kernel reports EPERM whether the feature wasn't negotiated or the
         // process lacks CAP_SYS_ADMIN, so rule out the first here.
-        if !self.server.caps.contains(crate::types::FsCaps::PASSTHROUGH) {
+        if !self.supports(Feature::Passthrough) {
             return Err(crate::Error::ENOTSUP);
         }
 
@@ -82,7 +101,7 @@ impl Context {
     /// macOS only honours this on a synchronous mount, and reports `ENOSYS`
     /// otherwise.
     pub async fn invalidate_attrs(&self, ino: Ino) -> std::result::Result<(), NotifyError> {
-        self.supported(since::INVAL)?;
+        self.require(Feature::InvalidateInode)?;
 
         self.server
             .dev
@@ -94,7 +113,7 @@ impl Context {
 
     /// Tells the kernel to forget an inode's cached attributes and data.
     pub async fn invalidate_inode(&self, ino: Ino) -> std::result::Result<(), NotifyError> {
-        self.supported(since::INVAL)?;
+        self.require(Feature::InvalidateInode)?;
 
         self.server
             .dev
@@ -114,7 +133,7 @@ impl Context {
     where
         R: Into<FileRange>,
     {
-        self.supported(since::INVAL)?;
+        self.require(Feature::InvalidateInode)?;
 
         self.server
             .dev
@@ -143,7 +162,7 @@ impl Context {
         let mut name_buf = self.buffer_pool().checkout_with_capacity(name.len());
         name_buf.extend_from_slice(name);
 
-        self.supported(since::DELETE)?;
+        self.require(Feature::DeleteEntry)?;
 
         self.server
             .dev
@@ -170,7 +189,7 @@ impl Context {
         let mut name_buf = self.buffer_pool().checkout_with_capacity(name.len());
         name_buf.extend_from_slice(name);
 
-        self.supported(since::INVAL)?;
+        self.require(Feature::InvalidateEntry)?;
 
         self.server
             .dev
@@ -199,7 +218,7 @@ impl Context {
         let mut name_buf = self.buffer_pool().checkout_with_capacity(name.len());
         name_buf.extend_from_slice(name);
 
-        self.supported(since::EXPIRE_ONLY)?;
+        self.require(Feature::ExpireEntry)?;
 
         self.server
             .dev
@@ -211,7 +230,7 @@ impl Context {
 
     /// Invalidates every cached directory entry at once.
     pub async fn increment_epoch(&self) -> std::result::Result<(), NotifyError> {
-        self.supported(since::INC_EPOCH)?;
+        self.require(Feature::IncrementEpoch)?;
 
         self.server
             .dev
@@ -231,7 +250,7 @@ impl Context {
     where
         B: IntoIoBuf,
     {
-        self.supported(since::STORE)?;
+        self.require(Feature::StoreCache)?;
 
         self.server
             .dev
@@ -259,7 +278,7 @@ impl Context {
             }
         }
 
-        self.supported(since::RETRIEVE)?;
+        self.require(Feature::RetrieveCache)?;
 
         let (id, rx) = self.server.replies.channel();
 
@@ -286,33 +305,15 @@ impl Context {
     }
 }
 
-/// The protocol version each notification arrived in.
-mod since {
-    pub(super) const INVAL: u32 = 12;
-    pub(super) const STORE: u32 = 15;
-    pub(super) const RETRIEVE: u32 = 15;
-    pub(super) const DELETE: u32 = 18;
-    pub(super) const EXPIRE_ONLY: u32 = 38;
-    pub(super) const INC_EPOCH: u32 = 44;
-}
-
-/// Refuses a notification the kernel is too old to understand, rather than
-/// letting it reject the write or, worse, read the wrong fields.
-///
-/// `FUSE_HAS_EXPIRE_ONLY` is a capability as well as a version, but no kernel
-/// below 7.38 offers it, so the version alone decides here, as it does in
-/// `KernelCaps`.
-fn supported(minor_ver: u32, since: u32) -> std::result::Result<(), NotifyError> {
-    if minor_ver >= since {
-        Ok(())
-    } else {
-        Err(NotifyError::Unsupported)
-    }
-}
-
 impl Context {
-    fn supported(&self, since: u32) -> std::result::Result<(), NotifyError> {
-        supported(self.server.minor_ver, since)
+    /// Refuses a notification this connection doesn't allow, rather than letting
+    /// the kernel reject the write or, worse, read the wrong fields.
+    fn require(&self, feature: Feature) -> std::result::Result<(), NotifyError> {
+        if self.supports(feature) {
+            Ok(())
+        } else {
+            Err(NotifyError::Unsupported)
+        }
     }
 }
 
@@ -336,50 +337,42 @@ impl CacheData {
 mod tests {
     use super::*;
 
-    // `Context` needs a live server, so the gate is called directly.
-    fn is_supported(minor_ver: u32, since: u32) -> bool {
-        super::supported(minor_ver, since).is_ok()
+    // `Context` needs a live server, so the gate is asked through `Feature`.
+    fn supported(feature: Feature, minor_ver: u32) -> bool {
+        crate::types::feature::supports(feature, minor_ver, FsCaps::all())
     }
 
     #[test]
-    fn a_current_kernel_supports_every_notification() {
+    fn a_current_kernel_takes_every_notification() {
         let minor_ver = crate::handshake::MINOR_VER;
 
-        for since in [
-            since::INVAL,
-            since::STORE,
-            since::RETRIEVE,
-            since::DELETE,
-            since::EXPIRE_ONLY,
-            since::INC_EPOCH,
+        for feature in [
+            Feature::InvalidateInode,
+            Feature::InvalidateEntry,
+            Feature::DeleteEntry,
+            Feature::ExpireEntry,
+            Feature::StoreCache,
+            Feature::RetrieveCache,
+            Feature::IncrementEpoch,
         ] {
-            assert!(is_supported(minor_ver, since));
+            assert!(supported(feature, minor_ver), "{feature:?}");
         }
     }
 
+    // The macOS kernels speak 7.19.
     #[test]
-    fn macos_supports_only_the_older_notifications() {
-        // The macOS kernels speak 7.19.
-        assert!(is_supported(19, since::INVAL));
-        assert!(is_supported(19, since::STORE));
-        assert!(is_supported(19, since::DELETE));
-        assert!(!is_supported(19, since::EXPIRE_ONLY));
-        assert!(!is_supported(19, since::INC_EPOCH));
+    fn a_macos_kernel_takes_only_the_older_notifications() {
+        assert!(supported(Feature::InvalidateInode, 19));
+        assert!(supported(Feature::StoreCache, 19));
+        assert!(supported(Feature::DeleteEntry, 19));
+        assert!(!supported(Feature::ExpireEntry, 19));
+        assert!(!supported(Feature::IncrementEpoch, 19));
     }
 
     #[test]
-    fn an_ancient_kernel_supports_none_of_them() {
-        assert!(!is_supported(11, since::INVAL));
-        assert!(!is_supported(14, since::STORE));
-        assert!(!is_supported(17, since::DELETE));
-    }
-
-    #[test]
-    fn the_versions_are_in_the_order_they_were_added() {
-        assert!(since::INVAL < since::STORE);
-        assert!(since::STORE <= since::RETRIEVE);
-        assert!(since::RETRIEVE < since::DELETE);
-        assert!(since::DELETE < since::EXPIRE_ONLY);
-        assert!(since::EXPIRE_ONLY < since::INC_EPOCH);
+    fn an_ancient_kernel_takes_none_of_them() {
+        assert!(!supported(Feature::InvalidateInode, 11));
+        assert!(!supported(Feature::StoreCache, 14));
+        assert!(!supported(Feature::DeleteEntry, 17));
     }
 }
