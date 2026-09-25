@@ -185,6 +185,7 @@ mod tests {
 
     #[test]
     fn an_inverted_range_covers_nothing() {
+        #[allow(clippy::reversed_empty_ranges)]
         let range = FileRange::from(9..=4);
 
         assert!(range.is_empty());

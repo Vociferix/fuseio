@@ -33,8 +33,6 @@ pub mod types {
 
     pub use crate::context::{CacheData, Context};
 
-    pub use crate::buf::{Buf, BufPool, NoData, Pod, Vectored};
-
     pub use futures_util::{Stream, StreamExt};
 }
 
@@ -42,7 +40,7 @@ pub mod prelude {
     pub use super::req::*;
     pub use super::types::*;
     pub use super::{BindFs, Fs, MountFs};
-    pub use crate::buf::Buf;
+    pub use crate::buf::{Buf, BufPool, NoData, Pod, Vectored};
     pub use crate::{Error, Result};
 }
 
@@ -72,7 +70,7 @@ pub trait Fs: Sized + 'static {
 
     async fn read_link(&self, req: req::ReadLinkReq) -> Result<impl IntoIoBuf> {
         let _ = (self, req);
-        Err::<[u8; 0], _>(Error::ENOSYS)
+        Err::<crate::buf::NoData, _>(Error::ENOSYS)
     }
 
     async fn make_node(&self, req: req::MakeNodeReq) -> Result<types::Entry> {
@@ -123,7 +121,7 @@ pub trait Fs: Sized + 'static {
 
     async fn read(&self, req: req::ReadReq) -> Result<impl IntoIoBuf> {
         let _ = (self, req);
-        Err::<[u8; 0], _>(Error::ENOSYS)
+        Err::<crate::buf::NoData, _>(Error::ENOSYS)
     }
 
     async fn write(&self, req: req::WriteReq) -> Result<usize> {
@@ -171,7 +169,7 @@ pub trait Fs: Sized + 'static {
 
     async fn get_xattr(&self, req: req::GetXattrReq) -> Result<impl IntoIoBuf> {
         let _ = (self, req);
-        Err::<[u8; 0], _>(Error::ENOSYS)
+        Err::<crate::buf::NoData, _>(Error::ENOSYS)
     }
 
     async fn set_xattr(&self, req: req::SetXattrReq) -> Result<()> {
@@ -229,7 +227,7 @@ pub trait Fs: Sized + 'static {
 
     async fn ioctl(&self, req: req::IoctlReq) -> Result<types::IoctlReply<impl IntoIoBuf>> {
         let _ = (self, req);
-        Err::<types::IoctlReply<types::NoData>, _>(Error::ENOSYS)
+        Err::<types::IoctlReply<crate::buf::NoData>, _>(Error::ENOSYS)
     }
 
     async fn poll(&self, req: req::PollReq) -> Result<PollFlags> {
