@@ -353,7 +353,7 @@ impl CacheData {
 
 impl NotifyPruneCache {
     pub fn is_empty(&self) -> bool {
-        self.prune.is_none()
+        self.prune.as_ref().is_none_or(Prune::is_empty)
     }
 
     pub fn len(&self) -> usize {

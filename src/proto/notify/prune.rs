@@ -49,6 +49,10 @@ impl Prune {
         unsafe { std::slice::from_raw_parts(ptr, len) }
     }
 
+    pub fn is_empty(&self) -> bool {
+        self.inos.len() == OUT_LEN
+    }
+
     pub fn len(&self) -> usize {
         (self.inos.len() - OUT_LEN) / std::mem::size_of::<Ino>()
     }
