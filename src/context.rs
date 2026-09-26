@@ -3,11 +3,14 @@ use crate::buf::{BufPool, IntoIoBuf};
 use crate::dev_fuse::FuseChannel;
 use crate::fs::types::{NotifyError, PassthroughFd};
 use crate::proto::notify::{
-    Delete, EncodeNotify, ExpireEntry, IncrementEpoch, InvalEntry, InvalInode, Retrieve, Store,
+    Delete, EncodeNotify, ExpireEntry, IncrementEpoch, InvalEntry, InvalInode, Prune, Retrieve,
+    Store,
 };
 use crate::proto::request::{Cfg, NotifyReply};
 use crate::server::ServerInner;
 use crate::types::{Feature, FileRange, FsCaps, Ino, Version};
+
+use futures_util::{Stream, StreamExt};
 
 use std::ffi::OsStr;
 use std::os::unix::ffi::OsStrExt;
@@ -21,6 +24,12 @@ pub struct Context {
 #[derive(Debug, Clone)]
 pub struct CacheData {
     reply: NotifyReply,
+}
+
+#[derive(Debug)]
+pub struct NotifyPruneCache {
+    ctx: Context,
+    prune: Option<Prune>,
 }
 
 impl Context {
@@ -303,6 +312,15 @@ impl Context {
 
         Ok(CacheData { reply: reply? })
     }
+
+    pub fn prune_cache(&self) -> std::result::Result<NotifyPruneCache, NotifyError> {
+        self.require(Feature::PruneCache)?;
+
+        Ok(NotifyPruneCache {
+            ctx: self.clone(),
+            prune: None,
+        })
+    }
 }
 
 impl Context {
@@ -330,6 +348,157 @@ impl CacheData {
 
     pub fn data(&self) -> &[u8] {
         self.reply.data()
+    }
+}
+
+impl NotifyPruneCache {
+    pub fn is_empty(&self) -> bool {
+        self.prune.is_none()
+    }
+
+    pub fn len(&self) -> usize {
+        self.prune.as_ref().map_or(0, Prune::len)
+    }
+
+    pub fn as_slice(&self) -> &[Ino] {
+        self.prune.as_ref().map_or(&[], Prune::as_slice)
+    }
+
+    pub fn push(&mut self, ino: Ino) {
+        self.prune
+            .get_or_insert_with(|| Prune::with_capacity(self.ctx.buffer_pool(), 1))
+            .push(ino);
+    }
+
+    pub fn extend<I>(&mut self, iter: I)
+    where
+        I: IntoIterator<Item = Ino>,
+    {
+        let iter = iter.into_iter();
+        let prune = self.prune.get_or_insert_with(|| {
+            Prune::with_capacity(self.ctx.buffer_pool(), iter.size_hint().0)
+        });
+        iter.for_each(|ino| prune.push(ino));
+    }
+
+    pub fn try_extend<I, E>(&mut self, iter: I) -> std::result::Result<(), E>
+    where
+        I: IntoIterator<Item = std::result::Result<Ino, E>>,
+    {
+        let mut iter = iter.into_iter();
+        let prune = self.prune.get_or_insert_with(|| {
+            Prune::with_capacity(self.ctx.buffer_pool(), iter.size_hint().0)
+        });
+        iter.try_for_each(|ino| {
+            prune.push(ino?);
+            Ok(())
+        })
+    }
+
+    pub async fn extend_stream<S>(&mut self, stream: S)
+    where
+        S: Stream<Item = Ino>,
+    {
+        let mut stream = std::pin::pin!(stream);
+        let prune = self.prune.get_or_insert_with(|| {
+            Prune::with_capacity(self.ctx.buffer_pool(), stream.size_hint().0)
+        });
+        while let Some(ino) = stream.next().await {
+            prune.push(ino);
+        }
+    }
+
+    pub async fn try_extend_stream<S, E>(&mut self, stream: S) -> std::result::Result<(), E>
+    where
+        S: Stream<Item = std::result::Result<Ino, E>>,
+    {
+        let mut stream = std::pin::pin!(stream);
+        let prune = self.prune.get_or_insert_with(|| {
+            Prune::with_capacity(self.ctx.buffer_pool(), stream.size_hint().0)
+        });
+        while let Some(ino) = stream.next().await {
+            prune.push(ino?);
+        }
+        Ok(())
+    }
+
+    fn unpack_reserve(self, additional: usize) -> (Context, Prune) {
+        let Self { ctx, prune } = self;
+        let prune = if let Some(mut prune) = prune {
+            prune.reserve(additional);
+            prune
+        } else {
+            Prune::with_capacity(ctx.buffer_pool(), additional)
+        };
+        (ctx, prune)
+    }
+
+    pub fn with_inodes<I>(self, iter: I) -> Self
+    where
+        I: IntoIterator<Item = Ino>,
+    {
+        let iter = iter.into_iter();
+        let (ctx, mut prune) = self.unpack_reserve(iter.size_hint().0);
+        iter.for_each(|ino| prune.push(ino));
+        Self {
+            ctx,
+            prune: Some(prune),
+        }
+    }
+
+    pub fn try_with_inodes<I, E>(self, iter: I) -> std::result::Result<Self, E>
+    where
+        I: IntoIterator<Item = std::result::Result<Ino, E>>,
+    {
+        let mut iter = iter.into_iter();
+        let (ctx, mut prune) = self.unpack_reserve(iter.size_hint().0);
+        iter.try_for_each(|ino| -> std::result::Result<(), E> {
+            prune.push(ino?);
+            Ok(())
+        })?;
+        Ok(Self {
+            ctx,
+            prune: Some(prune),
+        })
+    }
+
+    pub async fn with_inodes_stream<S>(self, stream: S) -> Self
+    where
+        S: Stream<Item = Ino>,
+    {
+        let mut stream = std::pin::pin!(stream);
+        let (ctx, mut prune) = self.unpack_reserve(stream.size_hint().0);
+        while let Some(ino) = stream.next().await {
+            prune.push(ino);
+        }
+        Self {
+            ctx,
+            prune: Some(prune),
+        }
+    }
+
+    pub async fn try_with_inodes_stream<S, E>(self, stream: S) -> std::result::Result<Self, E>
+    where
+        S: Stream<Item = std::result::Result<Ino, E>>,
+    {
+        let mut stream = std::pin::pin!(stream);
+        let (ctx, mut prune) = self.unpack_reserve(stream.size_hint().0);
+        while let Some(ino) = stream.next().await {
+            prune.push(ino?);
+        }
+        Ok(Self {
+            ctx,
+            prune: Some(prune),
+        })
+    }
+
+    pub async fn notify(self) -> std::result::Result<(), NotifyError> {
+        let Self { ctx, prune } = self;
+
+        if let Some(prune) = prune {
+            ctx.server.dev.write_buf(prune.encode(ctx.cfg())?).await.0?;
+        }
+        Ok(())
     }
 }
 

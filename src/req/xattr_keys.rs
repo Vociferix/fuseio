@@ -56,6 +56,17 @@ impl XattrKeysReq {
         Ok(buf)
     }
 
+    pub fn try_collect_keys<I, T, E>(&self, iter: I) -> Result<XattrKeyBuf>
+    where
+        I: IntoIterator<Item = std::result::Result<T, E>>,
+        T: AsRef<OsStr>,
+        E: Into<Error>,
+    {
+        let mut buf = self.new_buffer();
+        buf.try_extend(iter)?;
+        Ok(buf)
+    }
+
     pub async fn collect_keys_stream<S>(&self, stream: S) -> Result<XattrKeyBuf>
     where
         S: Stream,
@@ -63,6 +74,17 @@ impl XattrKeysReq {
     {
         let mut buf = self.new_buffer();
         buf.extend_stream(stream).await?;
+        Ok(buf)
+    }
+
+    pub async fn try_collect_keys_stream<S, T, E>(&self, stream: S) -> Result<XattrKeyBuf>
+    where
+        S: Stream<Item = std::result::Result<T, E>>,
+        T: AsRef<OsStr>,
+        E: Into<Error>,
+    {
+        let mut buf = self.new_buffer();
+        buf.try_extend_stream(stream).await?;
         Ok(buf)
     }
 }
@@ -106,11 +128,21 @@ impl XattrKeyBuf {
         I: IntoIterator,
         I::Item: AsRef<OsStr>,
     {
-        for key in iter {
-            self.push(key)?;
-        }
+        iter.into_iter().try_for_each(|key| self.push(key))
+    }
 
-        Ok(())
+    pub fn try_extend<I, T, E>(&mut self, iter: I) -> Result<()>
+    where
+        I: IntoIterator<Item = std::result::Result<T, E>>,
+        T: AsRef<OsStr>,
+        E: Into<Error>,
+    {
+        iter.into_iter().try_for_each(|key| {
+            self.push(match key {
+                Ok(key) => key,
+                Err(err) => return Err(err.into()),
+            })
+        })
     }
 
     pub async fn extend_stream<S>(&mut self, stream: S) -> Result<()>
@@ -125,6 +157,62 @@ impl XattrKeyBuf {
         }
 
         Ok(())
+    }
+
+    pub async fn try_extend_stream<S, T, E>(&mut self, stream: S) -> Result<()>
+    where
+        S: Stream<Item = std::result::Result<T, E>>,
+        T: AsRef<OsStr>,
+        E: Into<Error>,
+    {
+        let mut stream = std::pin::pin!(stream);
+
+        while let Some(key) = stream.next().await {
+            self.push(match key {
+                Ok(key) => key,
+                Err(err) => return Err(err.into()),
+            })?;
+        }
+
+        Ok(())
+    }
+
+    pub fn with_keys<I>(mut self, iter: I) -> Result<Self>
+    where
+        I: IntoIterator,
+        I::Item: AsRef<OsStr>,
+    {
+        self.extend(iter)?;
+        Ok(self)
+    }
+
+    pub fn try_with_keys<I, T, E>(mut self, iter: I) -> Result<Self>
+    where
+        I: IntoIterator<Item = std::result::Result<T, E>>,
+        T: AsRef<OsStr>,
+        E: Into<Error>,
+    {
+        self.try_extend(iter)?;
+        Ok(self)
+    }
+
+    pub async fn with_keys_stream<S>(mut self, stream: S) -> Result<Self>
+    where
+        S: Stream,
+        S::Item: AsRef<OsStr>,
+    {
+        self.extend_stream(stream).await?;
+        Ok(self)
+    }
+
+    pub async fn try_with_keys_stream<S, T, E>(mut self, stream: S) -> Result<Self>
+    where
+        S: Stream<Item = std::result::Result<T, E>>,
+        T: AsRef<OsStr>,
+        E: Into<Error>,
+    {
+        self.try_extend_stream(stream).await?;
+        Ok(self)
     }
 
     pub(crate) fn into_data(self) -> Data<Buf> {

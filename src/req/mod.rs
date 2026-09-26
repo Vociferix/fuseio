@@ -46,7 +46,7 @@ mod tmp_file;
 mod unlink_node;
 mod write;
 pub(crate) mod xattr_keys;
-mod xattr_keys_len;
+pub(crate) mod xattr_keys_len;
 
 pub use access::AccessReq;
 pub use close::CloseReq;

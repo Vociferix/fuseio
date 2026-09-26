@@ -10,6 +10,7 @@ mod increment_epoch;
 mod inval_entry;
 mod inval_inode;
 mod poll;
+mod prune;
 mod retrieve;
 mod store;
 
@@ -19,6 +20,7 @@ pub use increment_epoch::IncrementEpoch;
 pub use inval_entry::InvalEntry;
 pub use inval_inode::InvalInode;
 pub use poll::Poll;
+pub use prune::Prune;
 pub use retrieve::Retrieve;
 pub use store::Store;
 
@@ -78,4 +80,6 @@ impl NotifyCode {
     const RESEND: Self = Self(7);
 
     const INC_EPOCH: Self = Self(8);
+
+    const PRUNE: Self = Self(9);
 }

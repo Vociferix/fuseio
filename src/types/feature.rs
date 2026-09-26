@@ -87,6 +87,8 @@ pub enum Feature {
     /// Every cached directory entry can be invalidated at once.
     IncrementEpoch,
 
+    PruneCache,
+
     /// A pending `poll` can be woken.
     PollWakeup,
 
@@ -127,6 +129,7 @@ mod since {
     pub(super) const STATX: u32 = 39;
     pub(super) const PASSTHROUGH: u32 = 40;
     pub(super) const INC_EPOCH: u32 = 44;
+    pub(super) const PRUNE: u32 = 45;
 }
 
 /// Answers whether a connection allows a feature.
@@ -189,6 +192,9 @@ pub(crate) fn supports(feature: Feature, minor_ver: u32, caps: FsCaps) -> bool {
         Feature::RetrieveCache => version(since::RETRIEVE),
         Feature::IncrementEpoch => version(since::INC_EPOCH),
         Feature::PollWakeup => version(since::NOTIFY_POLL),
+
+        // XXX: If/when FreeBSD gets to 7.45, check if it actually supports `FUSE_NOTIFY_PRUNE`
+        Feature::PruneCache => cfg!(target_os = "linux") && version(since::PRUNE),
 
         Feature::Passthrough => {
             cfg!(target_os = "linux") && version(since::PASSTHROUGH) && cap(FsCaps::PASSTHROUGH)

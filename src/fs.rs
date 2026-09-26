@@ -21,6 +21,7 @@ pub mod types {
         read_dir::{DirEntry, DirEntryBuf},
         read_dir_plus::{DirEntryPlus, DirEntryPlusBuf},
         xattr_keys::XattrKeyBuf,
+        xattr_keys_len::XattrKeyLenBuf,
     };
 
     pub use crate::proto::response::{
@@ -31,9 +32,7 @@ pub mod types {
 
     pub use crate::notify_error::NotifyError;
 
-    pub use crate::context::{CacheData, Context};
-
-    pub use futures_util::{Stream, StreamExt};
+    pub use crate::context::{CacheData, Context, NotifyPruneCache};
 }
 
 pub mod prelude {
@@ -177,12 +176,9 @@ pub trait Fs: Sized + 'static {
         Err(Error::ENOSYS)
     }
 
-    async fn xattr_keys_len(
-        &self,
-        req: req::XattrKeysLenReq,
-    ) -> Result<impl types::Stream<Item = usize>> {
+    async fn xattr_keys_len(&self, req: req::XattrKeysLenReq) -> Result<types::XattrKeyLenBuf> {
         let _ = (self, req);
-        Err::<futures_util::stream::Empty<usize>, _>(Error::ENOSYS)
+        Err(Error::ENOSYS)
     }
 
     async fn xattr_keys(&self, req: req::XattrKeysReq) -> Result<types::XattrKeyBuf> {

@@ -1,6 +1,7 @@
 use std::num::NonZeroU64;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
+#[repr(transparent)]
 pub struct Ino(NonZeroU64);
 
 impl Ino {

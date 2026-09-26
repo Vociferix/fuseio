@@ -16,7 +16,6 @@ use crate::types::{FsCaps, RenameMode, ReplyInitFlags, Request};
 
 use compio::BufResult;
 use crossfire::{AsyncRx, MAsyncTx, mpsc::Array};
-use futures_util::StreamExt;
 
 use std::cell::{Cell, RefCell};
 use std::collections::{HashMap, VecDeque};
@@ -686,8 +685,13 @@ where
         let len = body.len();
         if len == 0 {
             let req = req::GetXattrLenReq::new(Req::new(this, token, req), body);
-            this.send(id, this.fs.get_xattr_len(req).await.map(XattrLen::new))
-                .await;
+            match this.fs.get_xattr_len(req).await {
+                Ok(len) => match u32::try_from(len) {
+                    Ok(len) => this.send(id, XattrLen::new(len)).await,
+                    Err(_) => this.send(id, Error::E2BIG).await,
+                },
+                Err(err) => this.send(id, err).await,
+            }
         } else {
             let req = req::GetXattrReq::new(Req::new(this, token, req), body);
             let data = match this.fs.get_xattr(req).await {
@@ -717,32 +721,14 @@ where
         let len = body.len();
         if len == 0 {
             let req = req::XattrKeysLenReq::new(Req::new(this, token, req), body);
-            let mut lens = std::pin::pin!(match this.fs.xattr_keys_len(req).await {
-                Ok(lens) => lens,
+            let len = match this.fs.xattr_keys_len(req).await {
+                Ok(buf) => buf.len,
                 Err(err) => {
                     this.send(id, err).await;
                     return;
                 }
-            });
-
-            let mut count = 0usize;
-            let mut total = 0usize;
-            while let Some(len) = StreamExt::next(&mut lens).await {
-                let Some(tmp) = total.checked_add(len) else {
-                    this.send(id, Error::E2BIG).await;
-                    return;
-                };
-                total = tmp;
-                count += 1;
-            }
-
-            // Each key is NUL-terminated.
-            let Some(total) = total.checked_add(count) else {
-                this.send(id, Error::E2BIG).await;
-                return;
             };
-
-            this.send(id, XattrLen::new(total)).await;
+            this.send(id, XattrLen::new(len)).await;
         } else {
             let req = req::XattrKeysReq::new(Req::new(this, token, req), body);
             this.send(

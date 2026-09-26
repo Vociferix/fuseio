@@ -1,6 +1,5 @@
 Items to implement or revisit:
 
-* Implement `FUSE_MONITOR` (macFUSE 5 only)
 * Support more mount options (`MountOpt`)
   * macFUSE uses `iosize` to set buffer sizes
   * Might need a `MountOpt::Custom(OsString)`
@@ -16,4 +15,4 @@ Items to implement or revisit:
   * Meaning, public doc comments shouldn't explain why something is implemented in a particular way,
     it should stick to explaining behaviors that impact the user. This can sometimes include
     implementation details, but only when those details effect how the user should use the item.
-* Implement FUSE_NOTIFY_PRUNE
+* Investigate `FUSE_DEV_IOC_SYNC_INIT`
