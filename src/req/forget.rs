@@ -2,8 +2,8 @@ use super::Req;
 use crate::proto::request::{BatchForget, Forget};
 use crate::types::ForgetIno;
 
-pub struct ForgetReq {
-    req: Req,
+pub struct ForgetReq<C> {
+    req: Req<C>,
     inner: Inner,
 }
 
@@ -12,22 +12,22 @@ enum Inner {
     Batch(BatchForget),
 }
 
-impl ForgetReq {
-    pub(crate) fn from_single(req: Req, forget: Forget) -> Self {
+impl<C> ForgetReq<C> {
+    pub(crate) fn from_single(req: Req<C>, forget: Forget) -> Self {
         Self {
             req,
             inner: Inner::Single(ForgetIno::new(forget.ino(), forget.nlookup())),
         }
     }
 
-    pub(crate) fn from_batch(req: Req, batch: BatchForget) -> Self {
+    pub(crate) fn from_batch(req: Req<C>, batch: BatchForget) -> Self {
         Self {
             req,
             inner: Inner::Batch(batch),
         }
     }
 
-    pub fn req(&self) -> &Req {
+    pub fn req(&self) -> &Req<C> {
         &self.req
     }
 
@@ -39,15 +39,15 @@ impl ForgetReq {
     }
 }
 
-impl std::ops::Deref for ForgetReq {
-    type Target = Req;
+impl<C> std::ops::Deref for ForgetReq<C> {
+    type Target = Req<C>;
 
     fn deref(&self) -> &Self::Target {
         &self.req
     }
 }
 
-impl std::fmt::Debug for ForgetReq {
+impl<C> std::fmt::Debug for ForgetReq<C> {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("ForgetReq")
             .field("req", &self.req)

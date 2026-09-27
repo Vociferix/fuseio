@@ -1,6 +1,6 @@
 use crate::Result;
 use crate::buf::{BufPool, IntoIoBuf};
-use crate::dev_fuse::FuseChannel;
+use crate::conn::Connection;
 use crate::fs::types::{NotifyError, PassthroughFd};
 use crate::proto::notify::{
     Delete, EncodeNotify, ExpireEntry, IncrementEpoch, InvalEntry, InvalInode, Prune, Retrieve,
@@ -16,9 +16,8 @@ use std::ffi::OsStr;
 use std::os::unix::ffi::OsStrExt;
 use std::rc::Rc;
 
-#[derive(Clone)]
-pub struct Context {
-    server: Rc<ServerInner>,
+pub struct Context<C> {
+    pub(crate) server: Rc<ServerInner<C>>,
 }
 
 #[derive(Debug, Clone)]
@@ -27,13 +26,21 @@ pub struct CacheData {
 }
 
 #[derive(Debug)]
-pub struct NotifyPruneCache {
-    ctx: Context,
+pub struct NotifyPruneCache<C> {
+    ctx: Context<C>,
     prune: Option<Prune>,
 }
 
-impl Context {
-    pub(crate) fn new(server: Rc<ServerInner>) -> Self {
+impl<C> Clone for Context<C> {
+    fn clone(&self) -> Self {
+        Self {
+            server: self.server.clone(),
+        }
+    }
+}
+
+impl<C> Context<C> {
+    pub(crate) fn new(server: Rc<ServerInner<C>>) -> Self {
         Self { server }
     }
 
@@ -56,6 +63,28 @@ impl Context {
         crate::types::feature::supports(feature, self.server.minor_ver, self.server.caps)
     }
 
+    pub fn buffer_pool(&self) -> &BufPool {
+        &self.server.buf_pool
+    }
+
+    pub(crate) fn cfg(&self) -> Cfg {
+        Cfg {
+            minor_ver: self.server.minor_ver,
+            flags: self.server.flags,
+        }
+    }
+
+    pub fn prune_cache(&self) -> std::result::Result<NotifyPruneCache<C>, NotifyError> {
+        self.require(Feature::PruneCache)?;
+
+        Ok(NotifyPruneCache {
+            ctx: self.clone(),
+            prune: None,
+        })
+    }
+}
+
+impl<C: Connection> Context<C> {
     /// Hands a file to the kernel, so it serves reads and writes from it
     /// directly instead of sending them to this filesystem.
     ///
@@ -76,7 +105,7 @@ impl Context {
     /// - `ELOOP`: the file's own filesystem is already stacked as deeply as this
     ///   connection allows.
     /// - `EBADF`: the file descriptor isn't open.
-    pub fn open_passthrough<T>(&self, fd: T) -> Result<PassthroughFd<T>>
+    pub async fn open_passthrough<T>(&self, fd: T) -> Result<PassthroughFd<T, C>>
     where
         T: std::os::fd::AsFd,
     {
@@ -86,22 +115,20 @@ impl Context {
             return Err(crate::Error::ENOTSUP);
         }
 
-        PassthroughFd::open(fd, &self.server.dev)
+        PassthroughFd::open(fd, self).await
     }
 
-    pub fn buffer_pool(&self) -> &BufPool {
-        &self.server.buf_pool
-    }
-
-    pub(crate) fn cfg(&self) -> Cfg {
-        Cfg {
-            minor_ver: self.server.minor_ver,
-            flags: self.server.flags,
+    pub(crate) async fn send_notif(
+        &self,
+        buf: impl IntoIoBuf,
+    ) -> std::result::Result<(), NotifyError> {
+        match buf.into_io_buf() {
+            crate::buf::IoBuffer::Buf(buf) => self.server.conn.send_notification(buf).await.0?,
+            crate::buf::IoBuffer::VecBuf(buf) => {
+                self.server.conn.send_notification_vectored(buf).await.0?
+            }
         }
-    }
-
-    pub(crate) fn dev(&self) -> &FuseChannel {
-        &self.server.dev
+        Ok(())
     }
 
     /// Tells the kernel to forget the cached attributes of an inode, keeping any
@@ -112,24 +139,16 @@ impl Context {
     pub async fn invalidate_attrs(&self, ino: Ino) -> std::result::Result<(), NotifyError> {
         self.require(Feature::InvalidateInode)?;
 
-        self.server
-            .dev
-            .write_buf(InvalInode::attrs(ino).encode(self.cfg())?)
+        self.send_notif(InvalInode::attrs(ino).encode(self.cfg())?)
             .await
-            .0?;
-        Ok(())
     }
 
     /// Tells the kernel to forget an inode's cached attributes and data.
     pub async fn invalidate_inode(&self, ino: Ino) -> std::result::Result<(), NotifyError> {
         self.require(Feature::InvalidateInode)?;
 
-        self.server
-            .dev
-            .write_buf(InvalInode::new(ino).encode(self.cfg())?)
+        self.send_notif(InvalInode::new(ino).encode(self.cfg())?)
             .await
-            .0?;
-        Ok(())
     }
 
     /// Tells the kernel to forget an inode's cached attributes and a range of
@@ -144,12 +163,8 @@ impl Context {
     {
         self.require(Feature::InvalidateInode)?;
 
-        self.server
-            .dev
-            .write_buf(InvalInode::new(ino).range(range).encode(self.cfg())?)
+        self.send_notif(InvalInode::new(ino).range(range).encode(self.cfg())?)
             .await
-            .0?;
-        Ok(())
     }
 
     /// Tells the kernel a directory entry is gone, so it can notify anything
@@ -167,18 +182,14 @@ impl Context {
     where
         N: AsRef<OsStr>,
     {
+        self.require(Feature::DeleteEntry)?;
+
         let name = name.as_ref().as_bytes();
         let mut name_buf = self.buffer_pool().checkout_with_capacity(name.len());
         name_buf.extend_from_slice(name);
 
-        self.require(Feature::DeleteEntry)?;
-
-        self.server
-            .dev
-            .write_buf(Delete::new(parent, child, name_buf).encode(self.cfg())?)
+        self.send_notif(Delete::new(parent, child, name_buf).encode(self.cfg())?)
             .await
-            .0?;
-        Ok(())
     }
 
     /// Tells the kernel to forget a cached directory entry.
@@ -194,18 +205,14 @@ impl Context {
     where
         N: AsRef<OsStr>,
     {
+        self.require(Feature::InvalidateEntry)?;
+
         let name = name.as_ref().as_bytes();
         let mut name_buf = self.buffer_pool().checkout_with_capacity(name.len());
         name_buf.extend_from_slice(name);
 
-        self.require(Feature::InvalidateEntry)?;
-
-        self.server
-            .dev
-            .write_buf(InvalEntry::new(parent, name_buf).encode(self.cfg())?)
+        self.send_notif(InvalEntry::new(parent, name_buf).encode(self.cfg())?)
             .await
-            .0?;
-        Ok(())
     }
 
     /// Marks a cached directory entry stale, so the kernel looks it up again
@@ -223,30 +230,22 @@ impl Context {
     where
         N: AsRef<OsStr>,
     {
+        self.require(Feature::ExpireEntry)?;
+
         let name = name.as_ref().as_bytes();
         let mut name_buf = self.buffer_pool().checkout_with_capacity(name.len());
         name_buf.extend_from_slice(name);
 
-        self.require(Feature::ExpireEntry)?;
-
-        self.server
-            .dev
-            .write_buf(ExpireEntry::new(parent, name_buf).encode(self.cfg())?)
+        self.send_notif(ExpireEntry::new(parent, name_buf).encode(self.cfg())?)
             .await
-            .0?;
-        Ok(())
     }
 
     /// Invalidates every cached directory entry at once.
     pub async fn increment_epoch(&self) -> std::result::Result<(), NotifyError> {
         self.require(Feature::IncrementEpoch)?;
 
-        self.server
-            .dev
-            .write_buf(IncrementEpoch::new().encode(self.cfg())?)
+        self.send_notif(IncrementEpoch::new().encode(self.cfg())?)
             .await
-            .0?;
-        Ok(())
     }
 
     /// Puts data straight into the kernel's page cache for an inode.
@@ -261,12 +260,8 @@ impl Context {
     {
         self.require(Feature::StoreCache)?;
 
-        self.server
-            .dev
-            .write_buf(Store::new(ino, offset, data).encode(self.cfg())?)
+        self.send_notif(Store::new(ino, offset, data).encode(self.cfg())?)
             .await
-            .0?;
-        Ok(())
     }
 
     /// Asks the kernel for data it has cached for an inode.
@@ -298,11 +293,8 @@ impl Context {
 
         let id = ((self.server.id as u64) << 32) | (id as u64);
 
-        self.server
-            .dev
-            .write_buf(Retrieve::new(id, ino, offset, len).encode(self.cfg())?)
-            .await
-            .0?;
+        self.send_notif(Retrieve::new(id, ino, offset, len).encode(self.cfg())?)
+            .await?;
 
         let Some(reply) = rx.await else {
             return Err(NotifyError::Io(crate::Error::EIO.into()));
@@ -312,18 +304,9 @@ impl Context {
 
         Ok(CacheData { reply: reply? })
     }
-
-    pub fn prune_cache(&self) -> std::result::Result<NotifyPruneCache, NotifyError> {
-        self.require(Feature::PruneCache)?;
-
-        Ok(NotifyPruneCache {
-            ctx: self.clone(),
-            prune: None,
-        })
-    }
 }
 
-impl Context {
+impl<C> Context<C> {
     /// Refuses a notification this connection doesn't allow, rather than letting
     /// the kernel reject the write or, worse, read the wrong fields.
     fn require(&self, feature: Feature) -> std::result::Result<(), NotifyError> {
@@ -335,7 +318,7 @@ impl Context {
     }
 }
 
-impl std::fmt::Debug for Context {
+impl<C> std::fmt::Debug for Context<C> {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("Context").finish_non_exhaustive()
     }
@@ -351,7 +334,7 @@ impl CacheData {
     }
 }
 
-impl NotifyPruneCache {
+impl<C> NotifyPruneCache<C> {
     pub fn is_empty(&self) -> bool {
         self.prune.as_ref().is_none_or(Prune::is_empty)
     }
@@ -422,7 +405,7 @@ impl NotifyPruneCache {
         Ok(())
     }
 
-    fn unpack_reserve(self, additional: usize) -> (Context, Prune) {
+    fn unpack_reserve(self, additional: usize) -> (Context<C>, Prune) {
         let Self { ctx, prune } = self;
         let prune = if let Some(mut prune) = prune {
             prune.reserve(additional);
@@ -491,12 +474,14 @@ impl NotifyPruneCache {
             prune: Some(prune),
         })
     }
+}
 
+impl<C: Connection> NotifyPruneCache<C> {
     pub async fn notify(self) -> std::result::Result<(), NotifyError> {
         let Self { ctx, prune } = self;
 
         if let Some(prune) = prune {
-            ctx.server.dev.write_buf(prune.encode(ctx.cfg())?).await.0?;
+            ctx.send_notif(prune.encode(ctx.cfg())?).await?;
         }
         Ok(())
     }

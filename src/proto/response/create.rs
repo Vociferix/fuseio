@@ -1,6 +1,7 @@
 use super::entry::EntryCompat;
 use super::{Cfg, EncodeResp, Entry, InodeAttrs, IntoIoBuf, IoBuf, Opened, RawHeader};
 use crate::buf::Vectored;
+use crate::conn::Connection;
 use crate::fs::types::PassthroughFd;
 use crate::types::{FileHandle, Ino, OpenedFlags};
 
@@ -67,7 +68,7 @@ impl Created {
         }
     }
 
-    pub fn passthrough<T: AsFd>(self, fd: &PassthroughFd<T>) -> Self {
+    pub fn passthrough<T: AsFd, C: Connection>(self, fd: &PassthroughFd<T, C>) -> Self {
         Self {
             entry: self.entry,
             open: self.open.passthrough(fd),

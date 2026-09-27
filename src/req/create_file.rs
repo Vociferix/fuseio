@@ -5,17 +5,17 @@ use crate::types::{Ino, Mode, OFlag};
 use std::ffi::OsStr;
 
 #[derive(Debug)]
-pub struct CreateFileReq {
-    req: Req,
+pub struct CreateFileReq<C> {
+    req: Req<C>,
     create: Create,
 }
 
-impl CreateFileReq {
-    pub(crate) fn new(req: Req, create: Create) -> Self {
+impl<C> CreateFileReq<C> {
+    pub(crate) fn new(req: Req<C>, create: Create) -> Self {
         Self { req, create }
     }
 
-    pub fn req(&self) -> &Req {
+    pub fn req(&self) -> &Req<C> {
         &self.req
     }
 
@@ -44,8 +44,8 @@ impl CreateFileReq {
     }
 }
 
-impl std::ops::Deref for CreateFileReq {
-    type Target = Req;
+impl<C> std::ops::Deref for CreateFileReq<C> {
+    type Target = Req<C>;
 
     fn deref(&self) -> &Self::Target {
         &self.req

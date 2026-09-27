@@ -1,7 +1,7 @@
 use crate::MountOpt;
+use crate::conn::{Connection, SharedConnection};
 
 use std::io::Result;
-use std::os::fd::{BorrowedFd, OwnedFd};
 use std::path::Path;
 
 #[cfg(not(target_os = "macos"))]
@@ -47,19 +47,35 @@ pub use fusermount::{Fusermount, FusermountUnmount};
 pub use default::{DefaultMount, DefaultUnmount};
 
 pub trait Mount: 'static {
-    type Unmount: Unmount;
+    type SharedConn: SharedConnection<Bound = Self::Conn>;
+    type Conn: Connection;
+    type Unmount: Unmount<SharedConn = Self::SharedConn, Conn = Self::Conn>;
 
     async fn mount(
         &self,
         mountpoint: &Path,
         options: &[MountOpt],
-    ) -> Result<(OwnedFd, impl Future<Output = Result<Self::Unmount>>)>;
+        num_workers: usize,
+    ) -> Result<(
+        Self::SharedConn,
+        impl Future<Output = Result<Self::Unmount>>,
+    )>;
 }
 
 pub trait Unmount: 'static {
+    type SharedConn: SharedConnection<Bound = Self::Conn>;
+    type Conn: Connection;
+
+    async fn unmount_shared(
+        self,
+        conn: &Self::SharedConn,
+        mountpoint: &Path,
+        options: &[MountOpt],
+    ) -> Result<()>;
+
     async fn unmount(
         self,
-        dev: BorrowedFd<'_>,
+        conn: &Self::Conn,
         mountpoint: &Path,
         options: &[MountOpt],
     ) -> Result<()>;

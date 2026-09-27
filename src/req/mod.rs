@@ -94,14 +94,17 @@ pub use xattr_keys::XattrKeysReq;
 pub use xattr_keys_len::XattrKeysLenReq;
 
 #[derive(Clone)]
-pub struct Req {
-    ctx: Context,
+pub struct Req<C> {
+    ctx: Context<C>,
     token: CancelToken,
     req: Request,
 }
 
-impl Req {
-    pub(crate) fn new<F, U>(server: &Server<F, U>, token: CancelToken, req: Request) -> Self {
+impl<C> Req<C> {
+    pub(crate) fn new<F, U>(server: &Server<F, U>, token: CancelToken, req: Request) -> Self
+    where
+        U: crate::mount::Unmount<Conn = C>,
+    {
         Self {
             ctx: Context::new(server.inner.clone()),
             token,
@@ -109,7 +112,7 @@ impl Req {
         }
     }
 
-    pub fn context(&self) -> &Context {
+    pub fn context(&self) -> &Context<C> {
         &self.ctx
     }
 
@@ -154,14 +157,14 @@ impl Req {
     }
 }
 
-impl std::fmt::Debug for Req {
+impl<C> std::fmt::Debug for Req<C> {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         std::fmt::Debug::fmt(&self.req, f)
     }
 }
 
-impl std::ops::Deref for Req {
-    type Target = Context;
+impl<C> std::ops::Deref for Req<C> {
+    type Target = Context<C>;
 
     fn deref(&self) -> &Self::Target {
         &self.ctx

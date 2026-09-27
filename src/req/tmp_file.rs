@@ -3,17 +3,17 @@ use crate::proto::request::TmpFile;
 use crate::types::{Ino, Mode, OFlag};
 
 #[derive(Debug)]
-pub struct TmpFileReq {
-    req: Req,
+pub struct TmpFileReq<C> {
+    req: Req<C>,
     create: TmpFile,
 }
 
-impl TmpFileReq {
-    pub(crate) fn new(req: Req, create: TmpFile) -> Self {
+impl<C> TmpFileReq<C> {
+    pub(crate) fn new(req: Req<C>, create: TmpFile) -> Self {
         Self { req, create }
     }
 
-    pub fn req(&self) -> &Req {
+    pub fn req(&self) -> &Req<C> {
         &self.req
     }
 
@@ -38,8 +38,8 @@ impl TmpFileReq {
     }
 }
 
-impl std::ops::Deref for TmpFileReq {
-    type Target = Req;
+impl<C> std::ops::Deref for TmpFileReq<C> {
+    type Target = Req<C>;
 
     fn deref(&self) -> &Self::Target {
         &self.req

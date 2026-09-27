@@ -3,17 +3,17 @@ use crate::proto::request::Monitor;
 use crate::types::Ino;
 
 #[derive(Debug)]
-pub struct MonitorReq {
-    req: Req,
+pub struct MonitorReq<C> {
+    req: Req<C>,
     monitor: Monitor,
 }
 
-impl MonitorReq {
-    pub(crate) fn new(req: Req, monitor: Monitor) -> Self {
+impl<C> MonitorReq<C> {
+    pub(crate) fn new(req: Req<C>, monitor: Monitor) -> Self {
         Self { req, monitor }
     }
 
-    pub fn req(&self) -> &Req {
+    pub fn req(&self) -> &Req<C> {
         &self.req
     }
 
@@ -30,8 +30,8 @@ impl MonitorReq {
     }
 }
 
-impl std::ops::Deref for MonitorReq {
-    type Target = Req;
+impl<C> std::ops::Deref for MonitorReq<C> {
+    type Target = Req<C>;
 
     fn deref(&self) -> &Self::Target {
         &self.req

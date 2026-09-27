@@ -5,17 +5,17 @@ use crate::types::{DeviceNumber, Ino, InodeKind, Mode};
 use std::ffi::OsStr;
 
 #[derive(Debug)]
-pub struct MakeNodeReq {
-    req: Req,
+pub struct MakeNodeReq<C> {
+    req: Req<C>,
     mknod: MkNod,
 }
 
-impl MakeNodeReq {
-    pub(crate) fn new(req: Req, mknod: MkNod) -> Self {
+impl<C> MakeNodeReq<C> {
+    pub(crate) fn new(req: Req<C>, mknod: MkNod) -> Self {
         Self { req, mknod }
     }
 
-    pub fn req(&self) -> &Req {
+    pub fn req(&self) -> &Req<C> {
         &self.req
     }
 
@@ -44,8 +44,8 @@ impl MakeNodeReq {
     }
 }
 
-impl std::ops::Deref for MakeNodeReq {
-    type Target = Req;
+impl<C> std::ops::Deref for MakeNodeReq<C> {
+    type Target = Req<C>;
 
     fn deref(&self) -> &Self::Target {
         &self.req

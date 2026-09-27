@@ -14,8 +14,8 @@ use std::ffi::OsStr;
 use std::os::unix::ffi::OsStrExt;
 
 #[derive(Debug)]
-pub struct ReadDirPlusReq {
-    req: Req,
+pub struct ReadDirPlusReq<C> {
+    req: Req<C>,
     readdir: ReadDirPlus,
 }
 
@@ -39,12 +39,12 @@ pub struct RawDirEntryPlus {
     dirent: RawDirEntry,
 }
 
-impl ReadDirPlusReq {
-    pub(crate) fn new(req: Req, readdir: ReadDirPlus) -> Self {
+impl<C> ReadDirPlusReq<C> {
+    pub(crate) fn new(req: Req<C>, readdir: ReadDirPlus) -> Self {
         Self { req, readdir }
     }
 
-    pub fn req(&self) -> &Req {
+    pub fn req(&self) -> &Req<C> {
         &self.req
     }
 
@@ -103,8 +103,8 @@ impl ReadDirPlusReq {
     }
 }
 
-impl std::ops::Deref for ReadDirPlusReq {
-    type Target = Req;
+impl<C> std::ops::Deref for ReadDirPlusReq<C> {
+    type Target = Req<C>;
 
     fn deref(&self) -> &Self::Target {
         &self.req

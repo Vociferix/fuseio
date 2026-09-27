@@ -3,17 +3,17 @@ use crate::proto::request::Ioctl;
 use crate::types::{Abi, FileHandle, Ino, IoctlCmd, IoctlFlags};
 
 #[derive(Debug)]
-pub struct IoctlReq {
-    req: Req,
+pub struct IoctlReq<C> {
+    req: Req<C>,
     ioctl: Ioctl,
 }
 
-impl IoctlReq {
-    pub(crate) fn new(req: Req, ioctl: Ioctl) -> Self {
+impl<C> IoctlReq<C> {
+    pub(crate) fn new(req: Req<C>, ioctl: Ioctl) -> Self {
         Self { req, ioctl }
     }
 
-    pub fn req(&self) -> &Req {
+    pub fn req(&self) -> &Req<C> {
         &self.req
     }
 
@@ -90,8 +90,8 @@ impl IoctlReq {
     }
 }
 
-impl std::ops::Deref for IoctlReq {
-    type Target = Req;
+impl<C> std::ops::Deref for IoctlReq<C> {
+    type Target = Req<C>;
 
     fn deref(&self) -> &Self::Target {
         &self.req

@@ -3,17 +3,17 @@ use crate::proto::request::ReadLink;
 use crate::types::Ino;
 
 #[derive(Debug)]
-pub struct ReadLinkReq {
-    req: Req,
+pub struct ReadLinkReq<C> {
+    req: Req<C>,
     read_link: ReadLink,
 }
 
-impl ReadLinkReq {
-    pub(crate) fn new(req: Req, read_link: ReadLink) -> Self {
+impl<C> ReadLinkReq<C> {
+    pub(crate) fn new(req: Req<C>, read_link: ReadLink) -> Self {
         Self { req, read_link }
     }
 
-    pub fn req(&self) -> &Req {
+    pub fn req(&self) -> &Req<C> {
         &self.req
     }
 
@@ -22,8 +22,8 @@ impl ReadLinkReq {
     }
 }
 
-impl std::ops::Deref for ReadLinkReq {
-    type Target = Req;
+impl<C> std::ops::Deref for ReadLinkReq<C> {
+    type Target = Req<C>;
 
     fn deref(&self) -> &Self::Target {
         &self.req

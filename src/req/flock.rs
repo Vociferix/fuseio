@@ -3,17 +3,17 @@ use crate::proto::request::SetLk;
 use crate::types::{FileHandle, Ino, LockKind, LockOwner, Tgid};
 
 #[derive(Debug)]
-pub struct FlockReq {
-    req: Req,
+pub struct FlockReq<C> {
+    req: Req<C>,
     setlk: SetLk,
 }
 
-impl FlockReq {
-    pub(crate) fn new(req: Req, setlk: SetLk) -> Self {
+impl<C> FlockReq<C> {
+    pub(crate) fn new(req: Req<C>, setlk: SetLk) -> Self {
         Self { req, setlk }
     }
 
-    pub fn req(&self) -> &Req {
+    pub fn req(&self) -> &Req<C> {
         &self.req
     }
 
@@ -42,8 +42,8 @@ impl FlockReq {
     }
 }
 
-impl std::ops::Deref for FlockReq {
-    type Target = Req;
+impl<C> std::ops::Deref for FlockReq<C> {
+    type Target = Req<C>;
 
     fn deref(&self) -> &Self::Target {
         &self.req

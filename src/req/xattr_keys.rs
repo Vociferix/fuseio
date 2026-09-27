@@ -1,5 +1,5 @@
 use super::Req;
-use crate::buf::{Buf, BufPool};
+use crate::buf::Buf;
 use crate::proto::{request::ListXattr, response::Data};
 use crate::types::Ino;
 use crate::{Error, Result};
@@ -10,8 +10,8 @@ use std::ffi::OsStr;
 use std::os::unix::ffi::OsStrExt;
 
 #[derive(Debug)]
-pub struct XattrKeysReq {
-    req: Req,
+pub struct XattrKeysReq<C> {
+    req: Req<C>,
     listxattr: ListXattr,
 }
 
@@ -21,12 +21,12 @@ pub struct XattrKeyBuf {
     pub(crate) buf: Buf,
 }
 
-impl XattrKeysReq {
-    pub(crate) fn new(req: Req, listxattr: ListXattr) -> Self {
+impl<C> XattrKeysReq<C> {
+    pub(crate) fn new(req: Req<C>, listxattr: ListXattr) -> Self {
         Self { req, listxattr }
     }
 
-    pub fn req(&self) -> &Req {
+    pub fn req(&self) -> &Req<C> {
         &self.req
     }
 
@@ -89,8 +89,8 @@ impl XattrKeysReq {
     }
 }
 
-impl std::ops::Deref for XattrKeysReq {
-    type Target = Req;
+impl<C> std::ops::Deref for XattrKeysReq<C> {
+    type Target = Req<C>;
 
     fn deref(&self) -> &Self::Target {
         &self.req

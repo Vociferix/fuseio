@@ -1,12 +1,11 @@
-use crate::async_arc::AsyncArc;
 use crate::builder::MountOptList;
-use crate::dev_fuse::{DevFuse, FuseChannel};
+use crate::conn::SharedConnection;
 use crate::handshake::{Config, Init, handshake};
 use crate::server::{Message, Server};
-use crate::types::{ReplyInitFlags, Version};
+use crate::types::ReplyInitFlags;
 use crate::{
-    Builder, MountOpt,
-    fs::{BindFs, Fs, MountFs},
+    Builder,
+    fs::{BindFs, MountFs},
     mount::{Mount, Unmount},
 };
 
@@ -17,17 +16,15 @@ use crossfire::{
 
 use std::io::Result;
 use std::mem::ManuallyDrop;
-use std::os::fd::AsFd;
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 use std::sync::Arc;
 
-pub struct Handle<F, U> {
+pub struct Handle<F, U: Unmount> {
     pub(crate) id: usize,
-    pub(crate) dev: DevFuse,
+    pub(crate) conn: U::SharedConn,
     pub(crate) fs: F,
     pub(crate) minor_ver: u32,
     pub(crate) flags: ReplyInitFlags,
-    pub(crate) max_readahead: usize,
     pub(crate) mesh_rx: AsyncRx<Array<Message>>,
     pub(crate) mesh_tx: Arc<[MAsyncTx<Array<Message>>]>,
     pub(crate) config: Config,
@@ -41,11 +38,10 @@ pub struct UnmountHandle {
 
 pub struct HandleIter<F, U: Unmount> {
     id: usize,
-    devs: std::vec::IntoIter<(DevFuse, AsyncRx<Array<Message>>)>,
+    conns: std::vec::IntoIter<(U::SharedConn, AsyncRx<Array<Message>>)>,
     fs: ManuallyDrop<F>,
     minor_ver: u32,
     flags: ReplyInitFlags,
-    max_readahead: usize,
     mesh_tx: Arc<[MAsyncTx<Array<Message>>]>,
     config: Config,
     once: Option<Once<U>>,
@@ -64,7 +60,7 @@ pub async fn multi_mount<M, F>(
 ) -> Result<HandleIter<F::Fs, M::Unmount>>
 where
     M: Mount,
-    F: MountFs,
+    F: MountFs<M::Conn>,
 {
     let (mounter, opts, workers) = builder.into_args();
 
@@ -75,12 +71,10 @@ where
         ));
     }
 
-    let (dev_fd, unmounter) = mounter.mount(&mountpoint, opts.as_ref()).await?;
-
-    let dev = AsyncArc::new(DevFuse::new(dev_fd));
+    let (conn, unmounter) = mounter.mount(&mountpoint, opts.as_ref(), workers).await?;
 
     let (init_res, unmounter) = {
-        let mut handshake_fut = std::pin::pin!(handshake(fs, dev.clone(), opts.as_ref()));
+        let mut handshake_fut = std::pin::pin!(handshake(fs, &conn, opts.as_ref()));
         let mut unmounter_fut = std::pin::pin!(unmounter);
 
         match crate::select_biased(unmounter_fut.as_mut(), handshake_fut.as_mut()).await {
@@ -94,47 +88,43 @@ where
         fs,
         ver,
         flags,
-        max_readahead,
         config,
     } = match init_res {
         Ok(init) => init,
         Err(err) => {
             let _ = unmounter
-                .unmount(dev.as_fd(), mountpoint.as_ref(), opts.as_ref())
+                .unmount_shared(&conn, mountpoint.as_ref(), opts.as_ref())
                 .await;
             return Err(err);
         }
     };
 
-    let dev = AsyncArc::unwrap(dev).await;
-
-    let mut devs = Vec::with_capacity(workers);
+    let mut conns = Vec::with_capacity(workers);
     let mut mesh_tx = Vec::with_capacity(workers);
     for _ in 1..workers {
-        let dev = match dev.try_clone().await {
-            Ok(dev) => dev,
+        let conn = match conn.try_clone().await {
+            Ok(conn) => conn,
             Err(err) => {
                 let _ = unmounter
-                    .unmount(dev.as_fd(), mountpoint.as_ref(), opts.as_ref())
+                    .unmount_shared(&conn, mountpoint.as_ref(), opts.as_ref())
                     .await;
                 return Err(err);
             }
         };
         let (tx, rx) = bounded_async(workers * 4);
-        devs.push((dev, rx));
+        conns.push((conn, rx));
         mesh_tx.push(tx);
     }
     let (tx, rx) = bounded_async(workers * 4);
-    devs.push((dev, rx));
+    conns.push((conn, rx));
     mesh_tx.push(tx);
 
     Ok(HandleIter {
         id: 0,
-        devs: devs.into_iter(),
+        conns: conns.into_iter(),
         fs: ManuallyDrop::new(fs),
         minor_ver: ver.1,
         flags,
-        max_readahead,
         mesh_tx: mesh_tx.into(),
         config,
         once: Some(Once {
@@ -147,7 +137,7 @@ where
 
 impl<F, U> Handle<F, U>
 where
-    F: BindFs,
+    F: BindFs<U::Conn>,
     U: Unmount,
 {
     pub async fn bind_and_serve(self) -> Result<()> {
@@ -182,9 +172,9 @@ where
         let id = self.id;
         self.id += 1;
 
-        let (dev, rx) = self.devs.next()?;
+        let (conn, rx) = self.conns.next()?;
 
-        let fs = if self.devs.len() == 0 {
+        let fs = if self.conns.len() == 0 {
             unsafe { ManuallyDrop::take(&mut self.fs) }
         } else {
             (*self.fs).clone()
@@ -192,11 +182,10 @@ where
 
         Some(Handle {
             id,
-            dev,
+            conn,
             fs,
             minor_ver: self.minor_ver,
             flags: self.flags,
-            max_readahead: self.max_readahead,
             mesh_rx: rx,
             mesh_tx: self.mesh_tx.clone(),
             config: self.config,
@@ -205,7 +194,7 @@ where
     }
 
     fn size_hint(&self) -> (usize, Option<usize>) {
-        self.devs.size_hint()
+        self.conns.size_hint()
     }
 }
 
@@ -215,7 +204,7 @@ where
     U: Unmount,
 {
     fn len(&self) -> usize {
-        self.devs.len()
+        self.conns.len()
     }
 }
 
@@ -231,7 +220,7 @@ where
     U: Unmount,
 {
     fn drop(&mut self) {
-        if let Some((dev, _)) = self.devs.next() {
+        if let Some((conn, _)) = self.conns.next() {
             unsafe {
                 ManuallyDrop::drop(&mut self.fs);
             }
@@ -240,7 +229,7 @@ where
                 compio::runtime::spawn(async move {
                     let _ = once
                         .unmount
-                        .unmount(dev.as_fd(), &once.path, &once.opts)
+                        .unmount_shared(&conn, &once.path, &once.opts)
                         .await;
                 })
                 .detach();

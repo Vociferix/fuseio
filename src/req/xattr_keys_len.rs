@@ -1,5 +1,4 @@
 use super::Req;
-use crate::buf::Buf;
 use crate::proto::request::ListXattr;
 use crate::types::Ino;
 use crate::{Error, Result};
@@ -7,8 +6,8 @@ use crate::{Error, Result};
 use futures_util::{Stream, StreamExt};
 
 #[derive(Debug)]
-pub struct XattrKeysLenReq {
-    req: Req,
+pub struct XattrKeysLenReq<C> {
+    req: Req<C>,
     listxattr: ListXattr,
 }
 
@@ -17,12 +16,12 @@ pub struct XattrKeyLenBuf {
     pub(crate) len: u32,
 }
 
-impl XattrKeysLenReq {
-    pub(crate) fn new(req: Req, listxattr: ListXattr) -> Self {
+impl<C> XattrKeysLenReq<C> {
+    pub(crate) fn new(req: Req<C>, listxattr: ListXattr) -> Self {
         Self { req, listxattr }
     }
 
-    pub fn req(&self) -> &Req {
+    pub fn req(&self) -> &Req<C> {
         &self.req
     }
 
@@ -35,8 +34,8 @@ impl XattrKeysLenReq {
     }
 }
 
-impl std::ops::Deref for XattrKeysLenReq {
-    type Target = Req;
+impl<C> std::ops::Deref for XattrKeysLenReq<C> {
+    type Target = Req<C>;
 
     fn deref(&self) -> &Self::Target {
         &self.req

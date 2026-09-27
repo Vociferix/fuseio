@@ -1,5 +1,8 @@
 use super::{Mount, Unmount};
 use crate::MountOpt;
+use crate::conn::{DevFuseConn, DevFuseSharedConn};
+
+use compio::buf::{BufResult, IoBuf, IoBufMut, IoVectoredBuf};
 
 use std::borrow::Cow;
 use std::io::Result;
@@ -69,19 +72,42 @@ impl<P: AsRef<Path>> From<P> for MountFuseFs {
 }
 
 impl Mount for MountFuseFs {
+    type SharedConn = DevFuseSharedConn;
+    type Conn = DevFuseConn;
     type Unmount = MountFuseFsUnmount;
 
     async fn mount(
         &self,
-        mount: &Path,
+        mountpoint: &Path,
         options: &[MountOpt],
-    ) -> Result<(OwnedFd, impl Future<Output = Result<Self::Unmount>>)> {
+        num_workers: usize, //< advisory
+    ) -> Result<(
+        Self::SharedConn,
+        impl Future<Output = Result<Self::Unmount>>,
+    )> {
         Ok((todo!(), std::future::ready(todo!())))
     }
 }
 
 impl Unmount for MountFuseFsUnmount {
-    async fn unmount(self, dev: BorrowedFd<'_>, mount: &Path, options: &[MountOpt]) -> Result<()> {
+    type SharedConn = DevFuseSharedConn;
+    type Conn = DevFuseConn;
+
+    async fn unmount(
+        self,
+        conn: &Self::Conn,
+        mountpoint: &Path,
+        options: &[MountOpt],
+    ) -> Result<()> {
+        todo!()
+    }
+
+    async fn unmount_shared(
+        self,
+        conn: &Self::SharedConn,
+        mountpoint: &Path,
+        options: &[MountOpt],
+    ) -> Result<()> {
         todo!()
     }
 }

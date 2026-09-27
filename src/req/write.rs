@@ -3,17 +3,17 @@ use crate::proto::request::Write;
 use crate::types::{FileHandle, Ino, LockOwner, OFlag};
 
 #[derive(Debug)]
-pub struct WriteReq {
-    req: Req,
+pub struct WriteReq<C> {
+    req: Req<C>,
     write: Write,
 }
 
-impl WriteReq {
-    pub(crate) fn new(req: Req, write: Write) -> Self {
+impl<C> WriteReq<C> {
+    pub(crate) fn new(req: Req<C>, write: Write) -> Self {
         Self { req, write }
     }
 
-    pub fn req(&self) -> &Req {
+    pub fn req(&self) -> &Req<C> {
         &self.req
     }
 
@@ -50,8 +50,8 @@ impl WriteReq {
     }
 }
 
-impl std::ops::Deref for WriteReq {
-    type Target = Req;
+impl<C> std::ops::Deref for WriteReq<C> {
+    type Target = Req<C>;
 
     fn deref(&self) -> &Self::Target {
         &self.req

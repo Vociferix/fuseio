@@ -3,20 +3,20 @@ use crate::proto::request::CopyFileRange;
 use crate::types::CopyFileRangePos;
 
 #[derive(Debug)]
-pub struct CopyFileRangeReq {
-    req: Req,
+pub struct CopyFileRangeReq<C> {
+    req: Req<C>,
     copy_file_range: CopyFileRange,
 }
 
-impl CopyFileRangeReq {
-    pub(crate) fn new(req: Req, copy_file_range: CopyFileRange) -> Self {
+impl<C> CopyFileRangeReq<C> {
+    pub(crate) fn new(req: Req<C>, copy_file_range: CopyFileRange) -> Self {
         Self {
             req,
             copy_file_range,
         }
     }
 
-    pub fn req(&self) -> &Req {
+    pub fn req(&self) -> &Req<C> {
         &self.req
     }
 
@@ -33,8 +33,8 @@ impl CopyFileRangeReq {
     }
 }
 
-impl std::ops::Deref for CopyFileRangeReq {
-    type Target = Req;
+impl<C> std::ops::Deref for CopyFileRangeReq<C> {
+    type Target = Req<C>;
 
     fn deref(&self) -> &Self::Target {
         &self.req

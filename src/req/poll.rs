@@ -1,27 +1,26 @@
 use super::Req;
+use crate::conn::Connection;
 use crate::context::Context;
-use crate::dev_fuse::FuseChannel;
-use crate::proto::{Cfg, notify::EncodeNotify, request::Poll};
+use crate::proto::{notify::EncodeNotify, request::Poll};
 use crate::types::{FileHandle, Ino, PollFlags};
 
 use std::cell::Cell;
-use std::rc::Rc;
 
 #[derive(Debug)]
-pub struct PollReq {
-    req: Req,
+pub struct PollReq<C> {
+    req: Req<C>,
     poll: Poll,
     handle_taken: Cell<bool>,
 }
 
 #[derive(Debug)]
-pub struct PollNotify {
+pub struct PollNotify<C> {
     id: u64,
-    ctx: Context,
+    ctx: Context<C>,
 }
 
-impl PollReq {
-    pub(crate) fn new(req: Req, poll: Poll) -> Self {
+impl<C> PollReq<C> {
+    pub(crate) fn new(req: Req<C>, poll: Poll) -> Self {
         Self {
             req,
             poll,
@@ -29,7 +28,7 @@ impl PollReq {
         }
     }
 
-    pub fn req(&self) -> &Req {
+    pub fn req(&self) -> &Req<C> {
         &self.req
     }
 
@@ -41,7 +40,7 @@ impl PollReq {
         self.poll.file_handle()
     }
 
-    pub fn poll_handle(&self) -> Option<PollNotify> {
+    pub fn poll_handle(&self) -> Option<PollNotify<C>> {
         if self.handle_taken.replace(true) {
             return None;
         }
@@ -53,30 +52,28 @@ impl PollReq {
     }
 }
 
-impl std::ops::Deref for PollReq {
-    type Target = Req;
+impl<C> std::ops::Deref for PollReq<C> {
+    type Target = Req<C>;
 
     fn deref(&self) -> &Self::Target {
         &self.req
     }
 }
 
-impl PollNotify {
-    pub(crate) fn new(req: &PollReq, id: u64) -> Self {
+impl<C> PollNotify<C> {
+    pub(crate) fn new(req: &PollReq<C>, id: u64) -> Self {
         Self {
             id,
             ctx: req.ctx.clone(),
         }
     }
+}
 
-    pub async fn notify(self) -> crate::Result<()> {
+impl<C: Connection> PollNotify<C> {
+    pub async fn notify(self) -> Result<(), crate::fs::types::NotifyError> {
         let Self { id, ctx } = self;
 
-        ctx.dev()
-            .write_buf(crate::proto::notify::Poll::new(id).encode(ctx.cfg())?)
+        ctx.send_notif(crate::proto::notify::Poll::new(id).encode(ctx.cfg())?)
             .await
-            .0?;
-
-        Ok(())
     }
 }

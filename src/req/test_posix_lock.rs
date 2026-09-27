@@ -3,17 +3,17 @@ use crate::proto::request::GetLk;
 use crate::types::{FileHandle, FileRange, Ino, LockKind, LockOwner, Tgid};
 
 #[derive(Debug)]
-pub struct TestPosixLockReq {
-    req: Req,
+pub struct TestPosixLockReq<C> {
+    req: Req<C>,
     getlk: GetLk,
 }
 
-impl TestPosixLockReq {
-    pub(crate) fn new(req: Req, getlk: GetLk) -> Self {
+impl<C> TestPosixLockReq<C> {
+    pub(crate) fn new(req: Req<C>, getlk: GetLk) -> Self {
         Self { req, getlk }
     }
 
-    pub fn req(&self) -> &Req {
+    pub fn req(&self) -> &Req<C> {
         &self.req
     }
 
@@ -44,8 +44,8 @@ impl TestPosixLockReq {
     }
 }
 
-impl std::ops::Deref for TestPosixLockReq {
-    type Target = Req;
+impl<C> std::ops::Deref for TestPosixLockReq<C> {
+    type Target = Req<C>;
 
     fn deref(&self) -> &Self::Target {
         &self.req

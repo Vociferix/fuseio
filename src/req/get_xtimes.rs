@@ -3,17 +3,17 @@ use crate::proto::request::GetXtimes;
 use crate::types::Ino;
 
 #[derive(Debug)]
-pub struct GetXTimesReq {
-    req: Req,
+pub struct GetXTimesReq<C> {
+    req: Req<C>,
     getxtimes: GetXtimes,
 }
 
-impl GetXTimesReq {
-    pub(crate) fn new(req: Req, getxtimes: GetXtimes) -> Self {
+impl<C> GetXTimesReq<C> {
+    pub(crate) fn new(req: Req<C>, getxtimes: GetXtimes) -> Self {
         Self { req, getxtimes }
     }
 
-    pub fn req(&self) -> &Req {
+    pub fn req(&self) -> &Req<C> {
         &self.req
     }
 
@@ -22,8 +22,8 @@ impl GetXTimesReq {
     }
 }
 
-impl std::ops::Deref for GetXTimesReq {
-    type Target = Req;
+impl<C> std::ops::Deref for GetXTimesReq<C> {
+    type Target = Req<C>;
 
     fn deref(&self) -> &Self::Target {
         &self.req

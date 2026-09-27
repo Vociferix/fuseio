@@ -15,7 +15,7 @@ pub struct Builder<M = DefaultMount> {
     subtype: Option<OsString>,
     max_read: Option<usize>,
     blksize: Option<usize>,
-    workers: usize,
+    pub(crate) workers: usize,
 }
 
 bitflags::bitflags! {
@@ -164,9 +164,19 @@ impl<M: Mount> Builder<M> {
         mountpoint: impl AsRef<Path>,
     ) -> std::io::Result<crate::handle::HandleIter<F::Fs, M::Unmount>>
     where
-        F: crate::fs::MountFs,
+        F: crate::fs::MountFs<M::Conn>,
     {
         crate::handle::multi_mount(self, fs, mountpoint.as_ref().into()).await
+    }
+
+    pub fn mount_blocking<F>(self, fs: F, mountpoint: impl AsRef<Path>) -> std::io::Result<()>
+    where
+        F: crate::fs::MountFs<M::Conn>,
+        M::Unmount: Send,
+        M::SharedConn: Send,
+        F::Fs: Clone + Send + 'static,
+    {
+        crate::mount_blocking(self, fs, mountpoint)
     }
 }
 

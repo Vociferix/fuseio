@@ -5,17 +5,17 @@ use crate::types::Ino;
 use std::ffi::OsStr;
 
 #[derive(Debug)]
-pub struct LookupReq {
-    req: Req,
+pub struct LookupReq<C> {
+    req: Req<C>,
     lookup: Lookup,
 }
 
-impl LookupReq {
-    pub(crate) fn new(req: Req, lookup: Lookup) -> Self {
+impl<C> LookupReq<C> {
+    pub(crate) fn new(req: Req<C>, lookup: Lookup) -> Self {
         Self { req, lookup }
     }
 
-    pub fn req(&self) -> &Req {
+    pub fn req(&self) -> &Req<C> {
         &self.req
     }
 
@@ -28,8 +28,8 @@ impl LookupReq {
     }
 }
 
-impl std::ops::Deref for LookupReq {
-    type Target = Req;
+impl<C> std::ops::Deref for LookupReq<C> {
+    type Target = Req<C>;
 
     fn deref(&self) -> &Self::Target {
         &self.req

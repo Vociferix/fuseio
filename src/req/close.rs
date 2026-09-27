@@ -3,17 +3,17 @@ use crate::proto::request::Release;
 use crate::types::{FileHandle, Ino, LockOwner, OFlag};
 
 #[derive(Debug)]
-pub struct CloseReq {
-    req: Req,
+pub struct CloseReq<C> {
+    req: Req<C>,
     release: Release,
 }
 
-impl CloseReq {
-    pub(crate) fn new(req: Req, release: Release) -> Self {
+impl<C> CloseReq<C> {
+    pub(crate) fn new(req: Req<C>, release: Release) -> Self {
         Self { req, release }
     }
 
-    pub fn req(&self) -> &Req {
+    pub fn req(&self) -> &Req<C> {
         &self.req
     }
 
@@ -42,8 +42,8 @@ impl CloseReq {
     }
 }
 
-impl std::ops::Deref for CloseReq {
-    type Target = Req;
+impl<C> std::ops::Deref for CloseReq<C> {
+    type Target = Req<C>;
 
     fn deref(&self) -> &Self::Target {
         &self.req

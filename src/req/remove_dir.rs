@@ -5,17 +5,17 @@ use crate::types::Ino;
 use std::ffi::OsStr;
 
 #[derive(Debug)]
-pub struct RemoveDirReq {
-    req: Req,
+pub struct RemoveDirReq<C> {
+    req: Req<C>,
     rmdir: RmDir,
 }
 
-impl RemoveDirReq {
-    pub(crate) fn new(req: Req, rmdir: RmDir) -> Self {
+impl<C> RemoveDirReq<C> {
+    pub(crate) fn new(req: Req<C>, rmdir: RmDir) -> Self {
         Self { req, rmdir }
     }
 
-    pub fn req(&self) -> &Req {
+    pub fn req(&self) -> &Req<C> {
         &self.req
     }
 
@@ -28,8 +28,8 @@ impl RemoveDirReq {
     }
 }
 
-impl std::ops::Deref for RemoveDirReq {
-    type Target = Req;
+impl<C> std::ops::Deref for RemoveDirReq<C> {
+    type Target = Req<C>;
 
     fn deref(&self) -> &Self::Target {
         &self.req

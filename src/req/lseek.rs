@@ -3,17 +3,17 @@ use crate::proto::request::Lseek;
 use crate::types::{FileHandle, Ino, Whence};
 
 #[derive(Debug)]
-pub struct LseekReq {
-    req: Req,
+pub struct LseekReq<C> {
+    req: Req<C>,
     lseek: Lseek,
 }
 
-impl LseekReq {
-    pub(crate) fn new(req: Req, lseek: Lseek) -> Self {
+impl<C> LseekReq<C> {
+    pub(crate) fn new(req: Req<C>, lseek: Lseek) -> Self {
         Self { req, lseek }
     }
 
-    pub fn req(&self) -> &Req {
+    pub fn req(&self) -> &Req<C> {
         &self.req
     }
 
@@ -34,8 +34,8 @@ impl LseekReq {
     }
 }
 
-impl std::ops::Deref for LseekReq {
-    type Target = Req;
+impl<C> std::ops::Deref for LseekReq<C> {
+    type Target = Req<C>;
 
     fn deref(&self) -> &Self::Target {
         &self.req

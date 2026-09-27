@@ -1,8 +1,11 @@
 use super::{Mount, Unmount};
 use crate::MountOpt;
+use crate::conn::{DevFuseConn, DevFuseSharedConn};
+
+use compio::buf::{BufResult, IoBuf, IoBufMut, IoVectoredBuf};
 
 use std::io::Result;
-use std::os::fd::{BorrowedFd, OwnedFd};
+use std::os::fd::AsFd;
 use std::path::Path;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Default)]
@@ -14,19 +17,42 @@ pub struct DefaultUnmount {
 }
 
 impl Mount for DefaultMount {
+    type SharedConn = DevFuseSharedConn;
+    type Conn = DevFuseConn;
     type Unmount = DefaultUnmount;
 
     async fn mount(
         &self,
-        mount: &Path,
+        mountpoint: &Path,
         options: &[MountOpt],
-    ) -> Result<(OwnedFd, impl Future<Output = Result<Self::Unmount>>)> {
-        Ok((todo!(), std::future::ready(Ok(todo!()))))
+        num_workers: usize,
+    ) -> Result<(
+        Self::SharedConn,
+        impl Future<Output = Result<Self::Unmount>>,
+    )> {
+        Ok((todo!(), std::future::ready(todo!())))
     }
 }
 
 impl Unmount for DefaultUnmount {
-    async fn unmount(self, dev: BorrowedFd<'_>, mount: &Path, options: &[MountOpt]) -> Result<()> {
+    type SharedConn = DevFuseSharedConn;
+    type Conn = DevFuseConn;
+
+    async fn unmount(
+        self,
+        conn: &Self::Conn,
+        mountpoint: &Path,
+        options: &[MountOpt],
+    ) -> Result<()> {
+        todo!()
+    }
+
+    async fn unmount_shared(
+        self,
+        conn: &Self::SharedConn,
+        mountpoint: &Path,
+        options: &[MountOpt],
+    ) -> Result<()> {
         todo!()
     }
 }

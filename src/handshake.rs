@@ -1,13 +1,11 @@
 use crate::MountOpt;
-use crate::async_arc::AsyncArc;
-use crate::dev_fuse::DevFuse;
+use crate::conn::{SharedConnection, TokenGuard};
 use crate::fs::{BindFs, MountFs};
 use crate::proto::request::Opcode;
 use crate::types::{FsCaps, KernelCaps, KernelInitFlags, ReplyInitFlags, Version};
 
 use std::io::{ErrorKind, Result};
 use std::mem::size_of;
-use std::os::fd::AsFd;
 use std::time::Duration;
 
 #[derive(Debug, Clone, Copy)]
@@ -32,7 +30,6 @@ pub struct Init<F> {
     pub fs: F,
     pub ver: Version,
     pub flags: ReplyInitFlags,
-    pub max_readahead: usize,
     pub config: Config,
 }
 
@@ -272,13 +269,13 @@ impl Config {
     }
 }
 
-pub async fn handshake<F: MountFs>(
-    fs: F,
-    dev: AsyncArc<DevFuse>,
-    opts: &[MountOpt],
-) -> Result<Init<F::Fs>> {
-    let msg = loop {
-        let msg = read_init_req(dev.clone()).await?;
+pub async fn handshake<F, C>(fs: F, conn: &C, opts: &[MountOpt]) -> Result<Init<F::Fs>>
+where
+    F: MountFs<C::Bound>,
+    C: SharedConnection,
+{
+    let (msg, token) = loop {
+        let (msg, token) = read_init_req(conn).await?;
 
         // TODO: every 7.x minor is accepted, but several compat paths for old
         // minors are wrong: the <7.9 entry/attr reply sizes (`InodeAttrsCompat`
@@ -293,7 +290,7 @@ pub async fn handshake<F: MountFs>(
             || (msg.hdr.len as usize) < min_len
             || msg.major < MAJOR_VER
         {
-            let _ = write_init_err(dev.clone(), msg.hdr.unique, crate::Error::EPROTO).await;
+            let _ = write_init_err(conn, token, msg.hdr.unique, crate::Error::EPROTO).await;
 
             if msg.hdr.opcode != Opcode::INIT {
                 log::error!(
@@ -323,7 +320,8 @@ pub async fn handshake<F: MountFs>(
         // Reply with our version and wait for the kernel to retry with 7.x.
         if msg.major > MAJOR_VER {
             write_init_resp(
-                dev.clone(),
+                conn,
+                token,
                 InitRespRaw {
                     hdr: RespHdr {
                         len: const { size_of::<InitRespRaw>() as u32 },
@@ -339,7 +337,7 @@ pub async fn handshake<F: MountFs>(
             continue;
         }
 
-        break msg;
+        break (msg, token);
     };
 
     let unique = msg.hdr.unique;
@@ -363,7 +361,7 @@ pub async fn handshake<F: MountFs>(
         Ok(fs) => fs,
         Err(err) => {
             log::error!("failed to initialize filesystem: {err}");
-            let _ = write_init_err(dev.clone(), unique, err).await;
+            let _ = write_init_err(conn, token, unique, err).await;
             return Err(err.into());
         }
     };
@@ -377,7 +375,7 @@ pub async fn handshake<F: MountFs>(
 
     let unsupported = config.caps.unsupported(kconf.caps);
     if !unsupported.is_empty() {
-        let _ = write_init_err(dev.clone(), unique, crate::Error::EPROTO).await;
+        let _ = write_init_err(conn, token, unique, crate::Error::EPROTO).await;
 
         log::error!("filsystem enabled capabilities the kernel didn't offer: {unsupported:?}");
 
@@ -441,7 +439,7 @@ pub async fn handshake<F: MountFs>(
     };
     resp.hdr.len = (size_of::<RespHdr>() + body_len) as u32;
 
-    write_init_resp(dev, resp).await?;
+    write_init_resp(conn, token, resp).await?;
 
     let ver = Version(MAJOR_VER, msg.minor.min(MINOR_VER));
 
@@ -451,32 +449,69 @@ pub async fn handshake<F: MountFs>(
         fs,
         ver,
         flags,
-        max_readahead: max_readahead as usize,
         config,
     })
 }
 
-async fn read_init_req(dev: AsyncArc<DevFuse>) -> Result<InitReqRaw> {
-    compio::runtime::spawn_blocking(move || read_init_req_sync(&dev))
-        .await
-        .unwrap()
-}
-
-fn read_init_req_sync(dev: &DevFuse) -> Result<InitReqRaw> {
+async fn read_init_req<C>(conn: &C) -> Result<(InitReqRaw, TokenGuard<C::ReqToken>)>
+where
+    C: SharedConnection,
+{
     #[repr(C, align(8))]
     struct Buf([u8; MIN_READ_BUFFER]);
 
-    let mut buf = Buf([0u8; MIN_READ_BUFFER]);
+    impl compio::buf::IoBuf for Buf {
+        fn as_init(&self) -> &[u8] {
+            &self.0
+        }
 
-    let len = loop {
-        match nix::unistd::read(dev.as_fd(), &mut buf.0) {
-            Ok(len) => break len,
-            // ENOENT means the request was interrupted and the read can be retried.
-            Err(nix::Error::EINTR | nix::Error::EAGAIN | nix::Error::ENOENT) => {}
-            Err(err) => {
-                log::error!("failed to read FUSE device: {err}");
-                return Err(err.into());
-            }
+        fn buf_len(&self) -> usize {
+            MIN_READ_BUFFER
+        }
+
+        fn buf_ptr(&self) -> *const u8 {
+            self.0.as_ptr()
+        }
+    }
+
+    impl compio::buf::SetLen for Buf {
+        unsafe fn set_len(&mut self, _: usize) {}
+    }
+
+    impl compio::buf::IoBufMut for Buf {
+        fn as_uninit(&mut self) -> &mut [std::mem::MaybeUninit<u8>] {
+            unsafe { std::slice::from_raw_parts_mut(self.0.as_mut_ptr().cast(), MIN_READ_BUFFER) }
+        }
+
+        fn ensure_init(&mut self) -> &mut [u8] {
+            &mut self.0
+        }
+
+        fn buf_capacity(&mut self) -> usize {
+            MIN_READ_BUFFER
+        }
+
+        fn buf_mut_ptr(&mut self) -> *mut std::mem::MaybeUninit<u8> {
+            self.0.as_mut_ptr().cast()
+        }
+
+        fn as_mut_slice(&mut self) -> &mut [u8] {
+            &mut self.0
+        }
+    }
+
+    let mut buf = Buf([0u8; MIN_READ_BUFFER]);
+    let (len, token) = loop {
+        let compio::buf::BufResult(res, tmp_buf) = conn.recv_request(buf).await;
+        buf = tmp_buf;
+        match res {
+            Ok((len, token)) => break (len, TokenGuard::new(token)),
+            Err(err) => match err.kind() {
+                std::io::ErrorKind::Interrupted
+                | std::io::ErrorKind::WouldBlock
+                | std::io::ErrorKind::NotFound => {}
+                _ => return Err(err),
+            },
         }
     };
 
@@ -491,13 +526,39 @@ fn read_init_req_sync(dev: &DevFuse) -> Result<InitReqRaw> {
 
     // SAFETY: `buf` is larger than `InitReqRaw`, whose fields are all integers,
     // and any bytes past `len` are zeroed.
-    Ok(unsafe { std::ptr::read(buf.0.as_ptr().cast()) })
+    let req = unsafe { std::ptr::read(buf.0.as_ptr().cast()) };
+
+    Ok((req, token))
 }
 
-async fn write_init_err(dev: AsyncArc<DevFuse>, unique: u64, err: crate::Error) -> Result<()> {
-    // Error replies must consist of only the header.
+async fn write_init_resp<C>(
+    conn: &C,
+    token: TokenGuard<C::ReqToken>,
+    resp: InitRespRaw,
+) -> Result<()>
+where
+    C: SharedConnection,
+{
+    if (resp.hdr.len as usize) > size_of::<InitRespRaw>() {
+        return Err(ErrorKind::InvalidInput.into());
+    }
+
+    conn.send_response(token.into_inner(), resp).await.0
+}
+
+fn write_init_err<C>(
+    conn: &C,
+    token: TokenGuard<C::ReqToken>,
+    unique: u64,
+    err: crate::Error,
+) -> impl Future<Output = Result<()>>
+where
+    C: SharedConnection,
+{
+    // Error replies must consist of only the header
     write_init_resp(
-        dev,
+        conn,
+        token,
         InitRespRaw {
             hdr: RespHdr {
                 len: const { size_of::<RespHdr>() as u32 },
@@ -507,36 +568,19 @@ async fn write_init_err(dev: AsyncArc<DevFuse>, unique: u64, err: crate::Error) 
             ..InitRespRaw::default()
         },
     )
-    .await
 }
 
-async fn write_init_resp(dev: AsyncArc<DevFuse>, resp: InitRespRaw) -> Result<()> {
-    compio::runtime::spawn_blocking(move || write_init_resp_sync(&dev, resp))
-        .await
-        .unwrap()
-}
-
-fn write_init_resp_sync(dev: &DevFuse, resp: InitRespRaw) -> Result<()> {
-    let len = resp.hdr.len as usize;
-
-    if len > size_of::<InitRespRaw>() {
-        return Err(ErrorKind::InvalidInput.into());
+impl compio::buf::IoBuf for InitRespRaw {
+    fn as_init(&self) -> &[u8] {
+        unsafe { std::slice::from_raw_parts(self.buf_ptr(), self.buf_len()) }
     }
 
-    // SAFETY: `InitRespRaw` is `repr(C)` with no padding (asserted above), so its
-    // first `len` bytes are initialized.
-    let buf =
-        unsafe { std::slice::from_raw_parts((&resp as *const InitRespRaw).cast::<u8>(), len) };
+    fn buf_len(&self) -> usize {
+        self.hdr.len as usize
+    }
 
-    loop {
-        match nix::unistd::write(dev.as_fd(), buf) {
-            Ok(_) => return Ok(()),
-            Err(nix::Error::EINTR | nix::Error::EAGAIN) => {}
-            Err(err) => {
-                log::error!("failed to write to FUSE device: {err}");
-                return Err(err.into());
-            }
-        }
+    fn buf_ptr(&self) -> *const u8 {
+        self as *const InitRespRaw as *const u8
     }
 }
 

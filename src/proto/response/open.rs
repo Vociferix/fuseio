@@ -1,4 +1,5 @@
 use super::{Cfg, EncodeResp, IntoIoBuf, IoBuf, RawHeader};
+use crate::conn::Connection;
 use crate::fs::types::PassthroughFd;
 use crate::types::{FileHandle, OpenedFlags};
 
@@ -33,7 +34,7 @@ impl Opened {
         self
     }
 
-    pub fn passthrough<T: AsFd>(mut self, fd: &PassthroughFd<T>) -> Self {
+    pub fn passthrough<T: AsFd, C: Connection>(mut self, fd: &PassthroughFd<T, C>) -> Self {
         self.open_flags |= PASSTHROUGH;
         self.backing_id = PassthroughFd::backing_id(fd).0;
         self

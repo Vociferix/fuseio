@@ -5,17 +5,17 @@ use crate::types::{FileFlag, FileHandle, FileTime, Gid, Ino, Mode, Uid};
 use std::time::SystemTime;
 
 #[derive(Debug)]
-pub struct SetAttrsReq {
-    req: Req,
+pub struct SetAttrsReq<C> {
+    req: Req<C>,
     set_attr: SetAttr,
 }
 
-impl SetAttrsReq {
-    pub(crate) fn new(req: Req, set_attr: SetAttr) -> Self {
+impl<C> SetAttrsReq<C> {
+    pub(crate) fn new(req: Req<C>, set_attr: SetAttr) -> Self {
         Self { req, set_attr }
     }
 
-    pub fn req(&self) -> &Req {
+    pub fn req(&self) -> &Req<C> {
         &self.req
     }
 
@@ -72,8 +72,8 @@ impl SetAttrsReq {
     }
 }
 
-impl std::ops::Deref for SetAttrsReq {
-    type Target = Req;
+impl<C> std::ops::Deref for SetAttrsReq<C> {
+    type Target = Req<C>;
 
     fn deref(&self) -> &Self::Target {
         &self.req

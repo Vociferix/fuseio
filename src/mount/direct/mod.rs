@@ -1,8 +1,11 @@
 use super::{Mount, Unmount};
 use crate::MountOpt;
+use crate::conn::{DevFuseConn, DevFuseSharedConn};
+
+use compio::buf::{BufResult, IoBuf, IoBufMut, IoVectoredBuf};
 
 use std::io::Result;
-use std::os::fd::{BorrowedFd, OwnedFd};
+use std::os::fd::AsFd;
 use std::path::{Path, PathBuf};
 
 #[cfg_attr(target_os = "linux", path = "linux.rs")]
@@ -27,27 +30,53 @@ pub struct DirectUnmount {
     _priv: (),
 }
 
+#[derive(Debug)]
+pub struct SharedDirectConn {
+    _priv: (),
+}
+
+#[derive(Debug)]
+pub struct DirectConn {
+    _priv: (),
+}
+
 impl Mount for DirectMount {
+    type SharedConn = DevFuseSharedConn;
+    type Conn = DevFuseConn;
     type Unmount = DirectUnmount;
 
     async fn mount(
         &self,
         mountpoint: &Path,
         options: &[MountOpt],
-    ) -> Result<(OwnedFd, impl Future<Output = Result<Self::Unmount>>)> {
-        let dev_path = self.dev_path.as_deref().unwrap_or("/dev/fuse".as_ref());
-        let fd = sys::mount(dev_path, mountpoint, options).await?;
-        Ok((fd, std::future::ready(Ok(DirectUnmount { _priv: () }))))
+        num_workers: usize,
+    ) -> Result<(
+        Self::SharedConn,
+        impl Future<Output = Result<Self::Unmount>>,
+    )> {
+        Ok((todo!(), std::future::ready(todo!())))
     }
 }
 
 impl Unmount for DirectUnmount {
+    type SharedConn = DevFuseSharedConn;
+    type Conn = DevFuseConn;
+
     async fn unmount(
         self,
-        dev: BorrowedFd<'_>,
+        conn: &Self::Conn,
         mountpoint: &Path,
         options: &[MountOpt],
     ) -> Result<()> {
-        sys::unmount(dev, mountpoint, options).await
+        todo!()
+    }
+
+    async fn unmount_shared(
+        self,
+        conn: &Self::SharedConn,
+        mountpoint: &Path,
+        options: &[MountOpt],
+    ) -> Result<()> {
+        todo!()
     }
 }

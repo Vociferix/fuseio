@@ -5,17 +5,17 @@ use crate::types::Ino;
 use std::ffi::OsStr;
 
 #[derive(Debug)]
-pub struct GetXattrLenReq {
-    req: Req,
+pub struct GetXattrLenReq<C> {
+    req: Req<C>,
     getxattr: GetXattr,
 }
 
-impl GetXattrLenReq {
-    pub(crate) fn new(req: Req, getxattr: GetXattr) -> Self {
+impl<C> GetXattrLenReq<C> {
+    pub(crate) fn new(req: Req<C>, getxattr: GetXattr) -> Self {
         Self { req, getxattr }
     }
 
-    pub fn req(&self) -> &Req {
+    pub fn req(&self) -> &Req<C> {
         &self.req
     }
 
@@ -28,8 +28,8 @@ impl GetXattrLenReq {
     }
 }
 
-impl std::ops::Deref for GetXattrLenReq {
-    type Target = Req;
+impl<C> std::ops::Deref for GetXattrLenReq<C> {
+    type Target = Req<C>;
 
     fn deref(&self) -> &Self::Target {
         &self.req

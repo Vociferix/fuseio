@@ -5,17 +5,17 @@ use crate::types::{Ino, Mode};
 use std::ffi::OsStr;
 
 #[derive(Debug)]
-pub struct MakeDirReq {
-    req: Req,
+pub struct MakeDirReq<C> {
+    req: Req<C>,
     mkdir: MkDir,
 }
 
-impl MakeDirReq {
-    pub(crate) fn new(req: Req, mkdir: MkDir) -> Self {
+impl<C> MakeDirReq<C> {
+    pub(crate) fn new(req: Req<C>, mkdir: MkDir) -> Self {
         Self { req, mkdir }
     }
 
-    pub fn req(&self) -> &Req {
+    pub fn req(&self) -> &Req<C> {
         &self.req
     }
 
@@ -36,8 +36,8 @@ impl MakeDirReq {
     }
 }
 
-impl std::ops::Deref for MakeDirReq {
-    type Target = Req;
+impl<C> std::ops::Deref for MakeDirReq<C> {
+    type Target = Req<C>;
 
     fn deref(&self) -> &Self::Target {
         &self.req

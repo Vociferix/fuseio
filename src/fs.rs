@@ -1,4 +1,5 @@
 use crate::buf::IntoIoBuf;
+use crate::conn::Connection;
 use crate::handshake::{Config, KernelConfig};
 use crate::types::PollFlags;
 use crate::{Error, MountOpt, Result};
@@ -33,6 +34,8 @@ pub mod types {
     pub use crate::notify_error::NotifyError;
 
     pub use crate::context::{CacheData, Context, NotifyPruneCache};
+
+    pub use crate::conn::Connection;
 }
 
 pub mod prelude {
@@ -43,66 +46,66 @@ pub mod prelude {
     pub use crate::{Error, Result};
 }
 
-pub trait Fs: Sized + 'static {
-    async fn unmount(self) {
-        let _ = self;
+pub trait Fs<C: Connection>: Sized + 'static {
+    async fn unmount(self, ctx: types::Context<C>) {
+        let _ = (self, ctx);
     }
 
-    async fn lookup(&self, req: req::LookupReq) -> Result<types::Entry> {
+    async fn lookup(&self, req: req::LookupReq<C>) -> Result<types::Entry> {
         let _ = (self, req);
         Err(Error::ENOSYS)
     }
 
-    async fn forget(&self, req: req::ForgetReq) {
+    async fn forget(&self, req: req::ForgetReq<C>) {
         let _ = (self, req);
     }
 
-    async fn get_attrs(&self, req: req::GetAttrsReq) -> Result<types::Attrs> {
-        let _ = (self, req);
-        Err(Error::ENOSYS)
-    }
-
-    async fn set_attrs(&self, req: req::SetAttrsReq) -> Result<types::Attrs> {
+    async fn get_attrs(&self, req: req::GetAttrsReq<C>) -> Result<types::Attrs> {
         let _ = (self, req);
         Err(Error::ENOSYS)
     }
 
-    async fn read_link(&self, req: req::ReadLinkReq) -> Result<impl IntoIoBuf> {
+    async fn set_attrs(&self, req: req::SetAttrsReq<C>) -> Result<types::Attrs> {
+        let _ = (self, req);
+        Err(Error::ENOSYS)
+    }
+
+    async fn read_link(&self, req: req::ReadLinkReq<C>) -> Result<impl IntoIoBuf> {
         let _ = (self, req);
         Err::<crate::buf::NoData, _>(Error::ENOSYS)
     }
 
-    async fn make_node(&self, req: req::MakeNodeReq) -> Result<types::Entry> {
+    async fn make_node(&self, req: req::MakeNodeReq<C>) -> Result<types::Entry> {
         let _ = (self, req);
         Err(Error::ENOSYS)
     }
 
-    async fn unlink_node(&self, req: req::UnlinkNodeReq) -> Result<()> {
+    async fn unlink_node(&self, req: req::UnlinkNodeReq<C>) -> Result<()> {
         let _ = (self, req);
         Err(Error::ENOSYS)
     }
 
-    async fn make_dir(&self, req: req::MakeDirReq) -> Result<types::Entry> {
+    async fn make_dir(&self, req: req::MakeDirReq<C>) -> Result<types::Entry> {
         let _ = (self, req);
         Err(Error::ENOSYS)
     }
 
-    async fn remove_dir(&self, req: req::RemoveDirReq) -> Result<()> {
+    async fn remove_dir(&self, req: req::RemoveDirReq<C>) -> Result<()> {
         let _ = (self, req);
         Err(Error::ENOSYS)
     }
 
-    async fn symlink(&self, req: req::SymlinkReq) -> Result<types::Entry> {
+    async fn symlink(&self, req: req::SymlinkReq<C>) -> Result<types::Entry> {
         let _ = (self, req);
         Err(Error::ENOSYS)
     }
 
-    async fn rename(&self, req: req::RenameReq) -> Result<()> {
+    async fn rename(&self, req: req::RenameReq<C>) -> Result<()> {
         let _ = (self, req);
         Err(Error::ENOSYS)
     }
 
-    async fn link(&self, req: req::LinkReq) -> Result<types::Entry> {
+    async fn link(&self, req: req::LinkReq<C>) -> Result<types::Entry> {
         let _ = (self, req);
         Err(Error::ENOSYS)
     }
@@ -113,22 +116,22 @@ pub trait Fs: Sized + 'static {
     /// does. Replying `ENOSYS` instead would fail every `open(2)` on macOS,
     /// whose protocol version predates the kernel treating that as "opening
     /// needs no reply".
-    async fn open(&self, req: req::OpenReq) -> Result<types::Opened> {
+    async fn open(&self, req: req::OpenReq<C>) -> Result<types::Opened> {
         let _ = (self, req);
         Ok(types::Opened::new(types::FileHandle(0)))
     }
 
-    async fn read(&self, req: req::ReadReq) -> Result<impl IntoIoBuf> {
+    async fn read(&self, req: req::ReadReq<C>) -> Result<impl IntoIoBuf> {
         let _ = (self, req);
         Err::<crate::buf::NoData, _>(Error::ENOSYS)
     }
 
-    async fn write(&self, req: req::WriteReq) -> Result<usize> {
+    async fn write(&self, req: req::WriteReq<C>) -> Result<usize> {
         let _ = (self, req);
         Err(Error::ENOSYS)
     }
 
-    async fn flush(&self, req: req::FlushReq) -> Result<()> {
+    async fn flush(&self, req: req::FlushReq<C>) -> Result<()> {
         let _ = (self, req);
         Err(Error::ENOSYS)
     }
@@ -136,17 +139,17 @@ pub trait Fs: Sized + 'static {
     /// Closes a file or directory opened by [`open`](Self::open).
     ///
     /// The default succeeds, to match an `open` that keeps no state.
-    async fn close(&self, req: req::CloseReq) -> Result<()> {
+    async fn close(&self, req: req::CloseReq<C>) -> Result<()> {
         let _ = (self, req);
         Ok(())
     }
 
-    async fn fsync(&self, req: req::FsyncReq) -> Result<()> {
+    async fn fsync(&self, req: req::FsyncReq<C>) -> Result<()> {
         let _ = (self, req);
         Err(Error::ENOSYS)
     }
 
-    async fn read_dir(&self, req: req::ReadDirReq) -> Result<types::DirEntryBuf> {
+    async fn read_dir(&self, req: req::ReadDirReq<C>) -> Result<types::DirEntryBuf> {
         let _ = (self, req);
         Err(Error::ENOSYS)
     }
@@ -156,137 +159,137 @@ pub trait Fs: Sized + 'static {
     /// The default reports the placeholder values libfuse uses, since `ENOSYS`
     /// would break `df` and can fail the mount on macOS, which asks during
     /// mounting.
-    async fn statfs(&self, req: req::StatFsReq) -> Result<types::FsAttrs> {
+    async fn statfs(&self, req: req::StatFsReq<C>) -> Result<types::FsAttrs> {
         let _ = (self, req);
         Ok(types::FsAttrs::new())
     }
 
-    async fn get_xattr_len(&self, req: req::GetXattrLenReq) -> Result<usize> {
+    async fn get_xattr_len(&self, req: req::GetXattrLenReq<C>) -> Result<usize> {
         let _ = (self, req);
         Err(Error::ENOSYS)
     }
 
-    async fn get_xattr(&self, req: req::GetXattrReq) -> Result<impl IntoIoBuf> {
+    async fn get_xattr(&self, req: req::GetXattrReq<C>) -> Result<impl IntoIoBuf> {
         let _ = (self, req);
         Err::<crate::buf::NoData, _>(Error::ENOSYS)
     }
 
-    async fn set_xattr(&self, req: req::SetXattrReq) -> Result<()> {
+    async fn set_xattr(&self, req: req::SetXattrReq<C>) -> Result<()> {
         let _ = (self, req);
         Err(Error::ENOSYS)
     }
 
-    async fn xattr_keys_len(&self, req: req::XattrKeysLenReq) -> Result<types::XattrKeyLenBuf> {
+    async fn xattr_keys_len(&self, req: req::XattrKeysLenReq<C>) -> Result<types::XattrKeyLenBuf> {
         let _ = (self, req);
         Err(Error::ENOSYS)
     }
 
-    async fn xattr_keys(&self, req: req::XattrKeysReq) -> Result<types::XattrKeyBuf> {
+    async fn xattr_keys(&self, req: req::XattrKeysReq<C>) -> Result<types::XattrKeyBuf> {
         let _ = (self, req);
         Err(Error::ENOSYS)
     }
 
-    async fn remove_xattr(&self, req: req::RemoveXattrReq) -> Result<()> {
+    async fn remove_xattr(&self, req: req::RemoveXattrReq<C>) -> Result<()> {
         let _ = (self, req);
         Err(Error::ENOSYS)
     }
 
-    async fn access(&self, req: req::AccessReq) -> Result<()> {
+    async fn access(&self, req: req::AccessReq<C>) -> Result<()> {
         let _ = (self, req);
         Err(Error::ENOSYS)
     }
 
-    async fn create_file(&self, req: req::CreateFileReq) -> Result<types::Created> {
+    async fn create_file(&self, req: req::CreateFileReq<C>) -> Result<types::Created> {
         let _ = (self, req);
         Err(Error::ENOSYS)
     }
 
-    async fn test_posix_lock(&self, req: req::TestPosixLockReq) -> Result<types::PosixLock> {
+    async fn test_posix_lock(&self, req: req::TestPosixLockReq<C>) -> Result<types::PosixLock> {
         let _ = (self, req);
         Err(Error::ENOSYS)
     }
 
-    async fn try_posix_lock(&self, req: req::PosixLockReq) -> Result<()> {
+    async fn try_posix_lock(&self, req: req::PosixLockReq<C>) -> Result<()> {
         let _ = (self, req);
         Err(Error::ENOSYS)
     }
 
-    async fn posix_lock(&self, req: req::PosixLockReq) -> Result<()> {
+    async fn posix_lock(&self, req: req::PosixLockReq<C>) -> Result<()> {
         let _ = (self, req);
         Err(Error::ENOSYS)
     }
 
-    async fn map_block(&self, req: req::MapBlockReq) -> Result<u64> {
+    async fn map_block(&self, req: req::MapBlockReq<C>) -> Result<u64> {
         let _ = (self, req);
         Err(Error::ENOSYS)
     }
 
-    async fn ioctl(&self, req: req::IoctlReq) -> Result<types::IoctlReply<impl IntoIoBuf>> {
+    async fn ioctl(&self, req: req::IoctlReq<C>) -> Result<types::IoctlReply<impl IntoIoBuf>> {
         let _ = (self, req);
         Err::<types::IoctlReply<crate::buf::NoData>, _>(Error::ENOSYS)
     }
 
-    async fn poll(&self, req: req::PollReq) -> Result<PollFlags> {
+    async fn poll(&self, req: req::PollReq<C>) -> Result<PollFlags> {
         let _ = (self, req);
         Err(Error::ENOSYS)
     }
 
-    async fn try_flock(&self, req: req::FlockReq) -> Result<()> {
+    async fn try_flock(&self, req: req::FlockReq<C>) -> Result<()> {
         let _ = (self, req);
         Err(Error::ENOSYS)
     }
 
-    async fn flock(&self, req: req::FlockReq) -> Result<()> {
+    async fn flock(&self, req: req::FlockReq<C>) -> Result<()> {
         let _ = (self, req);
         Err(Error::ENOSYS)
     }
 
-    async fn fallocate(&self, req: req::FallocateReq) -> Result<()> {
+    async fn fallocate(&self, req: req::FallocateReq<C>) -> Result<()> {
         let _ = (self, req);
         Err(Error::ENOSYS)
     }
 
-    async fn read_dir_plus(&self, req: req::ReadDirPlusReq) -> Result<types::DirEntryPlusBuf> {
+    async fn read_dir_plus(&self, req: req::ReadDirPlusReq<C>) -> Result<types::DirEntryPlusBuf> {
         let _ = (self, req);
         Err(Error::ENOSYS)
     }
 
-    async fn copy_file_range(&self, req: req::CopyFileRangeReq) -> Result<u64> {
+    async fn copy_file_range(&self, req: req::CopyFileRangeReq<C>) -> Result<u64> {
         let _ = (self, req);
         Err(Error::ENOSYS)
     }
 
-    async fn lseek(&self, req: req::LseekReq) -> Result<u64> {
+    async fn lseek(&self, req: req::LseekReq<C>) -> Result<u64> {
         let _ = (self, req);
         Err(Error::ENOSYS)
     }
 
-    async fn tmp_file(&self, req: req::TmpFileReq) -> Result<types::Created> {
+    async fn tmp_file(&self, req: req::TmpFileReq<C>) -> Result<types::Created> {
         let _ = (self, req);
         Err(Error::ENOSYS)
     }
 
-    async fn statx(&self, req: req::StatXReq) -> Result<types::StatX> {
+    async fn statx(&self, req: req::StatXReq<C>) -> Result<types::StatX> {
         let _ = (self, req);
         Err(Error::ENOSYS)
     }
 
-    async fn syncfs(&self, req: req::SyncFsReq) -> Result<()> {
+    async fn syncfs(&self, req: req::SyncFsReq<C>) -> Result<()> {
         let _ = (self, req);
         Err(Error::ENOSYS)
     }
 
-    async fn get_xtimes(&self, req: req::GetXTimesReq) -> Result<types::XTimes> {
+    async fn get_xtimes(&self, req: req::GetXTimesReq<C>) -> Result<types::XTimes> {
         let _ = (self, req);
         Err(Error::ENOSYS)
     }
 
-    async fn set_volume_name(&self, req: req::SetVolumeNameReq) -> Result<()> {
+    async fn set_volume_name(&self, req: req::SetVolumeNameReq<C>) -> Result<()> {
         let _ = (self, req);
         Err(Error::ENOSYS)
     }
 
-    async fn monitor(&self, req: req::MonitorReq) {
+    async fn monitor(&self, req: req::MonitorReq<C>) {
         let _ = (self, req);
     }
 }
@@ -296,13 +299,13 @@ pub trait Fs: Sized + 'static {
 /// [`MountFs`] represents a constructor for a FUSE filesystem. Typically,
 /// implementors are a collection of parameters to intialize the actual
 /// filesystem, often presented as a builder.
-pub trait MountFs {
+pub trait MountFs<C: Connection> {
     /// The initialized, but unbound, filesystem.
     ///
     /// To support multithreaded filesystem request handling, this type must also
     /// implement [`Clone`] and [`Send`]. Clones will be sent to additional
     /// threads to be bound and serve filesystem requests.
-    type Fs: BindFs;
+    type Fs: BindFs<C>;
 
     /// Constructs a bindable filesystem.
     ///
@@ -326,9 +329,9 @@ pub trait MountFs {
 /// each clone will be assigned its own thread, where it will be bound. The bound
 /// filesystem ([`BindFs::BoundFs`]), does not need to implement [`Clone`] or
 /// [`Send`] in any case.
-pub trait BindFs {
+pub trait BindFs<C: Connection> {
     /// The bound filesystem.
-    type BoundFs: Fs;
+    type BoundFs: Fs<C>;
 
     /// Return the desired FUSE configuration for the mounted filesystem.
     ///
@@ -348,5 +351,5 @@ pub trait BindFs {
     /// different [`compio`] runtime from the one under which it was created (i.e.
     /// the runtime under which [`MountFs::mount`] was called). This function
     /// should also handle transitioning to the new runtime, if needed.
-    async fn bind(self, ctx: types::Context) -> Result<Self::BoundFs>;
+    async fn bind(self, ctx: types::Context<C>) -> Result<Self::BoundFs>;
 }

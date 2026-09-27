@@ -5,17 +5,17 @@ use crate::types::Ino;
 use std::ffi::OsStr;
 
 #[derive(Debug)]
-pub struct RemoveXattrReq {
-    req: Req,
+pub struct RemoveXattrReq<C> {
+    req: Req<C>,
     removexattr: RemoveXattr,
 }
 
-impl RemoveXattrReq {
-    pub(crate) fn new(req: Req, removexattr: RemoveXattr) -> Self {
+impl<C> RemoveXattrReq<C> {
+    pub(crate) fn new(req: Req<C>, removexattr: RemoveXattr) -> Self {
         Self { req, removexattr }
     }
 
-    pub fn req(&self) -> &Req {
+    pub fn req(&self) -> &Req<C> {
         &self.req
     }
 
@@ -28,8 +28,8 @@ impl RemoveXattrReq {
     }
 }
 
-impl std::ops::Deref for RemoveXattrReq {
-    type Target = Req;
+impl<C> std::ops::Deref for RemoveXattrReq<C> {
+    type Target = Req<C>;
 
     fn deref(&self) -> &Self::Target {
         &self.req

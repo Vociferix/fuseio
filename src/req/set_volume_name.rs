@@ -4,17 +4,17 @@ use crate::proto::request::SetVolName;
 use std::ffi::OsStr;
 
 #[derive(Debug)]
-pub struct SetVolumeNameReq {
-    req: Req,
+pub struct SetVolumeNameReq<C> {
+    req: Req<C>,
     setvolname: SetVolName,
 }
 
-impl SetVolumeNameReq {
-    pub(crate) fn new(req: Req, setvolname: SetVolName) -> Self {
+impl<C> SetVolumeNameReq<C> {
+    pub(crate) fn new(req: Req<C>, setvolname: SetVolName) -> Self {
         Self { req, setvolname }
     }
 
-    pub fn req(&self) -> &Req {
+    pub fn req(&self) -> &Req<C> {
         &self.req
     }
 
@@ -23,8 +23,8 @@ impl SetVolumeNameReq {
     }
 }
 
-impl std::ops::Deref for SetVolumeNameReq {
-    type Target = Req;
+impl<C> std::ops::Deref for SetVolumeNameReq<C> {
+    type Target = Req<C>;
 
     fn deref(&self) -> &Self::Target {
         &self.req

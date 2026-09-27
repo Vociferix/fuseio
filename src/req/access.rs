@@ -3,17 +3,17 @@ use crate::proto::request::Access;
 use crate::types::{AccessFlags, Ino};
 
 #[derive(Debug)]
-pub struct AccessReq {
-    req: Req,
+pub struct AccessReq<C> {
+    req: Req<C>,
     access: Access,
 }
 
-impl AccessReq {
-    pub(crate) fn new(req: Req, access: Access) -> Self {
+impl<C> AccessReq<C> {
+    pub(crate) fn new(req: Req<C>, access: Access) -> Self {
         Self { req, access }
     }
 
-    pub fn req(&self) -> &Req {
+    pub fn req(&self) -> &Req<C> {
         &self.req
     }
 
@@ -26,8 +26,8 @@ impl AccessReq {
     }
 }
 
-impl std::ops::Deref for AccessReq {
-    type Target = Req;
+impl<C> std::ops::Deref for AccessReq<C> {
+    type Target = Req<C>;
 
     fn deref(&self) -> &Self::Target {
         &self.req
