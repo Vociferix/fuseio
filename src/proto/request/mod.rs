@@ -1,3 +1,4 @@
+use super::Cfg;
 use crate::types::{Gid, Ino, Pid, ReplyInitFlags, Request, Uid};
 use crate::{Error, Result, buf::Buf};
 
@@ -103,13 +104,6 @@ pub use tmpfile::TmpFile;
 pub use unlink::Unlink;
 pub use write::Write;
 
-#[derive(Debug, Clone, Copy)]
-pub struct Cfg {
-    pub minor_ver: u32,
-    /// Flags negotiated in the INIT reply.
-    pub flags: ReplyInitFlags,
-}
-
 #[derive(Debug)]
 pub enum Body {
     Lookup(Lookup),
@@ -159,15 +153,9 @@ pub enum Body {
     TmpFile(TmpFile),
     StatX(StatX),
     CopyFileRange64(CopyFileRange64),
-
-    #[cfg(target_os = "macos")]
     SetVolName(SetVolName),
-    #[cfg(target_os = "macos")]
     GetXtimes(GetXtimes),
-    #[cfg(target_os = "macos")]
     Monitor(Monitor),
-    // TODO
-    //CuseInit(CuseInit),
 }
 
 #[derive(Debug)]
@@ -268,6 +256,7 @@ opcodes! {
     GETXTIMES: 62,
     EXCHANGE: 63,
 
+    // CUSE not currently supported, so this opcode is unused
     CUSE_INIT: 4096,
 }
 
@@ -352,13 +341,9 @@ impl AnyRequest {
                 Body::CopyFileRange64(CopyFileRange64::decode_64(buf, ino, cfg)?)
             }
 
-            #[cfg(target_os = "macos")]
             Opcode::SETVOLNAME => Body::SetVolName(SetVolName::decode(buf, ino, cfg)?),
-            #[cfg(target_os = "macos")]
             Opcode::GETXTIMES => Body::GetXtimes(GetXtimes::decode(buf, ino, cfg)?),
-            #[cfg(target_os = "macos")]
             Opcode::EXCHANGE => Body::Rename(Rename::decode_exchange(buf, ino, cfg)?),
-            #[cfg(target_os = "macos")]
             Opcode::MONITOR => Body::Monitor(Monitor::decode(buf, ino, cfg)?),
 
             Opcode::INIT => return Err(Error::EPROTO),
@@ -374,5 +359,88 @@ impl AnyRequest {
             },
             body,
         })
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    use crate::buf::BufPool;
+
+    /// Builds a request for `op` on inode 1 with `body` after the header.
+    fn request(op: Opcode, body: &[u8]) -> Buf {
+        let mut buf = BufPool::new().checkout_with_capacity(HDR_LEN + body.len());
+
+        buf.extend_from_slice(&((HDR_LEN + body.len()) as u32).to_ne_bytes());
+        buf.extend_from_slice(&op.0.to_ne_bytes());
+        buf.extend_from_slice(&7u64.to_ne_bytes()); // unique
+        buf.extend_from_slice(&1u64.to_ne_bytes()); // nodeid
+        buf.extend_from_slice(&[0u8; 16]); // uid, gid, pid, padding
+        assert_eq!(buf.len(), HDR_LEN);
+
+        buf.extend_from_slice(body);
+        buf
+    }
+
+    fn decode(op: Opcode, body: &[u8]) -> Body {
+        AnyRequest::decode(
+            request(op, body),
+            crate::handshake::MINOR_VER,
+            ReplyInitFlags::empty(),
+        )
+        .expect("decodes")
+        .body
+    }
+
+    // No kernel but macOS sends these, but each has one body layout, so a
+    // connection speaking for a macFUSE peer is served on any host. Their replies
+    // are platform-independent too, so only the inode attributes stay native.
+    #[test]
+    fn the_macos_only_ops_decode_on_every_platform() {
+        assert!(matches!(
+            decode(Opcode::SETVOLNAME, b"volume\0"),
+            Body::SetVolName(_)
+        ));
+
+        assert!(matches!(decode(Opcode::GETXTIMES, &[]), Body::GetXtimes(_)));
+
+        let mut monitor = Vec::new();
+        monitor.extend_from_slice(&1u32.to_ne_bytes()); // FUSE_MONITOR_BEGIN
+        monitor.extend_from_slice(&0u32.to_ne_bytes()); // padding
+        assert!(matches!(
+            decode(Opcode::MONITOR, &monitor),
+            Body::Monitor(_)
+        ));
+    }
+
+    // `FUSE_EXCHANGE` arrives as a rename, since that is what it is.
+    #[test]
+    fn exchange_decodes_on_every_platform() {
+        let mut body = Vec::new();
+        body.extend_from_slice(&1u64.to_ne_bytes()); // olddir
+        body.extend_from_slice(&1u64.to_ne_bytes()); // newdir
+        body.extend_from_slice(&0u64.to_ne_bytes()); // options
+        body.extend_from_slice(b"old\0new\0");
+
+        let Body::Rename(rename) = decode(Opcode::EXCHANGE, &body) else {
+            panic!("expected a rename");
+        };
+
+        assert_eq!(rename.rename_mode(), crate::types::RenameMode::ExchangeData);
+        assert_eq!(rename.old_name(), "old");
+        assert_eq!(rename.new_name(), "new");
+    }
+
+    // An opcode no kernel defines has to be refused rather than mistaken for a
+    // neighbouring one.
+    #[test]
+    fn an_unknown_opcode_is_refused() {
+        let buf = request(Opcode(9999), &[]);
+        let err = AnyRequest::decode(buf, crate::handshake::MINOR_VER, ReplyInitFlags::empty())
+            .map(|_| ())
+            .unwrap_err();
+
+        assert_eq!(err, Error::ENOSYS);
     }
 }

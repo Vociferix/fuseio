@@ -1,5 +1,5 @@
 use crate::builder::MountOptList;
-use crate::conn::SharedConnection;
+use crate::conn::{Conn, ConnectionMeta, SharedConnection};
 use crate::handshake::{Config, Init, handshake};
 use crate::server::{Message, Server};
 use crate::types::ReplyInitFlags;
@@ -73,6 +73,14 @@ where
 
     let (conn, unmounter) = mounter.mount(&mountpoint, opts.as_ref(), workers).await?;
 
+    // Ensure the connection supports at least sending an error (response header only)
+    if conn.max_response_size() < crate::proto::MIN_MSG_SIZE {
+        return Err(std::io::Error::new(
+            std::io::ErrorKind::Unsupported,
+            "connection max response size too small",
+        ));
+    }
+
     let (init_res, unmounter) = {
         let mut handshake_fut = std::pin::pin!(handshake(fs, &conn, opts.as_ref()));
         let mut unmounter_fut = std::pin::pin!(unmounter);
@@ -93,7 +101,7 @@ where
         Ok(init) => init,
         Err(err) => {
             let _ = unmounter
-                .unmount_shared(&conn, mountpoint.as_ref(), opts.as_ref())
+                .unmount(Conn::Shared(conn), mountpoint.as_ref(), opts.as_ref())
                 .await;
             return Err(err);
         }
@@ -106,7 +114,7 @@ where
             Ok(conn) => conn,
             Err(err) => {
                 let _ = unmounter
-                    .unmount_shared(&conn, mountpoint.as_ref(), opts.as_ref())
+                    .unmount(Conn::Shared(conn), mountpoint.as_ref(), opts.as_ref())
                     .await;
                 return Err(err);
             }
@@ -229,7 +237,7 @@ where
                 compio::runtime::spawn(async move {
                     let _ = once
                         .unmount
-                        .unmount_shared(&conn, &once.path, &once.opts)
+                        .unmount(Conn::Shared(conn), &once.path, &once.opts)
                         .await;
                 })
                 .detach();

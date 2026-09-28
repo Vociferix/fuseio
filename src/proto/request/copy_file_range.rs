@@ -91,7 +91,7 @@ mod tests {
     fn cfg() -> Cfg {
         Cfg {
             minor_ver: crate::handshake::MINOR_VER,
-            flags: ReplyInitFlags::empty(),
+            ..Cfg::default()
         }
     }
 

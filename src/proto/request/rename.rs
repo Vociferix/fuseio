@@ -51,7 +51,6 @@ struct RawExt {
     _unused: u32,
 }
 
-#[cfg(target_os = "macos")]
 #[repr(C)]
 struct RawExchange {
     old_dir: u64,
@@ -132,7 +131,10 @@ impl Rename {
     }
 
     /// Decodes macOS `FUSE_EXCHANGE` (`exchangedata(2)`).
-    #[cfg(target_os = "macos")]
+    ///
+    /// Decodable everywhere: no kernel but macOS sends it, but its body has one
+    /// layout, so a connection that speaks for a macFUSE peer can be served on
+    /// any host.
     pub(super) fn decode_exchange(buf: Buf, _: Option<Ino>, _: Cfg) -> Result<Self> {
         const NAMES_OFFSET: usize = HDR_LEN + std::mem::size_of::<RawExchange>();
 

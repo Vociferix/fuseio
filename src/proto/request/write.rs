@@ -170,7 +170,7 @@ mod tests {
     fn cfg(minor_ver: u32) -> Cfg {
         Cfg {
             minor_ver,
-            flags: ReplyInitFlags::empty(),
+            ..Cfg::default()
         }
     }
 

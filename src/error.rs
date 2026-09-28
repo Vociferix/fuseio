@@ -7,6 +7,23 @@ macro_rules! error {
             None => panic!(),
         })
     };
+    ($x:literal) => {
+        Error(match NonZeroI32::new($x) {
+            Some(x) => x,
+            None => panic!(),
+        })
+    };
+}
+
+macro_rules! def_error_consts {
+    ($($(#[$attrs:meta])* const $e:ident = $c:expr;)*) => {
+        impl Error {
+            $($(#[$attrs])* pub const $e: Error = $c;)*
+
+            #[cfg(test)]
+            const ALL: &[Error] = &[$(Self::$e),*];
+        }
+    }
 }
 
 /// Error type returned for FUSE filsystem operations.
@@ -15,189 +32,189 @@ macro_rules! error {
 #[derive(Debug, Copy, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct Error(NonZeroI32);
 
-impl Error {
+def_error_consts! {
     /// Operation not permitted
-    pub const EPERM: Error = error!(EPERM);
+    const EPERM = error!(EPERM);
     /// No such file or directory
-    pub const ENOENT: Error = error!(ENOENT);
+    const ENOENT = error!(ENOENT);
     /// No such process
-    pub const ESRCH: Error = error!(ESRCH);
+    const ESRCH = error!(ESRCH);
     /// Interrupted system call
-    pub const EINTR: Error = error!(EINTR);
+    const EINTR = error!(EINTR);
     /// Input/output error
-    pub const EIO: Error = error!(EIO);
+    const EIO = error!(EIO);
     /// No such device or address
-    pub const ENXIO: Error = error!(ENXIO);
+    const ENXIO = error!(ENXIO);
     /// Argument list too long
-    pub const E2BIG: Error = error!(E2BIG);
+    const E2BIG = error!(E2BIG);
     /// Exec format error
-    pub const ENOEXEC: Error = error!(ENOEXEC);
+    const ENOEXEC = error!(ENOEXEC);
     /// Bad file descriptor
-    pub const EBADF: Error = error!(EBADF);
+    const EBADF = error!(EBADF);
     /// No child processes
-    pub const ECHILD: Error = error!(ECHILD);
+    const ECHILD = error!(ECHILD);
     /// Resource temporarily unavailable
-    pub const EAGAIN: Error = error!(EAGAIN);
+    const EAGAIN = error!(EAGAIN);
     /// Cannot allocate memory
-    pub const ENOMEM: Error = error!(ENOMEM);
+    const ENOMEM = error!(ENOMEM);
     /// Permission denied
-    pub const EACCES: Error = error!(EACCES);
+    const EACCES = error!(EACCES);
     /// Bad address
-    pub const EFAULT: Error = error!(EFAULT);
+    const EFAULT = error!(EFAULT);
     /// Block device required
-    pub const ENOTBLK: Error = error!(ENOTBLK);
+    const ENOTBLK = error!(ENOTBLK);
     /// Device or resource busy
-    pub const EBUSY: Error = error!(EBUSY);
+    const EBUSY = error!(EBUSY);
     /// File exists
-    pub const EEXIST: Error = error!(EEXIST);
+    const EEXIST = error!(EEXIST);
     /// Invalid cross-device link
-    pub const EXDEV: Error = error!(EXDEV);
+    const EXDEV = error!(EXDEV);
     /// No such device
-    pub const ENODEV: Error = error!(ENODEV);
+    const ENODEV = error!(ENODEV);
     /// Not a directory
-    pub const ENOTDIR: Error = error!(ENOTDIR);
+    const ENOTDIR = error!(ENOTDIR);
     /// Is a directory
-    pub const EISDIR: Error = error!(EISDIR);
+    const EISDIR = error!(EISDIR);
     /// Invalid argument
-    pub const EINVAL: Error = error!(EINVAL);
+    const EINVAL = error!(EINVAL);
     /// Too many open files in system
-    pub const ENFILE: Error = error!(ENFILE);
+    const ENFILE = error!(ENFILE);
     /// Too many open files
-    pub const EMFILE: Error = error!(EMFILE);
+    const EMFILE = error!(EMFILE);
     /// Inappropriate ioctl for device
-    pub const ENOTTY: Error = error!(ENOTTY);
+    const ENOTTY = error!(ENOTTY);
     /// Text file busy
-    pub const ETXTBSY: Error = error!(ETXTBSY);
+    const ETXTBSY = error!(ETXTBSY);
     /// File too large
-    pub const EFBIG: Error = error!(EFBIG);
+    const EFBIG = error!(EFBIG);
     /// No space left on device
-    pub const ENOSPC: Error = error!(ENOSPC);
+    const ENOSPC = error!(ENOSPC);
     /// Illegal seek
-    pub const ESPIPE: Error = error!(ESPIPE);
+    const ESPIPE = error!(ESPIPE);
     /// Read-only file system
-    pub const EROFS: Error = error!(EROFS);
+    const EROFS = error!(EROFS);
     /// Too many links
-    pub const EMLINK: Error = error!(EMLINK);
+    const EMLINK = error!(EMLINK);
     /// Broken pipe
-    pub const EPIPE: Error = error!(EPIPE);
+    const EPIPE = error!(EPIPE);
     /// Numerical argument out of domain
-    pub const EDOM: Error = error!(EDOM);
+    const EDOM = error!(EDOM);
     /// Numerical result out of range
-    pub const ERANGE: Error = error!(ERANGE);
+    const ERANGE = error!(ERANGE);
     /// Resource deadlock avoided
-    pub const EDEADLK: Error = error!(EDEADLK);
+    const EDEADLK = error!(EDEADLK);
     /// File name too long
-    pub const ENAMETOOLONG: Error = error!(ENAMETOOLONG);
+    const ENAMETOOLONG = error!(ENAMETOOLONG);
     /// No locks available
-    pub const ENOLCK: Error = error!(ENOLCK);
+    const ENOLCK = error!(ENOLCK);
     /// Function not implemented
-    pub const ENOSYS: Error = error!(ENOSYS);
+    const ENOSYS = error!(ENOSYS);
     /// Directory not empty
-    pub const ENOTEMPTY: Error = error!(ENOTEMPTY);
+    const ENOTEMPTY = error!(ENOTEMPTY);
     /// Too many levels of symbolic links
-    pub const ELOOP: Error = error!(ELOOP);
+    const ELOOP = error!(ELOOP);
     /// Resource temporarily unavailable
-    pub const EWOULDBLOCK: Error = error!(EWOULDBLOCK);
+    const EWOULDBLOCK = error!(EWOULDBLOCK);
     /// No message of desired type
-    pub const ENOMSG: Error = error!(ENOMSG);
+    const ENOMSG = error!(ENOMSG);
     /// Identifier removed
-    pub const EIDRM: Error = error!(EIDRM);
+    const EIDRM = error!(EIDRM);
     /// Object is remote
-    pub const EREMOTE: Error = error!(EREMOTE);
+    const EREMOTE = error!(EREMOTE);
     /// Link has been severed
-    pub const ENOLINK: Error = error!(ENOLINK);
+    const ENOLINK = error!(ENOLINK);
     /// Protocol error
-    pub const EPROTO: Error = error!(EPROTO);
+    const EPROTO = error!(EPROTO);
     /// Multihop attempted
-    pub const EMULTIHOP: Error = error!(EMULTIHOP);
+    const EMULTIHOP = error!(EMULTIHOP);
     /// Bad message
-    pub const EBADMSG: Error = error!(EBADMSG);
+    const EBADMSG = error!(EBADMSG);
     /// Value too large for defined data type
-    pub const EOVERFLOW: Error = error!(EOVERFLOW);
+    const EOVERFLOW = error!(EOVERFLOW);
     /// Invalid or incomplete multibyte or wide character
-    pub const EILSEQ: Error = error!(EILSEQ);
+    const EILSEQ = error!(EILSEQ);
     /// Too many users
-    pub const EUSERS: Error = error!(EUSERS);
+    const EUSERS = error!(EUSERS);
     /// Socket operation on non-socket
-    pub const ENOTSOCK: Error = error!(ENOTSOCK);
+    const ENOTSOCK = error!(ENOTSOCK);
     /// Destination address required
-    pub const EDESTADDRREQ: Error = error!(EDESTADDRREQ);
+    const EDESTADDRREQ = error!(EDESTADDRREQ);
     /// Message too long
-    pub const EMSGSIZE: Error = error!(EMSGSIZE);
+    const EMSGSIZE = error!(EMSGSIZE);
     /// Protocol wrong type for socket
-    pub const EPROTOTYPE: Error = error!(EPROTOTYPE);
+    const EPROTOTYPE = error!(EPROTOTYPE);
     /// Protocol not available
-    pub const ENOPROTOOPT: Error = error!(ENOPROTOOPT);
+    const ENOPROTOOPT = error!(ENOPROTOOPT);
     /// Protocol not supported
-    pub const EPROTONOSUPPORT: Error = error!(EPROTONOSUPPORT);
+    const EPROTONOSUPPORT = error!(EPROTONOSUPPORT);
     /// Socket type not supported
-    pub const ESOCKTNOSUPPORT: Error = error!(ESOCKTNOSUPPORT);
+    const ESOCKTNOSUPPORT = error!(ESOCKTNOSUPPORT);
     /// Operation not supported
-    pub const EOPNOTSUPP: Error = error!(EOPNOTSUPP);
+    const EOPNOTSUPP = error!(EOPNOTSUPP);
     /// Protocol family not supported
-    pub const EPFNOSUPPORT: Error = error!(EPFNOSUPPORT);
+    const EPFNOSUPPORT = error!(EPFNOSUPPORT);
     /// Address family not supported by protocol
-    pub const EAFNOSUPPORT: Error = error!(EAFNOSUPPORT);
+    const EAFNOSUPPORT = error!(EAFNOSUPPORT);
     /// Address already in use
-    pub const EADDRINUSE: Error = error!(EADDRINUSE);
+    const EADDRINUSE = error!(EADDRINUSE);
     /// Cannot assign requested address
-    pub const EADDRNOTAVAIL: Error = error!(EADDRNOTAVAIL);
+    const EADDRNOTAVAIL = error!(EADDRNOTAVAIL);
     /// Network is down
-    pub const ENETDOWN: Error = error!(ENETDOWN);
+    const ENETDOWN = error!(ENETDOWN);
     /// Network is unreachable
-    pub const ENETUNREACH: Error = error!(ENETUNREACH);
+    const ENETUNREACH = error!(ENETUNREACH);
     /// Network dropped connection on reset
-    pub const ENETRESET: Error = error!(ENETRESET);
+    const ENETRESET = error!(ENETRESET);
     /// Software caused connection abort
-    pub const ECONNABORTED: Error = error!(ECONNABORTED);
+    const ECONNABORTED = error!(ECONNABORTED);
     /// Connection reset by peer
-    pub const ECONNRESET: Error = error!(ECONNRESET);
+    const ECONNRESET = error!(ECONNRESET);
     /// No buffer space available
-    pub const ENOBUFS: Error = error!(ENOBUFS);
+    const ENOBUFS = error!(ENOBUFS);
     /// Transport endpoint is already connected
-    pub const EISCONN: Error = error!(EISCONN);
+    const EISCONN = error!(EISCONN);
     /// Transport endpoint is not connected
-    pub const ENOTCONN: Error = error!(ENOTCONN);
+    const ENOTCONN = error!(ENOTCONN);
     /// Cannot send after transport endpoint shutdown
-    pub const ESHUTDOWN: Error = error!(ESHUTDOWN);
+    const ESHUTDOWN = error!(ESHUTDOWN);
     /// Too many references: cannot splice
-    pub const ETOOMANYREFS: Error = error!(ETOOMANYREFS);
+    const ETOOMANYREFS = error!(ETOOMANYREFS);
     /// Connection timed out
-    pub const ETIMEDOUT: Error = error!(ETIMEDOUT);
+    const ETIMEDOUT = error!(ETIMEDOUT);
     /// Connection refused
-    pub const ECONNREFUSED: Error = error!(ECONNREFUSED);
+    const ECONNREFUSED = error!(ECONNREFUSED);
     /// Host is down
-    pub const EHOSTDOWN: Error = error!(EHOSTDOWN);
+    const EHOSTDOWN = error!(EHOSTDOWN);
     /// No route to host
-    pub const EHOSTUNREACH: Error = error!(EHOSTUNREACH);
+    const EHOSTUNREACH = error!(EHOSTUNREACH);
     /// Operation already in progress
-    pub const EALREADY: Error = error!(EALREADY);
+    const EALREADY = error!(EALREADY);
     /// Operation now in progress
-    pub const EINPROGRESS: Error = error!(EINPROGRESS);
+    const EINPROGRESS = error!(EINPROGRESS);
     /// Stale file handle
-    pub const ESTALE: Error = error!(ESTALE);
+    const ESTALE = error!(ESTALE);
     /// Disk quota exceeded
-    pub const EDQUOT: Error = error!(EDQUOT);
+    const EDQUOT = error!(EDQUOT);
     /// Operation cancelled
-    pub const ECANCELED: Error = error!(ECANCELED);
+    const ECANCELED = error!(ECANCELED);
     /// Owner died
-    pub const EOWNERDEAD: Error = error!(EOWNERDEAD);
+    const EOWNERDEAD = error!(EOWNERDEAD);
     /// State not recoverable
-    pub const ENOTRECOVERABLE: Error = error!(ENOTRECOVERABLE);
+    const ENOTRECOVERABLE = error!(ENOTRECOVERABLE);
     /// Operation not supported
-    pub const ENOTSUP: Error = error!(ENOTSUP);
+    const ENOTSUP = error!(ENOTSUP);
 
     /// Wrong file type.
     ///
     /// On Linux, this is just an alias of [`EINVAL`](Self::EINVAL).
     #[cfg(target_os = "linux")]
-    pub const EFTYPE: Error = error!(EINVAL);
+    const EFTYPE = error!(EINVAL);
 
     /// Wrong file type.
     ///
     /// On Linux, this is just an alias of [`EINVAL`](Self::EINVAL).
     #[cfg(not(target_os = "linux"))]
-    pub const EFTYPE: Error = error!(EFTYPE);
+    const EFTYPE = error!(EFTYPE);
 
     /// Extended attribute not found
     ///
@@ -206,7 +223,7 @@ impl Error {
     /// platform that should be returned when an xattr is not
     /// found.
     #[cfg(target_os = "linux")]
-    pub const ENOXATTR: Error = error!(ENODATA);
+    const ENOXATTR = error!(ENODATA);
 
     /// Extended attribute not found
     ///
@@ -215,16 +232,63 @@ impl Error {
     /// platform that should be returned when an xattr is not
     /// found.
     #[cfg(not(target_os = "linux"))]
-    pub const ENOXATTR: Error = error!(ENOATTR);
+    const ENOXATTR = error!(ENOATTR);
 
+    /// The largest errno this platform defines, and so the largest one a reply
+    /// may carry.
+    ///
+    /// Every kernel this crate speaks to accepts at least this much, and each
+    /// rejects more, some of them destructively:
+    ///
+    /// - Linux allows `1..=511`, and rejects anything larger *before* matching
+    ///   the reply to its request, leaving the caller waiting forever
+    ///   (`fs/fuse/dev.c`, `oh.error <= -512`).
+    /// - FreeBSD quietly substitutes `EIO` above `ELAST`, but under the
+    ///   `linux_errnos` mount option it fails the write outright for anything
+    ///   past its translation table, which loses the reply the same way.
+    /// - macOS performs no range check, so a larger value reaches the caller as
+    ///   a meaningless errno.
+    ///
+    /// Bounding replies by the largest errno the platform actually defines stays
+    /// inside all three, and gives up nothing: a larger value has no meaning
+    /// here anyway.
+    #[cfg(not(target_os = "linux"))]
+    const ELAST = error!(ELAST);
+
+    /// The largest errno this platform defines, and so the largest one a reply
+    /// may carry.
+    ///
+    /// Every kernel this crate speaks to accepts at least this much, and each
+    /// rejects more, some of them destructively:
+    ///
+    /// - Linux allows `1..=511`, and rejects anything larger *before* matching
+    ///   the reply to its request, leaving the caller waiting forever
+    ///   (`fs/fuse/dev.c`, `oh.error <= -512`).
+    /// - FreeBSD quietly substitutes `EIO` above `ELAST`, but under the
+    ///   `linux_errnos` mount option it fails the write outright for anything
+    ///   past its translation table, which loses the reply the same way.
+    /// - macOS performs no range check, so a larger value reaches the caller as
+    ///   a meaningless errno.
+    ///
+    /// Bounding replies by the largest errno the platform actually defines stays
+    /// inside all three, and gives up nothing: a larger value has no meaning
+    /// here anyway.
+    //
+    // Linux has no `ELAST`. `EHWPOISON` is the highest errno it defines
+    // (`asm-generic/errno.h`), and libc doesn't export it.
+    #[cfg(target_os = "linux")]
+    const ELAST = error!(133);
+}
+
+impl Error {
     pub const fn raw_os_error(&self) -> i32 {
         self.0.get()
     }
 
-    /// Returns [`None`] unless `error` is an errno every supported kernel
-    /// accepts in a reply, which is `1..=133`.
+    /// Returns [`None`] unless `error` is an errno this platform defines, which
+    /// is `1..=`[`ELAST`](Self::ELAST).
     pub const fn from_raw_os_error(error: i32) -> Option<Self> {
-        if error < 1 || error > MAX_ERRNO {
+        if error < 1 || error > Self::ELAST.raw_os_error() {
             return None;
         }
 
@@ -233,45 +297,6 @@ impl Error {
         } else {
             None
         }
-    }
-}
-
-impl Error {
-    /// The errno to put in a reply header.
-    ///
-    /// A kernel that rejects the value may never match the reply to its request,
-    /// leaving the caller waiting forever, so anything it can't accept becomes
-    /// `EIO`.
-    pub(crate) fn wire_errno(self) -> i32 {
-        let errno = self.raw_os_error();
-
-        if (1..=MAX_ERRNO).contains(&errno) {
-            errno
-        } else {
-            log::error!("replacing errno {errno}, which no kernel accepts, with EIO");
-            Self::EIO.raw_os_error()
-        }
-    }
-}
-
-/// The largest errno every supported kernel accepts in a reply.
-///
-/// Higher values are rejected, and Linux and FreeBSD both reject them *before*
-/// matching the reply to its request, which leaves the caller waiting forever:
-///
-/// - Linux allows 1..=511 (`fs/fuse/dev.c`, `oh.error <= -512`).
-/// - FreeBSD allows 1..=`ELAST` (97) and quietly substitutes `EIO` above that,
-///   but with the `linux_errnos` mount option it only translates 1..=133
-///   (`LINUX_ELAST`) and fails the write otherwise.
-/// - macOS performs no range check.
-///
-/// 133 (Linux's `EHWPOISON`) is the highest errno any of them defines, so
-/// nothing valid is lost by refusing more.
-pub(crate) const MAX_ERRNO: i32 = 133;
-
-impl From<NonZeroI32> for Error {
-    fn from(err: NonZeroI32) -> Self {
-        Self(err)
     }
 }
 
@@ -402,29 +427,25 @@ mod tests {
     }
 
     #[test]
-    fn errnos_no_kernel_accepts_are_rejected() {
+    fn errnos_this_platform_doesnt_define_are_rejected() {
         assert!(Error::from_raw_os_error(-5).is_none());
-        assert!(Error::from_raw_os_error(MAX_ERRNO + 1).is_none());
+        assert!(Error::from_raw_os_error(Error::ELAST.raw_os_error() + 1).is_none());
         assert!(Error::from_raw_os_error(9999).is_none());
     }
 
     #[test]
     fn the_highest_accepted_errno_is_allowed() {
-        assert!(Error::from_raw_os_error(MAX_ERRNO).is_some());
+        assert!(Error::from_raw_os_error(Error::ELAST.raw_os_error()).is_some());
     }
 
+    // Nothing rewrites an out-of-range errno on the way out any more, so every
+    // named one has to be within what this platform's kernel accepts. The
+    // `error!` macro only checks for zero, so this is the only thing that would
+    // catch a constant above the ceiling.
     #[test]
-    fn every_platform_errno_is_within_the_limit() {
-        for err in [
-            Error::EPERM,
-            Error::EIO,
-            Error::ENOSYS,
-            Error::ERANGE,
-            Error::ENOTSUP,
-            Error::ENOXATTR,
-            Error::EPROTO,
-        ] {
-            assert_eq!(err.wire_errno(), err.raw_os_error(), "{err:?}");
+    fn every_named_errno_is_within_the_limit() {
+        for err in Error::ALL.iter().copied() {
+            assert!(err <= Error::ELAST, "{err:?} exceeds {:?}", Error::ELAST);
         }
     }
 
@@ -433,7 +454,7 @@ mod tests {
         let io = std::io::Error::from_raw_os_error(9999);
         let err = Error::from(io);
 
-        assert!((1..=MAX_ERRNO).contains(&err.raw_os_error()));
+        assert!((1..=Error::ELAST.raw_os_error()).contains(&err.raw_os_error()));
     }
 
     // `open_passthrough` documents one `ENOTSUP` for both "this connection has no

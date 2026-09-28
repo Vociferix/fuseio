@@ -47,6 +47,12 @@ pub mod prelude {
 }
 
 pub trait Fs<C: Connection>: Sized + 'static {
+    // TODO: document that unmounting will deadlock unless all instances of
+    // `Context`, `PassthroughFd`, and `NotifyPruneCache` are dropped.
+    // Specifically, these don't _necessarily_ need to be dropped before
+    // `Fs::unmount` returns, but unmounting will not progress after
+    // `Fs::unmount` returns until they are all dropped. Meaning, background
+    // tasks may drop them some time after `Fs::unmount` returns.
     async fn unmount(self, ctx: types::Context<C>) {
         let _ = (self, ctx);
     }

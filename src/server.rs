@@ -2,7 +2,7 @@ use crate::Error;
 use crate::async_rc::AsyncRc;
 use crate::buf::{Buf, BufPool, IntoIoBuf};
 use crate::cancel_token::CancelToken;
-use crate::conn::{Connection, SharedConnection, TokenGuard};
+use crate::conn::{Conn, Connection, ConnectionMeta, SharedConnection, TokenGuard};
 use crate::fs::req::{self, Req};
 use crate::fs::types::{DirEntryBuf, DirEntryPlusBuf, XattrKeyBuf};
 use crate::fs::{BindFs, Fs};
@@ -46,7 +46,7 @@ const _: () = assert!(
 const WRITE_HEADER_SIZE: usize = 40;
 
 pub struct Server<F, U: Unmount> {
-    pub inner: Rc<ServerInner<U::Conn>>,
+    pub inner: AsyncRc<ServerInner<U::Conn>>,
     pub fs: F,
     pub once: Option<Once<U>>,
 }
@@ -131,7 +131,7 @@ impl<F, U: Unmount> std::ops::Deref for Server<F, U> {
     }
 }
 
-type Token<U> = TokenGuard<<<U as Unmount>::Conn as Connection>::ReqToken>;
+type Token<U> = TokenGuard<<<U as Unmount>::Conn as ConnectionMeta>::ReqToken>;
 
 impl<F, U> Server<F, U>
 where
@@ -142,9 +142,22 @@ where
     where
         B: BindFs<U::Conn, BoundFs = F>,
     {
-        let inner = Rc::new(ServerInner {
+        let conn = h.conn.bind().await?;
+
+        // Ensure the connection supports at least sending an error (response header only)
+        //
+        // This is already checked before initialization, but technically the
+        // bound connection can return a different value.
+        if conn.max_response_size() < crate::proto::MIN_MSG_SIZE {
+            return Err(std::io::Error::new(
+                std::io::ErrorKind::Unsupported,
+                "connection max response size too small",
+            ));
+        }
+
+        let inner = AsyncRc::new(ServerInner {
             id: h.id,
-            conn: h.conn.bind().await?,
+            conn,
             minor_ver: h.minor_ver,
             flags: h.flags,
             caps: h.config.caps(),
@@ -195,9 +208,11 @@ where
         fs.unmount(crate::context::Context::new(inner.clone()))
             .await;
 
+        let inner = inner.unwrap().await;
+
         if let Some(once) = once {
             once.unmount
-                .unmount(&inner.conn, &once.path, &once.opts)
+                .unmount(Conn::Bound(inner.conn), &once.path, &once.opts)
                 .await?;
         }
 
@@ -312,9 +327,9 @@ where
                 );
 
                 match op {
-                    Opcode::FORGET | Opcode::BATCH_FORGET => this.discard_token(token).await,
-                    #[cfg(target_os = "macos")]
-                    Opcode::MONITOR => this.discard_token(token).await,
+                    Opcode::FORGET | Opcode::BATCH_FORGET | Opcode::MONITOR => {
+                        this.discard_token(token).await
+                    }
                     Opcode::NOTIFY_REPLY => {
                         this.discard_token(token).await;
                         let worker = (id >> 32) as usize;
@@ -499,13 +514,21 @@ where
             Body::CopyFileRange64(body) => {
                 Self::copy_file_range64(&this, cancel, token, req, body).await
             }
-            #[cfg(target_os = "macos")]
             Body::SetVolName(body) => Self::setvolname(&this, cancel, token, req, body).await,
-            #[cfg(target_os = "macos")]
             Body::GetXtimes(body) => Self::getxtimes(&this, cancel, token, req, body).await,
-            #[cfg(target_os = "macos")]
             Body::Monitor(body) => Self::monitor(&this, cancel, token, req, body).await,
-            _ => this.discard_token(token).await,
+
+            // `handle_req` answers these itself and never dispatches them. Named
+            // rather than caught by a wildcard so that a new `Body` variant is a
+            // compile error here instead of a request the server quietly drops.
+            Body::Interrupt(_) | Body::Destroy(_) | Body::NotifyReply(_) => {
+                log::error!(
+                    "worker {} dispatched request {} which is handled before dispatch",
+                    this.inner.id,
+                    req.id,
+                );
+                this.discard_token(token).await;
+            }
         }
     }
 
@@ -1190,7 +1213,6 @@ where
         .await;
     }
 
-    #[cfg(target_os = "macos")]
     async fn setvolname(
         this: &AsyncRc<Self>,
         cancel: CancelToken,
@@ -1204,7 +1226,6 @@ where
             .await;
     }
 
-    #[cfg(target_os = "macos")]
     async fn getxtimes(
         this: &AsyncRc<Self>,
         cancel: CancelToken,
@@ -1217,7 +1238,6 @@ where
         this.send(token, id, this.fs.get_xtimes(req).await).await;
     }
 
-    #[cfg(target_os = "macos")]
     async fn monitor(
         this: &AsyncRc<Self>,
         cancel: CancelToken,
@@ -1236,19 +1256,36 @@ where
         Error: From<T::Error>,
     {
         let cfg = crate::proto::Cfg {
-            minor_ver: self.inner.minor_ver,
-            flags: self.inner.flags,
+            minor_ver: self.minor_ver,
+            flags: self.flags,
         };
 
-        let buf = match resp.encode(id, cfg) {
-            Ok(buf) => buf.left_buf(),
+        let res = match resp.encode(id, cfg) {
+            Ok(buf) => {
+                let buf = buf.into_io_buf();
+                let response_size = buf.total_len();
+                let max_response_size = self.conn.max_response_size();
+                if response_size > max_response_size {
+                    log::error!(
+                        "response for message {} on worker {} is larger than the maximum response size ({}): size={}",
+                        id,
+                        self.inner.id,
+                        max_response_size,
+                        response_size,
+                    );
+                    let Ok(buf) = Error::EIO.encode(id, cfg);
+                    self.conn.send_response_buf(token.into_inner(), buf).await
+                } else {
+                    self.conn.send_response_buf(token.into_inner(), buf).await
+                }
+            }
             Err(err) => {
                 let Ok(buf) = Error::from(err).encode(id, cfg);
-                buf.right_buf()
+                self.conn.send_response_buf(token.into_inner(), buf).await
             }
         };
 
-        if let Err(err) = self.conn.send_response_buf(token.into_inner(), buf).await {
+        if let Err(err) = res {
             log::error!(
                 "worker {} failed to send response on FUSE device: {}",
                 self.inner.id,

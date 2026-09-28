@@ -1,4 +1,5 @@
 mod abi;
+mod conn_caps;
 mod copy_file_range_pos;
 mod device_number;
 mod fallocate_flags;
@@ -19,6 +20,7 @@ mod lock_flags;
 mod lock_kind;
 mod lock_owner;
 mod monitor_flags;
+mod notify_caps;
 mod open_access_mode;
 mod opened_flags;
 mod rename_mode;
@@ -40,6 +42,8 @@ pub use nix::{
 };
 
 pub use abi::Abi;
+pub use conn_caps::ConnCaps;
+pub(crate) use conn_caps::PeerCaps;
 pub use copy_file_range_pos::CopyFileRangePos;
 pub use device_number::DeviceNumber;
 pub use fallocate_flags::FallocateFlags;
@@ -60,6 +64,7 @@ pub(crate) use lock_flags::LockFlags;
 pub use lock_kind::LockKind;
 pub use lock_owner::LockOwner;
 pub(crate) use monitor_flags::MonitorFlags;
+pub use notify_caps::NotifyCaps;
 pub use open_access_mode::OpenAccessMode;
 pub use opened_flags::OpenedFlags;
 pub use rename_mode::RenameMode;

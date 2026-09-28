@@ -83,8 +83,9 @@ impl KernelCaps {
             caps = caps.union(Self::HAS_EXPIRE_ONLY);
         }
 
-        // Only macOS negotiates these; elsewhere the kernel may send the
-        // corresponding requests whenever the protocol version has them.
+        // macFUSE negotiates these through its own Darwin flags; other kernels
+        // may send the corresponding requests whenever the protocol version has
+        // them.
         if !cfg!(target_os = "macos") {
             if minor >= 19 {
                 caps = caps.union(Self::FALLOCATE);
@@ -98,5 +99,53 @@ impl KernelCaps {
         }
 
         caps
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    const INFERRED: KernelCaps = KernelCaps::FALLOCATE
+        .union(KernelCaps::RENAME_EXCHANGE)
+        .union(KernelCaps::RENAME_NOREPLACE)
+        .union(KernelCaps::RENAME_WHITEOUT);
+
+    // Neither Linux nor FreeBSD negotiates these, so the protocol version is all
+    // there is to go on. macFUSE negotiates each with a Darwin flag of its own,
+    // where assuming them would claim capabilities the kext never offered.
+    #[test]
+    fn what_is_never_negotiated_is_inferred_off_macos() {
+        let caps = KernelCaps::new(KernelInitFlags::empty(), 23);
+
+        assert_eq!(caps.contains(INFERRED), !cfg!(target_os = "macos"));
+    }
+
+    #[test]
+    fn nothing_is_inferred_below_the_version() {
+        let caps = KernelCaps::new(KernelInitFlags::empty(), 18);
+
+        assert!(!caps.intersects(INFERRED));
+    }
+
+    // An offer is taken at face value on every platform; only the inference is
+    // conditional.
+    #[test]
+    fn offered_flags_are_always_taken() {
+        let offered = KernelInitFlags::DARWIN_ALLOCATE | KernelInitFlags::DARWIN_RENAME_SWAP;
+
+        // A version low enough that nothing is inferred, so only the offer shows.
+        let caps = KernelCaps::new(offered, 0);
+
+        assert!(caps.contains(KernelCaps::FALLOCATE | KernelCaps::RENAME_EXCHANGE));
+        assert!(!caps.intersects(KernelCaps::RENAME_NOREPLACE | KernelCaps::RENAME_WHITEOUT));
+    }
+
+    // No kernel negotiates these either, so they are inferred everywhere.
+    #[test]
+    fn the_version_only_inferences_apply_everywhere() {
+        let caps = KernelCaps::new(KernelInitFlags::empty(), 38);
+
+        assert!(caps.contains(KernelCaps::HAS_IOCTL_DIR | KernelCaps::HAS_EXPIRE_ONLY));
     }
 }

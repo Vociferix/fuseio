@@ -16,6 +16,10 @@ pub enum NotifyError {
     /// inode or entry it never looked up, and is normally not worth reporting.
     NotCached,
 
+    /// The notification is larger than the largest notification size supported
+    /// by the connection.
+    TooLarge,
+
     /// The notification couldn't be sent.
     Io(std::io::Error),
 }
@@ -32,6 +36,7 @@ impl std::fmt::Display for NotifyError {
         match self {
             Self::Unsupported => f.write_str("the kernel does not support this notification"),
             Self::NotCached => f.write_str("the kernel has nothing cached"),
+            Self::TooLarge => f.write_str("notification too large for the connection"),
             Self::Io(err) => write!(f, "failed to notify the kernel: {err}"),
         }
     }

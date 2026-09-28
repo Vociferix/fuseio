@@ -1,4 +1,4 @@
-use super::{FsCaps, RenameMode};
+use super::{ConnCaps, FsCaps, NotifyCaps, PeerCaps, RenameMode};
 
 /// Something a filesystem may want to know is available before relying on it.
 ///
@@ -65,6 +65,9 @@ pub enum Feature {
     /// Only macOS asks.
     VolumeName,
 
+    /// The kernel may notify about watchers of an inode.
+    Monitor,
+
     /// Cached attributes and data can be invalidated.
     InvalidateInode,
 
@@ -127,6 +130,9 @@ mod since {
     pub(super) const TMPFILE: u32 = 37;
     pub(super) const EXPIRE_ONLY: u32 = 38;
     pub(super) const STATX: u32 = 39;
+    // The macfuse library lists version 7.45 on the commit where FUSE_MONITOR was added.
+    // It's not clear if this is the real minimum protocol version supported by the kext.
+    pub(super) const MONITOR: u32 = 45;
     pub(super) const PASSTHROUGH: u32 = 40;
     pub(super) const INC_EPOCH: u32 = 44;
     pub(super) const PRUNE: u32 = 45;
@@ -137,15 +143,20 @@ mod since {
 /// `caps` is what is in effect: the features a filesystem enabled once a
 /// connection is running, or everything the kernel offered while one is being
 /// set up.
-pub(crate) fn supports(feature: Feature, minor_ver: u32, caps: FsCaps) -> bool {
+pub(crate) fn supports(peer: PeerCaps, feature: Feature, minor_ver: u32, caps: FsCaps) -> bool {
     let version = |since| minor_ver >= since;
     let cap = |cap| caps.contains(cap);
-    let macos = cfg!(target_os = "macos");
+    let conn_cap = |cap| peer.caps.contains(cap);
+    let notify_cap = |cap| peer.notify.contains(cap);
+
+    // Only macOS kernels send the requests these answer for, and each is also
+    // negotiated, so the capability alone decides.
+    const MACOS: bool = cfg!(target_os = "macos");
 
     match feature {
         Feature::Ioctl => version(since::IOCTL),
         Feature::IoctlOnDirectories => version(since::IOCTL_DIR),
-        Feature::Poll => version(since::POLL),
+        Feature::Poll => conn_cap(ConnCaps::POLL) && version(since::POLL),
         Feature::BatchForget => version(since::BATCH_FORGET),
         Feature::Fallocate => version(since::FALLOCATE) && cap(FsCaps::FALLOCATE),
         Feature::ReadDirPlus => version(since::READDIRPLUS) && cap(FsCaps::DO_READDIRPLUS),
@@ -170,34 +181,40 @@ pub(crate) fn supports(feature: Feature, minor_ver: u32, caps: FsCaps) -> bool {
             }
 
             match mode {
-                RenameMode::ExchangeData => macos,
-                _ if macos => true,
-                _ => version(since::RENAME2),
+                // Reachable only with `EXCHANGE_DATA`, which no other kernel
+                // offers, so the capability check above is the whole gate.
+                RenameMode::ExchangeData => true,
+                // macFUSE carries its rename flags in the request it already
+                // had, so it needs no newer protocol version for them.
+                _ if MACOS => true,
+                _ => conn_cap(ConnCaps::RENAME2) && version(since::RENAME2),
             }
         }
 
         Feature::Lseek => version(since::LSEEK),
         Feature::CopyFileRange => version(since::COPY_FILE_RANGE),
-        Feature::SyncFs => version(since::SYNCFS),
+        Feature::SyncFs => conn_cap(ConnCaps::SYNCFS) && version(since::SYNCFS),
         Feature::TmpFile => version(since::TMPFILE),
         Feature::StatX => version(since::STATX),
         Feature::ExtendedSetxattr => version(since::SETXATTR_EXT) && cap(FsCaps::SETXATTR_EXT),
-        Feature::BackupTimes => macos && cap(FsCaps::MACOS_XTIMES),
-        Feature::VolumeName => macos && cap(FsCaps::MACOS_VOL_RENAME),
+        Feature::BackupTimes => conn_cap(ConnCaps::BACKUP_TIMES) && cap(FsCaps::MACOS_XTIMES),
+        Feature::VolumeName => conn_cap(ConnCaps::VOLUME_NAME) && cap(FsCaps::MACOS_VOL_RENAME),
+        Feature::Monitor => conn_cap(ConnCaps::MONITOR) && version(since::MONITOR),
 
-        Feature::InvalidateInode | Feature::InvalidateEntry => version(since::INVAL),
-        Feature::ExpireEntry => version(since::EXPIRE_ONLY),
-        Feature::DeleteEntry => version(since::DELETE),
-        Feature::StoreCache => version(since::STORE),
-        Feature::RetrieveCache => version(since::RETRIEVE),
-        Feature::IncrementEpoch => version(since::INC_EPOCH),
-        Feature::PollWakeup => version(since::NOTIFY_POLL),
-
-        // XXX: If/when FreeBSD gets to 7.45, check if it actually supports `FUSE_NOTIFY_PRUNE`
-        Feature::PruneCache => cfg!(target_os = "linux") && version(since::PRUNE),
+        Feature::InvalidateInode => notify_cap(NotifyCaps::INVAL_INODE) && version(since::INVAL),
+        Feature::InvalidateEntry => notify_cap(NotifyCaps::INVAL_ENTRY) && version(since::INVAL),
+        Feature::ExpireEntry => notify_cap(NotifyCaps::EXPIRE_ENTRY) && version(since::EXPIRE_ONLY),
+        Feature::DeleteEntry => notify_cap(NotifyCaps::DELETE) && version(since::DELETE),
+        Feature::StoreCache => notify_cap(NotifyCaps::STORE) && version(since::STORE),
+        Feature::RetrieveCache => notify_cap(NotifyCaps::RETRIEVE) && version(since::RETRIEVE),
+        Feature::IncrementEpoch => notify_cap(NotifyCaps::INC_EPOCH) && version(since::INC_EPOCH),
+        Feature::PollWakeup => notify_cap(NotifyCaps::POLL_WAKEUP) && version(since::NOTIFY_POLL),
+        Feature::PruneCache => notify_cap(NotifyCaps::PRUNE) && version(since::PRUNE),
 
         Feature::Passthrough => {
-            cfg!(target_os = "linux") && version(since::PASSTHROUGH) && cap(FsCaps::PASSTHROUGH)
+            conn_cap(ConnCaps::PASSTHROUGH)
+                && version(since::PASSTHROUGH)
+                && cap(FsCaps::PASSTHROUGH)
         }
 
         Feature::ProtocolAtLeast(minor) => version(minor),
@@ -213,8 +230,14 @@ mod tests {
     /// The version every macOS kernel speaks.
     const MACOS: u32 = 19;
 
+    /// Asks a peer that gates nothing, leaving the version and the negotiated
+    /// capabilities as the only variables.
     fn supported(feature: Feature, minor_ver: u32, caps: FsCaps) -> bool {
-        supports(feature, minor_ver, caps)
+        supports(PeerCaps::PERMISSIVE, feature, minor_ver, caps)
+    }
+
+    fn supported_by(peer: PeerCaps, feature: Feature, minor_ver: u32, caps: FsCaps) -> bool {
+        supports(peer, feature, minor_ver, caps)
     }
 
     #[test]
@@ -319,39 +342,138 @@ mod tests {
         ));
     }
 
+    // No other kernel offers `EXCHANGE_DATA`, so the negotiated capability is the
+    // whole gate and no platform check is needed.
     #[test]
-    fn exchanging_data_is_a_macos_rename() {
-        assert_eq!(
-            supported(
-                Feature::Rename(RenameMode::ExchangeData),
-                CURRENT,
-                FsCaps::EXCHANGE_DATA
-            ),
-            cfg!(target_os = "macos")
-        );
+    fn exchanging_data_needs_only_its_capability() {
+        let feature = Feature::Rename(RenameMode::ExchangeData);
+
+        assert!(supported(feature, MACOS, FsCaps::EXCHANGE_DATA));
+        assert!(!supported(feature, CURRENT, FsCaps::empty()));
     }
 
+    // Only macOS kernels ask for these, which the connection reports rather than
+    // the protocol version, so a mock can turn them on anywhere.
     #[test]
-    fn the_macos_only_features_follow_the_platform() {
-        for (feature, caps) in [
-            (Feature::BackupTimes, FsCaps::MACOS_XTIMES),
-            (Feature::VolumeName, FsCaps::MACOS_VOL_RENAME),
+    fn the_macos_only_features_follow_the_connection() {
+        for (feature, conn, caps) in [
+            (
+                Feature::BackupTimes,
+                ConnCaps::BACKUP_TIMES,
+                FsCaps::MACOS_XTIMES,
+            ),
+            (
+                Feature::VolumeName,
+                ConnCaps::VOLUME_NAME,
+                FsCaps::MACOS_VOL_RENAME,
+            ),
         ] {
-            assert_eq!(
-                supported(feature, MACOS, caps),
-                cfg!(target_os = "macos"),
-                "{feature:?}"
-            );
+            assert!(supported(feature, MACOS, caps), "{feature:?}");
+
+            let without = PeerCaps::new(ConnCaps::all().difference(conn), NotifyCaps::all());
+            assert!(!supported_by(without, feature, MACOS, caps), "{feature:?}");
+
+            // Still negotiated, even where the connection has them.
             assert!(!supported(feature, MACOS, FsCaps::empty()), "{feature:?}");
         }
     }
 
+    // macFUSE 5 has it and macFUSE 4 doesn't, and nothing negotiates it, so the
+    // connection and the protocol version are all that separate them.
     #[test]
-    fn passthrough_needs_the_platform_the_version_and_the_capability() {
-        assert_eq!(
-            supported(Feature::Passthrough, CURRENT, FsCaps::PASSTHROUGH),
-            cfg!(target_os = "linux")
+    fn monitor_needs_the_connection_and_its_version() {
+        assert!(supported(Feature::Monitor, 45, FsCaps::empty()));
+        assert!(!supported(Feature::Monitor, MACOS, FsCaps::empty()));
+
+        let without = PeerCaps::new(
+            ConnCaps::all().difference(ConnCaps::MONITOR),
+            NotifyCaps::all(),
         );
+        assert!(!supported_by(
+            without,
+            Feature::Monitor,
+            45,
+            FsCaps::empty()
+        ));
+    }
+
+    // FreeBSD advertises 7.35 but implements neither, so the version alone must
+    // not decide these.
+    #[test]
+    fn a_connection_can_refuse_what_its_version_implies() {
+        let peer = PeerCaps::new(ConnCaps::empty(), NotifyCaps::all());
+
+        #[cfg_attr(target_os = "macos", allow(unused_mut))]
+        let mut cases = vec![
+            (Feature::SyncFs, FsCaps::empty()),
+            (Feature::Poll, FsCaps::empty()),
+        ];
+
+        // macFUSE needs no `RENAME2` for its flagged renames, so it answers yes
+        // whatever the connection says.
+        #[cfg(not(target_os = "macos"))]
+        cases.push((
+            Feature::Rename(RenameMode::NoReplace),
+            FsCaps::RENAME_NOREPLACE,
+        ));
+
+        for (feature, caps) in cases {
+            assert!(supported(feature, CURRENT, caps), "{feature:?}");
+            assert!(!supported_by(peer, feature, CURRENT, caps), "{feature:?}");
+        }
+    }
+
+    // FreeBSD answers only the two invalidations; the rest are `ENOSYS`.
+    #[test]
+    fn a_connection_can_refuse_a_notification() {
+        let peer = PeerCaps::new(
+            ConnCaps::all(),
+            NotifyCaps::INVAL_INODE.union(NotifyCaps::INVAL_ENTRY),
+        );
+
+        for feature in [Feature::InvalidateInode, Feature::InvalidateEntry] {
+            assert!(
+                supported_by(peer, feature, CURRENT, FsCaps::all()),
+                "{feature:?}"
+            );
+        }
+
+        for feature in [
+            Feature::DeleteEntry,
+            Feature::StoreCache,
+            Feature::RetrieveCache,
+            Feature::ExpireEntry,
+            Feature::IncrementEpoch,
+            Feature::PruneCache,
+            Feature::PollWakeup,
+        ] {
+            assert!(supported(feature, CURRENT, FsCaps::all()), "{feature:?}");
+            assert!(
+                !supported_by(peer, feature, CURRENT, FsCaps::all()),
+                "{feature:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn passthrough_needs_the_connection_the_version_and_the_capability() {
+        assert!(supported(
+            Feature::Passthrough,
+            CURRENT,
+            FsCaps::PASSTHROUGH
+        ));
+
+        let no_passthrough = PeerCaps::new(
+            ConnCaps::all().difference(ConnCaps::PASSTHROUGH),
+            NotifyCaps::all(),
+        );
+
+        assert!(!supported_by(
+            no_passthrough,
+            Feature::Passthrough,
+            CURRENT,
+            FsCaps::PASSTHROUGH
+        ));
         assert!(!supported(Feature::Passthrough, CURRENT, FsCaps::empty()));
         assert!(!supported(Feature::Passthrough, 39, FsCaps::PASSTHROUGH));
     }

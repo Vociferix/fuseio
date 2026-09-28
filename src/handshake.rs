@@ -13,6 +13,9 @@ pub struct KernelConfig {
     ver: Version,
     max_readahead: usize,
     caps: KernelCaps,
+    /// What the connection says about the peer, since a feature question needs
+    /// it and this type outlives no connection.
+    peer: crate::types::PeerCaps,
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -132,7 +135,7 @@ impl KernelConfig {
         // the filesystem could enable.
         let offered = FsCaps::from_bits_truncate(self.caps.bits());
 
-        crate::types::feature::supports(feature, self.ver.1, offered)
+        crate::types::feature::supports(self.peer, feature, self.ver.1, offered)
     }
 
     pub fn to_config(&self) -> Config {
@@ -341,11 +344,12 @@ where
     };
 
     let unique = msg.hdr.unique;
+    let peer = crate::types::PeerCaps::of(conn);
 
     let (max_readahead, kflags) = if msg.minor >= 6 {
         (
             msg.max_readahead,
-            KernelInitFlags::from_wire(msg.flags0, msg.flags1),
+            KernelInitFlags::offered(peer, msg.minor, msg.flags0, msg.flags1),
         )
     } else {
         (0, KernelInitFlags::empty())
@@ -355,6 +359,7 @@ where
         ver: Version(msg.major, msg.minor),
         max_readahead: max_readahead as usize,
         caps: KernelCaps::new(kflags, msg.minor),
+        peer,
     };
 
     let fs = match fs.mount(kconf, opts).await {
@@ -539,7 +544,13 @@ async fn write_init_resp<C>(
 where
     C: SharedConnection,
 {
-    if (resp.hdr.len as usize) > size_of::<InitRespRaw>() {
+    let msg_len = resp.hdr.len as usize;
+
+    if msg_len > conn.max_response_size() {
+        return Err(ErrorKind::Unsupported.into());
+    }
+
+    if msg_len > size_of::<InitRespRaw>() {
         return Err(ErrorKind::InvalidInput.into());
     }
 
@@ -562,7 +573,7 @@ where
         InitRespRaw {
             hdr: RespHdr {
                 len: const { size_of::<RespHdr>() as u32 },
-                err: -err.wire_errno(),
+                err: -err.raw_os_error(),
                 unique,
             },
             ..InitRespRaw::default()
@@ -595,6 +606,7 @@ mod tests {
             ver: Version(MAJOR_VER, MINOR_VER),
             max_readahead: 128 * 1024,
             caps: KernelCaps::new(KernelInitFlags::empty(), MINOR_VER),
+            peer: crate::types::PeerCaps::PERMISSIVE,
         }
     }
 
@@ -644,7 +656,7 @@ mod tests {
 
         assert!(kernel.supports(crate::types::Feature::Lseek));
 
-        // `KernelCaps` infers the operations Linux and FreeBSD never negotiate
+        // `KernelCaps` infers the operations Linux and the BSDs never negotiate
         // from the protocol version, so these come for free off macOS.
         assert_eq!(
             kernel.supports(crate::types::Feature::Fallocate),
@@ -665,10 +677,22 @@ mod tests {
         };
 
         assert!(kernel.supports(crate::types::Feature::Fallocate));
-        assert_eq!(
-            kernel.supports(crate::types::Feature::Passthrough),
-            cfg!(target_os = "linux")
-        );
+        assert!(kernel.supports(crate::types::Feature::Passthrough));
+    }
+
+    // Offering it isn't enough when the connection can't carry out the ioctls.
+    #[test]
+    fn a_connection_without_passthrough_refuses_it() {
+        let kernel = KernelConfig {
+            caps: KernelCaps::from_bits_truncate(FsCaps::PASSTHROUGH.bits()),
+            peer: crate::types::PeerCaps::new(
+                crate::types::ConnCaps::empty(),
+                crate::types::NotifyCaps::empty(),
+            ),
+            ..kernel()
+        };
+
+        assert!(!kernel.supports(crate::types::Feature::Passthrough));
     }
 
     #[test]

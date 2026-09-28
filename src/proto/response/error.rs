@@ -10,7 +10,7 @@ impl EncodeResp for crate::Error {
 
 impl crate::Error {
     pub(crate) fn into_reply(self, id: u64) -> impl IntoIoBuf {
-        let errno = self.wire_errno();
+        let errno = self.raw_os_error();
 
         RawHeader {
             len: const { std::mem::size_of::<RawHeader>() as u32 },
@@ -34,7 +34,7 @@ mod tests {
     fn cfg() -> Cfg {
         Cfg {
             minor_ver: crate::handshake::MINOR_VER,
-            flags: ReplyInitFlags::empty(),
+            ..Cfg::default()
         }
     }
 
@@ -69,18 +69,10 @@ mod tests {
     }
 
     #[test]
-    fn an_errno_no_kernel_accepts_becomes_eio() {
-        let too_big = Error::from(std::num::NonZeroI32::new(9999).unwrap());
-        let negative = Error::from(std::num::NonZeroI32::new(-5).unwrap());
+    fn the_error_stays_within_what_this_platform_accepts() {
+        let (_, err, _) = reply(Error::ELAST);
 
-        assert_eq!(reply(too_big).1, -Error::EIO.raw_os_error());
-        assert_eq!(reply(negative).1, -Error::EIO.raw_os_error());
-    }
-
-    #[test]
-    fn the_error_stays_within_what_kernels_accept() {
-        let (_, err, _) = reply(Error::from(std::num::NonZeroI32::new(511).unwrap()));
-
-        assert!(err > -512 && err < 0);
+        assert_eq!(-err, Error::ELAST.raw_os_error());
+        assert!(err < 0 && -err <= Error::ELAST.raw_os_error());
     }
 }

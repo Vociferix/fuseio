@@ -1,5 +1,5 @@
 use crate::MountOpt;
-use crate::conn::{Connection, SharedConnection};
+use crate::conn::{Conn, Connection, SharedConnection};
 
 use std::io::Result;
 use std::path::Path;
@@ -66,16 +66,9 @@ pub trait Unmount: 'static {
     type SharedConn: SharedConnection<Bound = Self::Conn>;
     type Conn: Connection;
 
-    async fn unmount_shared(
-        self,
-        conn: &Self::SharedConn,
-        mountpoint: &Path,
-        options: &[MountOpt],
-    ) -> Result<()>;
-
     async fn unmount(
         self,
-        conn: &Self::Conn,
+        conn: Conn<Self::SharedConn>,
         mountpoint: &Path,
         options: &[MountOpt],
     ) -> Result<()>;

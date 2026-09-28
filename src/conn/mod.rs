@@ -8,16 +8,28 @@ use compio::buf::{BufResult, IoBuf, IoBufMut, IoVectoredBuf};
 mod dev_fuse;
 
 pub use crate::passthrough::RawBackingId;
+pub use crate::types::{ConnCaps, NotifyCaps};
 
 pub use dev_fuse::{DevFuseConn, DevFuseSharedConn};
 
-pub trait SharedConnection: Sized + 'static {
-    type Bound: Connection;
-
-    // This doesn't necessarily have to be the same as `<Self::Bound as Connection>::ReqToken`.
-    // This token is only used for initialization, so if the connection would benefit from
-    // having a distinct token type for the handshake than for normal operation, that is permitted.
+pub trait ConnectionMeta: Sized + 'static {
     type ReqToken;
+
+    fn capabilities(&self) -> ConnCaps;
+
+    fn notify_capabilities(&self) -> NotifyCaps;
+
+    fn max_response_size(&self) -> usize {
+        const { u32::MAX as usize }
+    }
+
+    fn max_notification_size(&self) -> usize {
+        const { u32::MAX as usize }
+    }
+}
+
+pub trait SharedConnection: ConnectionMeta {
+    type Bound: Connection;
 
     async fn bind(self) -> Result<Self::Bound>;
 
@@ -32,9 +44,7 @@ pub trait SharedConnection: Sized + 'static {
         B: IoBuf;
 }
 
-pub trait Connection: Sized + 'static {
-    type ReqToken;
-
+pub trait Connection: ConnectionMeta {
     async fn recv_request<B>(&self, buf: B) -> BufResult<(usize, Self::ReqToken), B>
     where
         B: IoBufMut;
@@ -88,6 +98,119 @@ pub trait Connection: Sized + 'static {
 
     fn close_passthrough(&self, backing_id: RawBackingId) -> Result<()> {
         Err(std::io::ErrorKind::Unsupported.into())
+    }
+}
+
+pub enum Conn<C: SharedConnection> {
+    Shared(C),
+    Bound(C::Bound),
+}
+
+impl<C, T> AsRef<T> for Conn<C>
+where
+    C: SharedConnection + AsRef<T>,
+    C::Bound: AsRef<T>,
+    T: ?Sized,
+{
+    fn as_ref(&self) -> &T {
+        match self {
+            Self::Shared(conn) => conn.as_ref(),
+            Self::Bound(conn) => conn.as_ref(),
+        }
+    }
+}
+
+impl<C, T> AsMut<T> for Conn<C>
+where
+    C: SharedConnection + AsMut<T>,
+    C::Bound: AsMut<T>,
+    T: ?Sized,
+{
+    fn as_mut(&mut self) -> &mut T {
+        match self {
+            Self::Shared(conn) => conn.as_mut(),
+            Self::Bound(conn) => conn.as_mut(),
+        }
+    }
+}
+
+impl<C> std::ops::Deref for Conn<C>
+where
+    C: SharedConnection + std::ops::Deref,
+    C::Bound: std::ops::Deref<Target = C::Target>,
+{
+    type Target = C::Target;
+
+    fn deref(&self) -> &Self::Target {
+        match self {
+            Self::Shared(conn) => conn.deref(),
+            Self::Bound(conn) => conn.deref(),
+        }
+    }
+}
+
+impl<C> std::ops::DerefMut for Conn<C>
+where
+    C: SharedConnection + std::ops::DerefMut,
+    C::Bound: std::ops::DerefMut<Target = C::Target>,
+{
+    fn deref_mut(&mut self) -> &mut Self::Target {
+        match self {
+            Self::Shared(conn) => conn.deref_mut(),
+            Self::Bound(conn) => conn.deref_mut(),
+        }
+    }
+}
+
+impl<C> std::os::fd::AsFd for Conn<C>
+where
+    C: SharedConnection + std::os::fd::AsFd,
+    C::Bound: std::os::fd::AsFd,
+{
+    fn as_fd(&self) -> std::os::fd::BorrowedFd<'_> {
+        match self {
+            Self::Shared(conn) => conn.as_fd(),
+            Self::Bound(conn) => conn.as_fd(),
+        }
+    }
+}
+
+impl<C> std::os::fd::AsRawFd for Conn<C>
+where
+    C: SharedConnection + std::os::fd::AsRawFd,
+    C::Bound: std::os::fd::AsRawFd,
+{
+    fn as_raw_fd(&self) -> std::os::fd::RawFd {
+        match self {
+            Self::Shared(conn) => conn.as_raw_fd(),
+            Self::Bound(conn) => conn.as_raw_fd(),
+        }
+    }
+}
+
+impl<C> std::os::fd::IntoRawFd for Conn<C>
+where
+    C: SharedConnection + std::os::fd::IntoRawFd,
+    C::Bound: std::os::fd::IntoRawFd,
+{
+    fn into_raw_fd(self) -> std::os::fd::RawFd {
+        match self {
+            Self::Shared(conn) => conn.into_raw_fd(),
+            Self::Bound(conn) => conn.into_raw_fd(),
+        }
+    }
+}
+
+impl<C> From<Conn<C>> for std::os::fd::OwnedFd
+where
+    C: SharedConnection + Into<std::os::fd::OwnedFd>,
+    C::Bound: Into<std::os::fd::OwnedFd>,
+{
+    fn from(conn: Conn<C>) -> Self {
+        match conn {
+            Conn::Shared(conn) => conn.into(),
+            Conn::Bound(conn) => conn.into(),
+        }
     }
 }
 

@@ -1,12 +1,13 @@
 use crate::Result;
+use crate::async_rc::AsyncRc;
 use crate::buf::{BufPool, IntoIoBuf};
-use crate::conn::Connection;
+use crate::conn::{Connection, ConnectionMeta};
 use crate::fs::types::{NotifyError, PassthroughFd};
 use crate::proto::notify::{
     Delete, EncodeNotify, ExpireEntry, IncrementEpoch, InvalEntry, InvalInode, Prune, Retrieve,
     Store,
 };
-use crate::proto::request::{Cfg, NotifyReply};
+use crate::proto::{Cfg, request::NotifyReply};
 use crate::server::ServerInner;
 use crate::types::{Feature, FileRange, FsCaps, Ino, Version};
 
@@ -14,10 +15,9 @@ use futures_util::{Stream, StreamExt};
 
 use std::ffi::OsStr;
 use std::os::unix::ffi::OsStrExt;
-use std::rc::Rc;
 
 pub struct Context<C> {
-    pub(crate) server: Rc<ServerInner<C>>,
+    pub(crate) server: AsyncRc<ServerInner<C>>,
 }
 
 #[derive(Debug, Clone)]
@@ -40,7 +40,7 @@ impl<C> Clone for Context<C> {
 }
 
 impl<C> Context<C> {
-    pub(crate) fn new(server: Rc<ServerInner<C>>) -> Self {
+    pub(crate) fn new(server: AsyncRc<ServerInner<C>>) -> Self {
         Self { server }
     }
 
@@ -53,34 +53,8 @@ impl<C> Context<C> {
         self.server.caps
     }
 
-    /// Whether this connection allows a feature.
-    ///
-    /// Folds together the protocol version the kernel speaks, what was
-    /// negotiated, and the platform, so a filesystem doesn't have to know which
-    /// decides a given feature. Features that are purely negotiated are in
-    /// [`caps`](Self::caps).
-    pub fn supports(&self, feature: Feature) -> bool {
-        crate::types::feature::supports(feature, self.server.minor_ver, self.server.caps)
-    }
-
     pub fn buffer_pool(&self) -> &BufPool {
         &self.server.buf_pool
-    }
-
-    pub(crate) fn cfg(&self) -> Cfg {
-        Cfg {
-            minor_ver: self.server.minor_ver,
-            flags: self.server.flags,
-        }
-    }
-
-    pub fn prune_cache(&self) -> std::result::Result<NotifyPruneCache<C>, NotifyError> {
-        self.require(Feature::PruneCache)?;
-
-        Ok(NotifyPruneCache {
-            ctx: self.clone(),
-            prune: None,
-        })
     }
 }
 
@@ -122,12 +96,23 @@ impl<C: Connection> Context<C> {
         &self,
         buf: impl IntoIoBuf,
     ) -> std::result::Result<(), NotifyError> {
+        use compio::buf::{IoBuf, IoVectoredBuf};
+
         match buf.into_io_buf() {
-            crate::buf::IoBuffer::Buf(buf) => self.server.conn.send_notification(buf).await.0?,
+            crate::buf::IoBuffer::Buf(buf) => {
+                if buf.buf_len() > self.server.conn.max_notification_size() {
+                    return Err(NotifyError::TooLarge);
+                }
+                self.server.conn.send_notification(buf).await.0?
+            }
             crate::buf::IoBuffer::VecBuf(buf) => {
+                if buf.total_len() > self.server.conn.max_notification_size() {
+                    return Err(NotifyError::TooLarge);
+                }
                 self.server.conn.send_notification_vectored(buf).await.0?
             }
         }
+
         Ok(())
     }
 
@@ -306,7 +291,29 @@ impl<C: Connection> Context<C> {
     }
 }
 
-impl<C> Context<C> {
+impl<C: ConnectionMeta> Context<C> {
+    pub(crate) fn cfg(&self) -> Cfg {
+        Cfg {
+            minor_ver: self.server.minor_ver,
+            flags: self.server.flags,
+        }
+    }
+
+    /// Whether this connection allows a feature.
+    ///
+    /// Folds together the protocol version the kernel speaks, what was
+    /// negotiated, and the platform, so a filesystem doesn't have to know which
+    /// decides a given feature. Features that are purely negotiated are in
+    /// [`caps`](Self::caps).
+    pub fn supports(&self, feature: Feature) -> bool {
+        crate::types::feature::supports(
+            crate::types::PeerCaps::of(&self.server.conn),
+            feature,
+            self.server.minor_ver,
+            self.server.caps,
+        )
+    }
+
     /// Refuses a notification this connection doesn't allow, rather than letting
     /// the kernel reject the write or, worse, read the wrong fields.
     fn require(&self, feature: Feature) -> std::result::Result<(), NotifyError> {
@@ -315,6 +322,15 @@ impl<C> Context<C> {
         } else {
             Err(NotifyError::Unsupported)
         }
+    }
+
+    pub fn prune_cache(&self) -> std::result::Result<NotifyPruneCache<C>, NotifyError> {
+        self.require(Feature::PruneCache)?;
+
+        Ok(NotifyPruneCache {
+            ctx: self.clone(),
+            prune: None,
+        })
     }
 }
 
@@ -491,9 +507,15 @@ impl<C: Connection> NotifyPruneCache<C> {
 mod tests {
     use super::*;
 
-    // `Context` needs a live server, so the gate is asked through `Feature`.
+    // `Context` needs a live server, so the gate is asked through `Feature`,
+    // against a peer that gates nothing.
     fn supported(feature: Feature, minor_ver: u32) -> bool {
-        crate::types::feature::supports(feature, minor_ver, FsCaps::all())
+        crate::types::feature::supports(
+            crate::types::PeerCaps::PERMISSIVE,
+            feature,
+            minor_ver,
+            FsCaps::all(),
+        )
     }
 
     #[test]

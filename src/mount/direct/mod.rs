@@ -1,6 +1,6 @@
 use super::{Mount, Unmount};
 use crate::MountOpt;
-use crate::conn::{DevFuseConn, DevFuseSharedConn};
+use crate::conn::{Conn, DevFuseConn, DevFuseSharedConn};
 
 use compio::buf::{BufResult, IoBuf, IoBufMut, IoVectoredBuf};
 
@@ -30,16 +30,6 @@ pub struct DirectUnmount {
     _priv: (),
 }
 
-#[derive(Debug)]
-pub struct SharedDirectConn {
-    _priv: (),
-}
-
-#[derive(Debug)]
-pub struct DirectConn {
-    _priv: (),
-}
-
 impl Mount for DirectMount {
     type SharedConn = DevFuseSharedConn;
     type Conn = DevFuseConn;
@@ -64,16 +54,7 @@ impl Unmount for DirectUnmount {
 
     async fn unmount(
         self,
-        conn: &Self::Conn,
-        mountpoint: &Path,
-        options: &[MountOpt],
-    ) -> Result<()> {
-        todo!()
-    }
-
-    async fn unmount_shared(
-        self,
-        conn: &Self::SharedConn,
+        conn: Conn<Self::SharedConn>,
         mountpoint: &Path,
         options: &[MountOpt],
     ) -> Result<()> {
