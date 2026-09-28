@@ -21,7 +21,6 @@ use std::cell::{Cell, RefCell};
 use std::collections::{HashMap, VecDeque};
 use std::io::Result;
 use std::ops::ControlFlow;
-use std::rc::Rc;
 use std::sync::Arc;
 
 /// The default `max_write`, which also sets the size of every read buffer.

@@ -1,3 +1,5 @@
+#![allow(unused)] // TODO: delete me
+
 use crate::buf::{IntoIoBuf, IoBuffer};
 
 use std::io::Result;
@@ -93,10 +95,12 @@ pub trait Connection: ConnectionMeta {
     where
         T: AsFd,
     {
+        let _ = fd;
         Err(std::io::ErrorKind::Unsupported.into())
     }
 
     fn close_passthrough(&self, backing_id: RawBackingId) -> Result<()> {
+        let _ = backing_id;
         Err(std::io::ErrorKind::Unsupported.into())
     }
 }

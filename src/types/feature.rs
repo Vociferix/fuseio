@@ -1,4 +1,4 @@
-use super::{ConnCaps, FsCaps, NotifyCaps, PeerCaps, RenameMode};
+use super::{ConnCaps, FsCaps, NotifyCaps, PeerCaps, RenameMode, Version};
 
 /// Something a filesystem may want to know is available before relying on it.
 ///
@@ -103,10 +103,13 @@ pub enum Feature {
     /// saying `true` doesn't promise the next attempt succeeds.
     Passthrough,
 
-    /// The kernel speaks at least this minor version of the protocol.
+    /// The kernel speaks a compatible version of the protocol.
     ///
-    /// For a filesystem that knows the protocol better than this list does.
-    ProtocolAtLeast(u32),
+    /// For a filesystem that knows the protocol better than this list does. A
+    /// compatible version of the protcol is one with the same major version
+    /// number and a minor version number greater or equal to the provide minor
+    /// version.
+    CompatibleWith(Version),
 }
 
 /// The protocol version each feature arrived in.
@@ -217,7 +220,8 @@ pub(crate) fn supports(peer: PeerCaps, feature: Feature, minor_ver: u32, caps: F
                 && cap(FsCaps::PASSTHROUGH)
         }
 
-        Feature::ProtocolAtLeast(minor) => version(minor),
+        Feature::CompatibleWith(Version(7, minor)) => version(minor),
+        Feature::CompatibleWith(_) => false,
     }
 }
 
@@ -481,12 +485,12 @@ mod tests {
     #[test]
     fn a_version_can_be_asked_for_directly() {
         assert!(supported(
-            Feature::ProtocolAtLeast(31),
+            Feature::CompatibleWith(Version(7, 31)),
             CURRENT,
             FsCaps::empty()
         ));
         assert!(!supported(
-            Feature::ProtocolAtLeast(CURRENT + 1),
+            Feature::CompatibleWith(Version(7, CURRENT + 1)),
             CURRENT,
             FsCaps::empty()
         ));

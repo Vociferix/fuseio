@@ -120,7 +120,6 @@ mod tests {
     use super::*;
 
     use crate::buf::BufPool;
-    use crate::types::ReplyInitFlags;
 
     const FLUSH: u32 = 1 << 0;
     const FLOCK_UNLOCK: u32 = 1 << 1;

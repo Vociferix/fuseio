@@ -1,3 +1,4 @@
+#[allow(clippy::module_inception)]
 mod buf;
 mod pool;
 
@@ -109,19 +110,23 @@ pub trait IntoIoBuf: sealed::Sealed + Sized {
     type VecBuffer: compio::buf::IoVectoredBuf;
 
     #[doc(hidden)]
+    #[allow(private_interfaces)]
     fn into_io_buf(self) -> IoBuffer<Self::Buffer, Self::VecBuffer>;
 
     #[doc(hidden)]
+    #[allow(private_interfaces)]
     fn into_io_buf_with_nul(self) -> IoBufferWithNul<Self::Buffer, Self::VecBuffer> {
         IoBufferWithNul::new(self.into_io_buf())
     }
 
     #[doc(hidden)]
+    #[allow(private_interfaces)]
     fn left_buf<R>(self) -> EitherIntoIoBuf<Self, R> {
         EitherIntoIoBuf(either::Left(self))
     }
 
     #[doc(hidden)]
+    #[allow(private_interfaces)]
     fn right_buf<L>(self) -> EitherIntoIoBuf<L, Self> {
         EitherIntoIoBuf(either::Right(self))
     }
@@ -159,6 +164,7 @@ impl<B: compio::buf::IoBuf> IntoIoBuf for B {
     type Buffer = Self;
     type VecBuffer = NoData;
 
+    #[allow(private_interfaces)]
     fn into_io_buf(self) -> IoBuffer<Self, NoData> {
         IoBuffer::Buf(self)
     }
@@ -168,6 +174,7 @@ impl<V: compio::buf::IoVectoredBuf> IntoIoBuf for Vectored<V> {
     type Buffer = NoData;
     type VecBuffer = V;
 
+    #[allow(private_interfaces)]
     fn into_io_buf(self) -> IoBuffer<NoData, V> {
         IoBuffer::VecBuf(self.0)
     }

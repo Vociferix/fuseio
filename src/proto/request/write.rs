@@ -165,7 +165,6 @@ mod tests {
     use super::*;
 
     use crate::buf::BufPool;
-    use crate::types::ReplyInitFlags;
 
     fn cfg(minor_ver: u32) -> Cfg {
         Cfg {

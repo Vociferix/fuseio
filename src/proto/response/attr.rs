@@ -48,6 +48,8 @@ pub struct InodeAttrs {
 }
 
 /// The `S_IFMT` bits, which hold the inode's kind rather than its permissions.
+// `mode_t` is `u32` on Linux and `u16` on the BSDs.
+#[allow(clippy::unnecessary_cast)]
 const FORMAT_MASK: u32 = SFlag::S_IFMT.bits() as u32;
 
 const _: () = {
@@ -151,6 +153,7 @@ impl InodeAttrs {
         self
     }
 
+    #[cfg_attr(not(target_os = "macos"), allow(unused_mut))]
     pub fn crtime(mut self, crtime: SystemTime) -> Self {
         #[cfg(target_os = "macos")]
         {
@@ -169,6 +172,8 @@ impl InodeAttrs {
 
     // TODO: pre-1970 times are clamped to the epoch here; the wire fields are
     // signed seconds (libfuse passes `st_*time` through), with nsec in [0, 1e9).
+    // `mode_t` is `u32` on Linux and `u16` on the BSDs.
+    #[allow(clippy::useless_conversion)]
     pub fn kind(mut self, kind: InodeKind) -> Self {
         // TODO(e2e): assumes host-native mode values; verify once end-to-end tests
         // can be done.
@@ -178,6 +183,8 @@ impl InodeAttrs {
     }
 
     /// Sets the permission bits, leaving the inode's kind alone.
+    // `mode_t` is `u32` on Linux and `u16` on the BSDs.
+    #[allow(clippy::useless_conversion)]
     pub fn mode(mut self, mode: Mode) -> Self {
         // TODO(e2e): assumes host-native mode values; verify once end-to-end tests
         // can be done.
@@ -216,6 +223,7 @@ impl InodeAttrs {
         self
     }
 
+    #[cfg_attr(not(target_os = "macos"), allow(unused_mut))]
     pub fn flags(mut self, flags: FileFlag) -> Self {
         #[cfg(target_os = "macos")]
         {
@@ -230,6 +238,7 @@ impl InodeAttrs {
         self
     }
 
+    #[cfg_attr(not(target_os = "macos"), allow(unused_mut))]
     pub fn add_flags(mut self, flags: FileFlag) -> Self {
         #[cfg(target_os = "macos")]
         {
@@ -244,6 +253,7 @@ impl InodeAttrs {
         self
     }
 
+    #[cfg_attr(not(target_os = "macos"), allow(unused_mut))]
     pub fn clear_flags(mut self, flags: FileFlag) -> Self {
         #[cfg(target_os = "macos")]
         {
@@ -342,8 +352,6 @@ impl Default for InodeAttrs {
 mod tests {
     use super::*;
 
-    use crate::types::ReplyInitFlags;
-
     use compio::buf::IoVectoredBuf;
 
     // `fuse_attr` follows the 16-byte header and `attr_valid`; macOS inserts
@@ -384,6 +392,7 @@ mod tests {
     }
 
     #[test]
+    #[allow(clippy::useless_conversion)]
     fn the_kind_reaches_the_wire() {
         let mode = mode_of(InodeAttrs::new().kind(InodeKind::Dir));
 
@@ -391,6 +400,7 @@ mod tests {
     }
 
     #[test]
+    #[allow(clippy::useless_conversion)]
     fn the_kind_and_permissions_compose_in_either_order() {
         let perm = Mode::from_bits_truncate(0o755);
         let expected = u32::from(SFlag::S_IFDIR.bits()) | 0o755;
@@ -406,6 +416,7 @@ mod tests {
     }
 
     #[test]
+    #[allow(clippy::useless_conversion)]
     fn setting_the_kind_twice_replaces_it() {
         let attrs = InodeAttrs::new()
             .kind(InodeKind::Dir)
@@ -416,6 +427,7 @@ mod tests {
     }
 
     #[test]
+    #[allow(clippy::useless_conversion)]
     fn a_full_mode_cant_corrupt_the_kind() {
         let attrs = InodeAttrs::new()
             .kind(InodeKind::Fifo)
@@ -425,6 +437,7 @@ mod tests {
     }
 
     #[test]
+    #[allow(clippy::useless_conversion)]
     fn setuid_setgid_and_sticky_bits_survive() {
         let mode = Mode::S_ISUID | Mode::S_ISGID | Mode::S_ISVTX;
         let encoded = mode_of(InodeAttrs::new().kind(InodeKind::File).mode(mode));

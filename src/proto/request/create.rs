@@ -120,7 +120,6 @@ mod tests {
     use super::*;
 
     use crate::buf::BufPool;
-    use crate::types::ReplyInitFlags;
 
     const NAME: &[u8] = b"new-file";
     const PERMS: u32 = 0o644;
@@ -152,6 +151,7 @@ mod tests {
     }
 
     #[test]
+    #[allow(clippy::unnecessary_cast)]
     fn the_body_decodes() {
         let req = Create::decode(request(Some(0o022)), Ino::from_raw(1), cfg(45)).unwrap();
 
@@ -163,6 +163,7 @@ mod tests {
 
     // Before 7.12 the body is a `fuse_open_in` and carries no umask.
     #[test]
+    #[allow(clippy::unnecessary_cast)]
     fn an_old_kernels_body_decodes() {
         let req = Create::decode(request(None), Ino::from_raw(1), cfg(11)).unwrap();
 

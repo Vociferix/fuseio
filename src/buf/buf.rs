@@ -91,6 +91,10 @@ impl Buf {
         self.buf.shrink_to(min_capacity);
     }
 
+    /// # Safety
+    ///
+    /// `new_len` must not exceed the buffer's capacity, and every byte below it
+    /// must be initialized.
     pub unsafe fn set_len(&mut self, new_len: usize) {
         unsafe {
             self.buf.set_len(new_len);

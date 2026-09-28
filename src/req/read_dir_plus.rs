@@ -136,6 +136,8 @@ impl DirEntryPlusBuf {
     // invalid. Error::EINVAL just means that the kernel didn't give a
     // large enough buffer to write a single entry, and thus should
     // always be propagated.
+    // `mode_t` is `u32` on Linux and `u16` on the BSDs.
+    #[allow(clippy::useless_conversion)]
     pub fn push<T>(&mut self, entry: DirEntryPlus<T>) -> Result<bool>
     where
         T: AsRef<OsStr>,

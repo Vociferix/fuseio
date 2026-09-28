@@ -86,7 +86,6 @@ impl CopyFileRange {
 mod tests {
     use super::*;
     use crate::buf::BufPool;
-    use crate::types::ReplyInitFlags;
 
     fn cfg() -> Cfg {
         Cfg {

@@ -29,6 +29,9 @@ impl<C> FallocateReq<C> {
         self.fallocate.offset()
     }
 
+    // Not a collection: this is a byte count the kernel asked for, and a zero
+    // one is meaningful rather than "empty".
+    #[allow(clippy::len_without_is_empty)]
     pub fn len(&self) -> u64 {
         self.fallocate.len()
     }

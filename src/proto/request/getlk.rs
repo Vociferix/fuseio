@@ -50,7 +50,7 @@ impl GetLk {
     }
 
     pub fn file_range(&self) -> FileRange {
-        self.range.clone()
+        self.range
     }
 
     pub fn lock_kind(&self) -> LockKind {
@@ -69,6 +69,8 @@ impl GetLk {
 }
 
 impl GetLk {
+    // `F_*LCK` are `c_int` on Linux and `c_short` elsewhere.
+    #[allow(clippy::unnecessary_cast)]
     pub(super) fn decode(buf: Buf, ino: Option<Ino>, cfg: Cfg) -> Result<Self> {
         let body_len = if cfg.minor_ver < 9 {
             const { std::mem::size_of::<RawCompat>() }
@@ -146,7 +148,6 @@ mod tests {
     use super::*;
 
     use crate::buf::BufPool;
-    use crate::types::ReplyInitFlags;
 
     const FLOCK: u32 = 1 << 0;
 
@@ -157,6 +158,7 @@ mod tests {
         }
     }
 
+    #[allow(clippy::unnecessary_cast)]
     fn request(lk_flags: Option<u32>) -> Buf {
         let mut buf = BufPool::new().checkout_with_capacity(64);
 

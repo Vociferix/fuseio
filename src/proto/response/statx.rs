@@ -90,6 +90,8 @@ impl StatX {
         self
     }
 
+    // `mode_t` is `u32` on Linux and `u16` on the BSDs.
+    #[allow(clippy::unnecessary_cast, clippy::useless_conversion)]
     pub fn inode_kind(mut self, kind: InodeKind) -> Self {
         self.mask |= StatXMask::TYPE;
         self.mode =
@@ -97,6 +99,8 @@ impl StatX {
         self
     }
 
+    // `mode_t` is `u32` on Linux and `u16` on the BSDs.
+    #[allow(clippy::unnecessary_cast, clippy::useless_conversion)]
     pub fn mode(mut self, mode: Mode) -> Self {
         self.mask |= StatXMask::MODE;
         self.mode = (SFlag::from_bits_truncate(self.mode.into()).bits() | mode.bits()) as u16;
@@ -271,8 +275,6 @@ impl From<SystemTime> for StatXTime {
 mod tests {
     use super::*;
 
-    use crate::types::ReplyInitFlags;
-
     use compio::buf::IoVectoredBuf;
 
     // Offsets within the reply of the `fuse_statx` fields this exercises.
@@ -315,6 +317,7 @@ mod tests {
     }
 
     #[test]
+    #[allow(clippy::unnecessary_cast)]
     fn the_fields_land_where_the_kernel_reads_them() {
         let ino = Ino::from_raw(42).unwrap();
         let bytes = encode(StatX::new().ino(ino).size(4096).inode_kind(InodeKind::Dir));

@@ -75,7 +75,6 @@ mod tests {
     use super::*;
 
     use crate::buf::BufPool;
-    use crate::types::ReplyInitFlags;
 
     const SCHEDULE_NOTIFY: u32 = 1 << 0;
 

@@ -77,6 +77,7 @@ impl NotifyCode {
     // asks for an operation to be retried, but there are other, better ways
     // to handle scenarios where this would be useful, such as simply returning
     // an `EAGAIN` error.
+    #[allow(dead_code)]
     const RESEND: Self = Self(7);
 
     const INC_EPOCH: Self = Self(8);

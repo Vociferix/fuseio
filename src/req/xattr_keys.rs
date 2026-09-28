@@ -34,6 +34,9 @@ impl<C> XattrKeysReq<C> {
         self.listxattr.ino()
     }
 
+    // Not a collection: this is a byte count the kernel asked for, and a zero
+    // one is meaningful rather than "empty".
+    #[allow(clippy::len_without_is_empty)]
     pub fn len(&self) -> usize {
         self.listxattr.len()
     }

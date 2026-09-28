@@ -123,7 +123,6 @@ mod tests {
     use super::*;
 
     use crate::buf::BufPool;
-    use crate::types::ReplyInitFlags;
 
     const HAVE_LOCKOWNER: u32 = 1 << 1;
 

@@ -27,7 +27,6 @@ mod tests {
     use super::*;
 
     use crate::Error;
-    use crate::types::ReplyInitFlags;
 
     use compio::buf::IoVectoredBuf;
 

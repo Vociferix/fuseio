@@ -3,7 +3,6 @@ use crate::mount::{DefaultMount, Mount};
 
 use arrayvec::ArrayVec;
 
-use std::borrow::Cow;
 use std::ffi::OsString;
 use std::path::Path;
 
@@ -39,8 +38,7 @@ bitflags::bitflags! {
         const BLKDEV = 1 << 14;
         const LARGE_READ = 1 << 15;
 
-        const DEFAULT = 0
-            | Self::RW.bits()
+        const DEFAULT = Self::RW.bits()
             | Self::EXEC.bits()
             | Self::ASYNC.bits()
             | Self::ATIME.bits()

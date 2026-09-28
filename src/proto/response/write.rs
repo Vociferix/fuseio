@@ -63,8 +63,6 @@ impl EncodeResp for Write {
 mod tests {
     use super::*;
 
-    use crate::types::ReplyInitFlags;
-
     use compio::buf::IoVectoredBuf;
 
     fn cfg() -> Cfg {

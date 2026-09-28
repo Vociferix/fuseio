@@ -102,6 +102,8 @@ impl DeviceNumber {
     /// Returns [`None`] for a device the protocol's narrower field can't carry.
     // TODO(e2e): assumes each host packs `dev_t` as its headers describe; verify
     // once end-to-end tests can be done.
+    // `dev_t` differs in width by platform.
+    #[allow(clippy::unnecessary_cast)]
     pub fn from_dev(dev: nix::libc::dev_t) -> Option<Self> {
         #[cfg(target_os = "linux")]
         let (major, minor) = (
@@ -345,6 +347,7 @@ mod tests {
     // Each platform packs this field the way the low half of its own `dev_t` is
     // packed, so anything the field can carry reads the same either way.
     #[test]
+    #[allow(clippy::unnecessary_cast)]
     fn the_wire_value_is_the_low_half_of_a_host_device() {
         for major in [0, 1, 8, 255, 4095] {
             for minor in [0, 1, 255, 4095, 65_535, 1_048_575] {

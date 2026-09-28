@@ -182,6 +182,7 @@ mod tests {
     }
 
     #[test]
+    #[allow(clippy::unnecessary_cast)]
     fn a_character_device_carries_its_numbers() {
         let dev = DeviceNumber::new(4, 65).unwrap();
         let req = decode(0o020_600, dev.as_raw());

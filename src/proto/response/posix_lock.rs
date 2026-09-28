@@ -11,6 +11,8 @@ pub struct PosixLock {
 }
 
 impl PosixLock {
+    // `F_*LCK` are `c_int` on Linux and `c_short` elsewhere.
+    #[allow(clippy::useless_conversion)]
     pub fn new(kind: LockKind) -> Self {
         Self {
             start: 0,

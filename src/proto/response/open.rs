@@ -80,8 +80,6 @@ impl EncodeResp for Opened {
 mod tests {
     use super::*;
 
-    use crate::types::ReplyInitFlags;
-
     use compio::buf::IoVectoredBuf;
 
     const OPEN_FLAGS: usize = 16 + 8;

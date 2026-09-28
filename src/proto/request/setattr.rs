@@ -286,9 +286,9 @@ mod tests {
     use std::time::Duration;
 
     use crate::buf::BufPool;
-    use crate::types::ReplyInitFlags;
 
     const KILL_SUIDGID: u32 = 1 << 11;
+    #[cfg(not(target_os = "macos"))]
     const CTIME: u32 = 1 << 10;
     #[cfg(target_os = "macos")]
     const CHGTIME: u32 = 1 << 29;

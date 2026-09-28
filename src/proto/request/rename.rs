@@ -97,6 +97,8 @@ impl Rename {
     }
 
     /// Decodes `FUSE_RENAME2`.
+    // `RENAME_*` are `c_uint` on Linux and defined here elsewhere.
+    #[allow(clippy::unnecessary_cast)]
     pub(super) fn decode_rename2(buf: Buf, ino: Option<Ino>, _: Cfg) -> Result<Self> {
         let (newdir, flags) = read_ext(&buf)?;
 

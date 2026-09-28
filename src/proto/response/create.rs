@@ -151,7 +151,7 @@ impl EncodeResp for Created {
 mod tests {
     use super::*;
 
-    use crate::types::{FileHandle, ReplyInitFlags};
+    use crate::types::FileHandle;
 
     use compio::buf::IoVectoredBuf;
     use std::time::Duration;

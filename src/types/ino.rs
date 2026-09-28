@@ -13,6 +13,9 @@ impl Ino {
         }
     }
 
+    /// # Safety
+    ///
+    /// `ino` must not be zero, which the protocol never uses for an inode.
     pub const unsafe fn from_raw_unchecked(ino: u64) -> Self {
         Self(unsafe { NonZeroU64::new_unchecked(ino) })
     }

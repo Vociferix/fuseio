@@ -2,8 +2,6 @@ use super::{Cfg, EncodeNotify, IntoIoBuf, IoBuf, NotifyCode, RawHeader};
 use crate::buf::Vectored;
 use crate::types::Ino;
 
-use compio::buf::IoVectoredBuf;
-
 #[derive(Debug)]
 pub struct Store<B> {
     ino: Ino,

@@ -56,7 +56,6 @@ impl EncodeResp for CopyFileRange {
 mod tests {
     use super::*;
     use crate::proto::response::Write;
-    use crate::types::ReplyInitFlags;
 
     use compio::buf::IoVectoredBuf;
 

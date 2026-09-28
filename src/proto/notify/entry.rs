@@ -77,8 +77,6 @@ impl<B: IntoIoBuf, const EXPIRE: bool> EncodeNotify for Entry<B, EXPIRE> {
 mod tests {
     use super::*;
 
-    use crate::types::ReplyInitFlags;
-
     const NAME: &[u8] = b"a-name";
 
     // `fuse_notify_inval_entry_out` behind a 16-byte header.

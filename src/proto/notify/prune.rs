@@ -2,9 +2,6 @@ use super::{Cfg, EncodeNotify, IntoIoBuf, NotifyCode, RawHeader};
 use crate::buf::{Buf, BufPool};
 use crate::types::Ino;
 
-use compio::buf::IoBuf;
-use futures_util::{Stream, StreamExt};
-
 #[derive(Debug)]
 pub struct Prune {
     inos: Buf,
@@ -20,12 +17,8 @@ struct Out {
 const OUT_LEN: usize = std::mem::size_of::<Out>();
 
 impl Prune {
-    pub fn new(pool: &BufPool) -> Self {
-        Self::with_capacity(pool, 0)
-    }
-
     pub fn with_capacity(pool: &BufPool, capacity: usize) -> Self {
-        let mut cap = OUT_LEN + (capacity * std::mem::size_of::<Ino>());
+        let cap = OUT_LEN + (capacity * std::mem::size_of::<Ino>());
         let mut buf = pool.checkout_with_capacity(cap);
         buf.resize(OUT_LEN, 0);
 

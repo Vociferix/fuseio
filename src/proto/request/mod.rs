@@ -257,6 +257,7 @@ opcodes! {
     EXCHANGE: 63,
 
     // CUSE not currently supported, so this opcode is unused
+    #[allow(dead_code)]
     CUSE_INIT: 4096,
 }
 

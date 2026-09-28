@@ -2,10 +2,7 @@ use super::{Mount, Unmount};
 use crate::MountOpt;
 use crate::conn::{Conn, DevFuseConn, DevFuseSharedConn};
 
-use compio::buf::{BufResult, IoBuf, IoBufMut, IoVectoredBuf};
-
 use std::io::Result;
-use std::os::fd::AsFd;
 use std::path::Path;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Default)]

@@ -1,3 +1,5 @@
+#![allow(unused)] // TODO: delete me
+
 use crate::MountOpt;
 use crate::conn::{Conn, Connection, SharedConnection};
 

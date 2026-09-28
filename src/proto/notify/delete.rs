@@ -84,8 +84,6 @@ impl<B: IntoIoBuf> EncodeNotify for Delete<B> {
 mod tests {
     use super::*;
 
-    use crate::types::ReplyInitFlags;
-
     const NAME: &[u8] = b"a-name";
 
     // `fuse_notify_delete_out` behind a 16-byte header.
