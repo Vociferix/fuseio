@@ -106,6 +106,86 @@ pub enum Conn<C: SharedConnection> {
     Bound(C::Bound),
 }
 
+impl<C> Clone for Conn<C>
+where
+    C: SharedConnection + Clone,
+    C::Bound: Clone,
+{
+    fn clone(&self) -> Self {
+        match self {
+            Self::Shared(conn) => Self::Shared(conn.clone()),
+            Self::Bound(conn) => Self::Bound(conn.clone()),
+        }
+    }
+}
+
+impl<C> PartialEq for Conn<C>
+where
+    C: SharedConnection + PartialEq,
+    C::Bound: PartialEq,
+{
+    fn eq(&self, other: &Self) -> bool {
+        match (self, other) {
+            (Self::Shared(l), Self::Shared(r)) => l == r,
+            (Self::Bound(l), Self::Bound(r)) => l == r,
+            _ => false,
+        }
+    }
+}
+
+impl<C> Eq for Conn<C>
+where
+    C: SharedConnection + Eq,
+    C::Bound: Eq,
+{
+}
+
+impl<C> PartialOrd for Conn<C>
+where
+    C: SharedConnection + PartialOrd,
+    C::Bound: PartialOrd,
+{
+    fn partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering> {
+        match (self, other) {
+            (Self::Shared(l), Self::Shared(r)) => l.partial_cmp(r),
+            (Self::Bound(l), Self::Bound(r)) => l.partial_cmp(r),
+            (Self::Shared(_), _) => Some(std::cmp::Ordering::Less),
+            _ => Some(std::cmp::Ordering::Greater),
+        }
+    }
+}
+
+impl<C> Ord for Conn<C>
+where
+    C: SharedConnection + Ord,
+    C::Bound: Ord,
+{
+    fn cmp(&self, other: &Self) -> std::cmp::Ordering {
+        match (self, other) {
+            (Self::Shared(l), Self::Shared(r)) => l.cmp(r),
+            (Self::Bound(l), Self::Bound(r)) => l.cmp(r),
+            (Self::Shared(_), _) => std::cmp::Ordering::Less,
+            _ => std::cmp::Ordering::Greater,
+        }
+    }
+}
+
+impl<C> std::hash::Hash for Conn<C>
+where
+    C: SharedConnection + std::hash::Hash,
+    C::Bound: std::hash::Hash,
+{
+    fn hash<H>(&self, state: &mut H)
+    where
+        H: std::hash::Hasher,
+    {
+        match self {
+            Self::Shared(conn) => (false, conn).hash(state),
+            Self::Bound(conn) => (false, conn).hash(state),
+        }
+    }
+}
+
 impl<C, T> AsRef<T> for Conn<C>
 where
     C: SharedConnection + AsRef<T>,
