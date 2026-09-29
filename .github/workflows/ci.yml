@@ -1,0 +1,93 @@
+name: CI
+
+on:
+  push:
+    branches: [master]
+  pull_request:
+  workflow_dispatch:
+
+# A new push to the same branch supersedes the last one.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  fmt:
+    name: rustfmt
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - run: rustup update --no-self-update stable
+      - run: rustup component add rustfmt
+      - run: cargo fmt --check
+
+  # Cross-compiles the platforms without a native job below, and gives the same
+  # signal as those jobs minutes sooner. Platform-specific `cfg` blocks only
+  # compile on their own target, so this is what catches a typo in one of them.
+  cross-check:
+    name: cross-check (${{ matrix.target }})
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        target:
+          - x86_64-apple-darwin
+          - x86_64-unknown-freebsd
+    steps:
+      - uses: actions/checkout@v4
+      - run: rustup update --no-self-update stable
+      - run: rustup component add clippy
+      - run: rustup target add ${{ matrix.target }}
+      - uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            target
+          key: cross-${{ matrix.target }}-${{ hashFiles('Cargo.lock') }}
+          restore-keys: cross-${{ matrix.target }}-
+      # No `cargo test`: these targets can be compiled here but not run.
+      - run: cargo clippy --target ${{ matrix.target }} --all-targets -- -D warnings
+
+  test:
+    name: test (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest]
+    steps:
+      - uses: actions/checkout@v4
+      - run: rustup update --no-self-update stable
+      - run: rustup component add clippy
+      - uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            target
+          key: ${{ matrix.os }}-${{ hashFiles('Cargo.lock') }}
+          restore-keys: ${{ matrix.os }}-
+      # `-D warnings` goes to clippy rather than `RUSTFLAGS`, so a warning in a
+      # dependency can't fail the build.
+      - run: cargo clippy --all-targets -- -D warnings
+      - run: cargo test
+
+  test-freebsd:
+    name: test (freebsd)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      # GitHub hosts no FreeBSD runner, so this is a VM on the Linux one. It is
+      # the only third-party action here; consider pinning it to a commit SHA.
+      - uses: vmactions/freebsd-vm@v1
+        with:
+          usesh: true
+          prepare: |
+            pkg install -y rust
+          run: |
+            cargo clippy --all-targets -- -D warnings
+            cargo test
