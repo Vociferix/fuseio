@@ -15,3 +15,6 @@ Items to implement or revisit:
   * Meaning, public doc comments shouldn't explain why something is implemented in a particular way,
     it should stick to explaining behaviors that impact the user. This can sometimes include
     implementation details, but only when those details effect how the user should use the item.
+* Document the test requirements in `README.md`
+  * The `fusermount` tests mount for real, so they need `fusermount` or `fusermount3`
+    installed (Ubuntu's `fuse3` package carries both) and a usable `/dev/fuse`

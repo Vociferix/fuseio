@@ -74,7 +74,22 @@ jobs:
       # `-D warnings` goes to clippy rather than `RUSTFLAGS`, so a warning in a
       # dependency can't fail the build.
       - run: cargo clippy --all-targets -- -D warnings
-      - run: cargo test
+      # The tests mount for real, so the helper is a requirement rather than
+      # something they skip over. `fuse3` carries `fusermount` as well as
+      # `fusermount3`, and installing it when it is already present costs
+      # nothing.
+      - name: Install the fusermount helper
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y fuse3
+          ls -l /dev/fuse
+      # `TMPDIR` keeps the mountpoint out of the shared `/tmp`: nothing may
+      # `stat` it while a test holds it, since no server is answering
+      # `FUSE_INIT`.
+      - env:
+          TMPDIR: ${{ runner.temp }}
+        run: cargo test
 
   test-freebsd:
     name: test (freebsd)

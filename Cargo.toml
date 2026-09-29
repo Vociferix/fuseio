@@ -9,14 +9,14 @@ arrayvec = { version = "0.7", features = ["std"] }
 atomic-waker = "1"
 bitflags = "2"
 bytemuck = "1"
-compio = { version = "0.19", features = ["async-fd", "io"] }
+compio = { version = "0.19", features = ["async-fd", "io", "process"] }
 crossbeam-utils = { version = "0.8", default-features = false }
 crossfire = "3"
 either = "1"
 futures-util = { version = "0.3", default-features = false, features = ["io"] }
 log = "0.4"
 memchr = "2"
-nix = { version = "0.31", features = ["user", "process", "fs", "ioctl", "poll"] }
+nix = { version = "0.31", features = ["user", "process", "fs", "ioctl", "poll", "socket", "uio"] }
 page_size = "0.6"
 slab = "0.4.12"
 unsync = "0.2"
