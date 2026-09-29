@@ -1,5 +1,3 @@
-#![allow(unused)] // TODO: delete me
-
 use crate::buf::{IntoIoBuf, IoBuffer};
 
 use std::io::Result;
@@ -39,11 +37,11 @@ pub trait SharedConnection: ConnectionMeta {
 
     async fn recv_request<B>(&self, buf: B) -> BufResult<(usize, Self::ReqToken), B>
     where
-        B: IoBufMut;
+        B: IoBufMut + Send;
 
     async fn send_response<B>(&self, token: Self::ReqToken, buf: B) -> BufResult<(), B>
     where
-        B: IoBuf;
+        B: IoBuf + Send;
 }
 
 pub trait Connection: ConnectionMeta {

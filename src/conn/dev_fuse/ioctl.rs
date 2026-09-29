@@ -33,13 +33,10 @@ const BACKING_CLOSE: ioctl_num_type =
 
 // Spelled with the request numbers above rather than rebuilt from the parts, so
 // the numbers these send are the ones the tests check.
-#[cfg(target_os = "linux")]
 nix::ioctl_read_bad!(clone_fd, CLONE, u32);
 
-#[cfg(target_os = "linux")]
 nix::ioctl_write_ptr_bad!(passthrough_open, BACKING_OPEN, BackingMap);
 
-#[cfg(target_os = "linux")]
 nix::ioctl_write_ptr_bad!(passthrough_close, BACKING_CLOSE, u32);
 
 #[cfg(test)]

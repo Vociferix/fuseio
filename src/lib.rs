@@ -1,15 +1,12 @@
 #![allow(async_fn_in_trait)]
 
-//mod async_arc;
 mod async_rc;
 mod builder;
 mod cancel_token;
 mod context;
-//mod dev_fuse;
 mod error;
 mod handle;
 mod handshake;
-//mod ioctl;
 mod notify_error;
 mod options;
 mod passthrough;
