@@ -239,12 +239,24 @@ mod tests {
 
     #[test]
     fn a_large_minor_round_trips() {
-        // Above the 8 bits the low half of the field holds.
-        for minor in [256, 4095, 65_535] {
-            let dev = DeviceNumber::new(1, minor).unwrap();
+        // Each platform places the bits above the low byte differently: Linux
+        // puts them at bit 12, Darwin has 24 contiguous bits, and FreeBSD needs
+        // the second byte clear, so it refuses most of these. Whatever `new`
+        // does accept has to survive the wire unchanged.
+        let mut tested = 0;
+
+        for minor in [256, 4095, 65_535, 65_536, 1_048_575] {
+            let Some(dev) = DeviceNumber::new(1, minor) else {
+                continue;
+            };
 
             assert_eq!(DeviceNumber::from_raw(dev.as_raw()), dev, "{dev}");
+            assert_eq!(dev.minor(), minor, "{dev}");
+            tested += 1;
         }
+
+        // 65536 is accepted by all three packings, so this can't go vacuous.
+        assert!(tested > 0, "no minor above the low byte was representable");
     }
 
     #[test]
@@ -335,13 +347,24 @@ mod tests {
         }
     }
 
-    // The protocol's field is narrower than a `dev_t`, so not every device fits.
+    // Where `dev_t` is wider than the protocol's field, a device using the extra
+    // bits has to be refused rather than silently truncated.
+    #[allow(clippy::unnecessary_cast)]
     #[test]
     fn a_host_device_too_large_for_the_field_is_refused() {
-        let huge = DeviceNumber::new(1, 1).unwrap().as_dev();
-        let huge = huge | (0xffff_u64 as nix::libc::dev_t) << 40;
+        let fits = DeviceNumber::new(1, 1).unwrap();
 
-        assert!(DeviceNumber::from_dev(huge).is_none());
+        // The wire value is the low half of a `dev_t` (see the test below), so
+        // this is that same device plus a bit no 32-bit field can hold.
+        let huge = (u64::from(fits.as_raw()) | (1 << 40)) as nix::libc::dev_t;
+
+        if size_of::<nix::libc::dev_t>() > size_of::<u32>() {
+            assert!(DeviceNumber::from_dev(huge).is_none());
+        } else {
+            // Darwin's `dev_t` is `i32`, exactly as wide as the field, so the
+            // cast above dropped that bit again and no device is too large.
+            assert_eq!(DeviceNumber::from_dev(huge), Some(fits));
+        }
     }
 
     // Each platform packs this field the way the low half of its own `dev_t` is
