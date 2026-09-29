@@ -18,6 +18,7 @@ mod direct;
 mod mount_fusefs;
 
 #[cfg(not(any(
+    target_os = "macos",
     target_os = "freebsd",
     target_os = "netbsd",
     target_os = "openbsd",
@@ -39,6 +40,7 @@ pub use direct::{DirectMount, DirectUnmount};
 pub use mount_fusefs::{MountFuseFs, MountFuseFsUnmount};
 
 #[cfg(not(any(
+    target_os = "macos",
     target_os = "freebsd",
     target_os = "netbsd",
     target_os = "openbsd",
