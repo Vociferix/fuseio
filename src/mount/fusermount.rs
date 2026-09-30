@@ -150,7 +150,7 @@ impl Mount for Fusermount {
         // Mounting finished before the device arrived, so there is nothing left
         // to wait for.
         Ok((
-            DevFuseSharedConn::from(fd),
+            DevFuseSharedConn::from_fd(fd)?,
             std::future::ready(Ok(FusermountUnmount { cmd })),
         ))
     }
