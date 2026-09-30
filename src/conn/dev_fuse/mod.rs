@@ -12,7 +12,7 @@ use compio::io::{AsyncRead, AsyncWrite};
 use compio::runtime::fd::AsyncFd;
 use compio::runtime::submit;
 
-use std::os::fd::{AsFd, AsRawFd, BorrowedFd, FromRawFd, IntoRawFd, OwnedFd, RawFd};
+use std::os::fd::{AsFd, AsRawFd, BorrowedFd, FromRawFd, OwnedFd, RawFd};
 
 #[cfg(target_os = "linux")]
 mod ioctl;
@@ -200,7 +200,33 @@ impl DevFuseSharedConn {
         //         necessary to ensure the FD is closed on drop.
         let fd = unsafe { OwnedFd::from_raw_fd(fd) };
 
+        Self::from_fd(fd)
+    }
+
+    /// Takes ownership of an already-open FUSE device.
+    ///
+    /// The device is put into non-blocking mode, which is an invariant of this
+    /// type rather than something its callers arrange: a blocking device can
+    /// stall the thread running the reactor. Both drivers wait for readability
+    /// and then read, and the read sleeps rather than failing if the request it
+    /// was woken for has meanwhile been taken by another reader of the same
+    /// queue. `fuse_dev_do_read` honours `O_NONBLOCK` but ignores `IOCB_NOWAIT`,
+    /// so the open file description's flag is the only thing that turns that
+    /// sleep into an `EAGAIN` the reactor can wait on again.
+    pub fn from_fd(fd: OwnedFd) -> Result<Self> {
+        set_nonblocking(&fd, true)?;
+
         Ok(Self { fd })
+    }
+
+    /// Gives up ownership of the device, leaving it as it was found.
+    ///
+    /// Non-blocking mode belongs to this type, so it is undone here; a caller
+    /// that wants it can set it again.
+    pub fn into_fd(self) -> Result<OwnedFd> {
+        set_nonblocking(&self.fd, false)?;
+
+        Ok(self.fd)
     }
 
     /// Reopens the device and joins it to this connection, giving the clone its
@@ -241,7 +267,7 @@ impl DevFuseSharedConn {
     /// [`ConnCaps::INDEPENDENT_CLONES`] off Linux.
     #[cfg(not(target_os = "linux"))]
     async fn try_clone_impl(&self) -> Result<Self> {
-        Ok(Self { fd: self.dup()? })
+        Self::from_fd(self.dup()?)
     }
 
     fn dup(&self) -> Result<OwnedFd> {
@@ -254,19 +280,31 @@ impl DevFuseSharedConn {
 
         Ok(fd)
     }
+
+    /// A duplicate of the device, ready for one asynchronous operation.
+    ///
+    /// The duplicate rather than the device itself, because an operation
+    /// outlives the call that submitted it when that call is cancelled: the
+    /// driver holds the descriptor until the kernel reports the cancellation.
+    /// Handing it an owned duplicate makes that harmless, where lending it this
+    /// connection's descriptor would need a completion this method has no way to
+    /// await.
+    ///
+    /// The duplicate shares the open file description, so it is non-blocking
+    /// for free and names the same request queue.
+    ///
+    /// Only the handshake goes through here, so the extra `dup` is a few
+    /// syscalls over the life of a mount. A bound [`DevFuseConn`] keeps one
+    /// descriptor for all of its work.
+    fn attach_dup(&self) -> Result<AsyncFd<OwnedFd>> {
+        AsyncFd::new(self.dup()?)
+    }
 }
 
 impl SharedConnection for DevFuseSharedConn {
     type Bound = DevFuseConn;
 
     async fn bind(self) -> Result<Self::Bound> {
-        // compio's poll-based drivers wait for readability and then read, so a
-        // worker whose readiness was consumed by another sharing the same open
-        // file would otherwise block its thread. compio doesn't set this itself.
-        let flags = nix::fcntl::fcntl(&self, nix::fcntl::FcntlArg::F_GETFL)?;
-        let flags = OFlag::from_bits_retain(flags) | OFlag::O_NONBLOCK;
-        nix::fcntl::fcntl(&self, nix::fcntl::FcntlArg::F_SETFL(flags))?;
-
         Ok(DevFuseConn {
             fd: AsyncFd::new(self.fd)?,
         })
@@ -276,23 +314,16 @@ impl SharedConnection for DevFuseSharedConn {
         self.try_clone_impl().await
     }
 
-    async fn recv_request<B>(&self, mut buf: B) -> BufResult<(usize, Self::ReqToken), B>
+    async fn recv_request<B>(&self, buf: B) -> BufResult<(usize, Self::ReqToken), B>
     where
         B: IoBufMut + Send,
     {
-        let fd = match self.dup() {
+        let fd = match self.attach_dup() {
             Ok(fd) => fd,
             Err(err) => return BufResult(Err(err), buf),
         };
 
-        compio::runtime::spawn_blocking(move || {
-            match nix::unistd::read(fd.as_fd(), buf.ensure_init()) {
-                Ok(len) => BufResult(Ok((len, ())), buf),
-                Err(err) => BufResult(Err(err.into()), buf),
-            }
-        })
-        .await
-        .unwrap()
+        (&fd).read(buf).await.map_res(|len| (len, ()))
     }
 
     async fn send_response<B>(&self, token: Self::ReqToken, buf: B) -> BufResult<(), B>
@@ -302,19 +333,12 @@ impl SharedConnection for DevFuseSharedConn {
         #[allow(clippy::let_unit_value)]
         let _ = token;
 
-        let fd = match self.dup() {
+        let fd = match self.attach_dup() {
             Ok(fd) => fd,
             Err(err) => return BufResult(Err(err), buf),
         };
 
-        compio::runtime::spawn_blocking(move || {
-            match nix::unistd::write(fd.as_fd(), buf.as_init()) {
-                Ok(_) => BufResult(Ok(()), buf),
-                Err(err) => BufResult(Err(err.into()), buf),
-            }
-        })
-        .await
-        .unwrap()
+        (&fd).write(buf).await.map_res(|_| ())
     }
 }
 
@@ -330,30 +354,16 @@ impl AsRawFd for DevFuseSharedConn {
     }
 }
 
-impl IntoRawFd for DevFuseSharedConn {
-    fn into_raw_fd(self) -> RawFd {
-        self.fd.into_raw_fd()
-    }
-}
+/// Turns non-blocking mode on or off for an open file description.
+fn set_nonblocking<F: AsFd>(fd: F, on: bool) -> Result<()> {
+    let flags = nix::fcntl::fcntl(&fd, nix::fcntl::FcntlArg::F_GETFL)?;
+    let mut flags = OFlag::from_bits_retain(flags);
 
-impl FromRawFd for DevFuseSharedConn {
-    unsafe fn from_raw_fd(fd: RawFd) -> Self {
-        Self {
-            fd: unsafe { OwnedFd::from_raw_fd(fd) },
-        }
-    }
-}
+    flags.set(OFlag::O_NONBLOCK, on);
 
-impl From<OwnedFd> for DevFuseSharedConn {
-    fn from(fd: OwnedFd) -> Self {
-        Self { fd }
-    }
-}
+    nix::fcntl::fcntl(&fd, nix::fcntl::FcntlArg::F_SETFL(flags))?;
 
-impl From<DevFuseSharedConn> for OwnedFd {
-    fn from(dev: DevFuseSharedConn) -> Self {
-        dev.fd
-    }
+    Ok(())
 }
 
 fn path_string(path: impl AsRef<std::path::Path>) -> Result<std::ffi::CString> {
