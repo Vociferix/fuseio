@@ -480,8 +480,8 @@ mod tests {
     //
     // Nothing may `stat` the mountpoint while this runs. No server is answering
     // `FUSE_INIT`, so any access blocks until the unmount below.
-    #[test]
-    fn the_device_arrives_and_the_mount_goes_away() {
+    #[compio::test]
+    async fn the_device_arrives_and_the_mount_goes_away() {
         fn mounts() -> String {
             std::fs::read_to_string("/proc/self/mounts").unwrap_or_default()
         }
@@ -489,7 +489,9 @@ mod tests {
         let dir = std::env::temp_dir().join(format!("fuseio-mount-test-{}", std::process::id()));
         std::fs::create_dir_all(&dir).unwrap();
 
-        let outcome = compio::runtime::Runtime::new().unwrap().block_on(async {
+        // Kept to itself so that the cleanup below runs before anything is
+        // asserted, whatever happened in here.
+        let outcome = async {
             let mounter = Fusermount::new();
             let (conn, pending) = mounter
                 .mount(&dir, &[MountOpt::Rw, MountOpt::NoSuid], 1)
@@ -504,7 +506,8 @@ mod tests {
                 .unmount(Conn::Shared(conn), &dir, &[])
                 .await
                 .map(|()| while_mounted)
-        });
+        }
+        .await;
 
         let after = mounts();
         let _ = std::fs::remove_dir(&dir);
@@ -521,16 +524,12 @@ mod tests {
 
     // Runs the helper, but mounts nothing: the mountpoint doesn't exist, so the
     // helper fails before it opens the device.
-    #[test]
-    fn a_mountpoint_that_cannot_be_mounted_reports_the_helpers_status() {
-        let err = compio::runtime::Runtime::new()
-            .unwrap()
-            .block_on(async {
-                Fusermount::new()
-                    .mount(Path::new("/nonexistent/fuseio-test"), &[], 1)
-                    .await
-                    .map(|_| ())
-            })
+    #[compio::test]
+    async fn a_mountpoint_that_cannot_be_mounted_reports_the_helpers_status() {
+        let err = Fusermount::new()
+            .mount(Path::new("/nonexistent/fuseio-test"), &[], 1)
+            .await
+            .map(|_| ())
             .expect_err("a missing mountpoint cannot be mounted");
 
         // The helper's exit status, not just the socket's end-of-file, since the

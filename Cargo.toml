@@ -18,5 +18,8 @@ log = "0.4"
 memchr = "2"
 nix = { version = "0.31", features = ["user", "process", "fs", "ioctl", "poll", "socket", "uio"] }
 page_size = "0.6"
-slab = "0.4.12"
+slab = "0.4"
 unsync = "0.2"
+
+[dev-dependencies]
+compio = { version = "0.19", features = ["macros"] }
