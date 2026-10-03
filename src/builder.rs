@@ -29,14 +29,13 @@ bitflags::bitflags! {
         const DIRATIME = 1 << 6;
         const LAZYTIME = 1 << 7;
         const RELATIME = 1 << 8;
-        const STRICTATIME = 1 << 8;
-        const DIRSYNC = 1 << 9;
-        const SYMFOLLOW = 1 << 10;
-        const ALLOW_OTHER = 1 << 11;
-        const ALLOW_ROOT = 1 << 12;
-        const DEFAULT_PERMS = 1 << 13;
-        const BLKDEV = 1 << 14;
-        const LARGE_READ = 1 << 15;
+        const STRICTATIME = 1 << 9;
+        const DIRSYNC = 1 << 10;
+        const SYMFOLLOW = 1 << 11;
+        const ALLOW_OTHER = 1 << 12;
+        const ALLOW_ROOT = 1 << 13;
+        const DEFAULT_PERMS = 1 << 14;
+        const BLKDEV = 1 << 15;
 
         const DEFAULT = Self::RW.bits()
             | Self::EXEC.bits()
@@ -47,6 +46,9 @@ bitflags::bitflags! {
     }
 }
 
+/// The most options [`Builder::into_args`] can produce: one for each flag in
+/// its table, whichever way that flag is set, plus `allow_other` or
+/// `allow_root`, plus the four options that carry a value.
 pub(crate) const MAX_OPTS: usize = 19;
 
 pub(crate) type MountOptList = ArrayVec<MountOpt, MAX_OPTS>;
@@ -73,7 +75,7 @@ impl<M: Mount> Builder<M> {
     pub(crate) fn into_args(self) -> (M, MountOptList, usize) {
         struct Arg(Flags, MountOpt, Option<MountOpt>);
 
-        const ARGS: [Arg; 15] = [
+        const ARGS: [Arg; 14] = [
             Arg(Flags::RW, MountOpt::Rw, Some(MountOpt::Ro)),
             Arg(Flags::SUID, MountOpt::Suid, Some(MountOpt::NoSuid)),
             Arg(Flags::DEV, MountOpt::Dev, Some(MountOpt::NoDev)),
@@ -108,7 +110,6 @@ impl<M: Mount> Builder<M> {
             ),
             Arg(Flags::DEFAULT_PERMS, MountOpt::DefaultPermissions, None),
             Arg(Flags::BLKDEV, MountOpt::BlockDev, None),
-            Arg(Flags::LARGE_READ, MountOpt::LargeRead, None),
         ];
 
         let Self {
@@ -289,11 +290,6 @@ impl<M> Builder<M> {
         self
     }
 
-    pub fn large_read(mut self, enable: bool) -> Self {
-        self.flags.set(Flags::LARGE_READ, enable);
-        self
-    }
-
     pub fn fs_name(mut self, name: Option<impl Into<OsString>>) -> Self {
         self.fsname = name.map(Into::into);
         self
@@ -343,7 +339,6 @@ impl<M> Builder<M> {
             MountOpt::AllowRoot => self.allow_root(true),
             MountOpt::DefaultPermissions => self.default_permissions(true),
             MountOpt::BlockDev => self.block_device(true),
-            MountOpt::LargeRead => self.large_read(true),
             MountOpt::FsName(name) => self.fs_name(Some(name)),
             MountOpt::SubType(subtype) => self.sub_type(Some(subtype)),
             MountOpt::MaxRead(max_read) => self.max_read(max_read),
@@ -362,5 +357,79 @@ impl<M> Builder<M> {
 impl Default for Builder {
     fn default() -> Self {
         Self::new()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    // Anonymous, since the trait carrying `FLAGS` shares its name with the type
+    // below.
+    use bitflags::Flags as _;
+
+    fn options(builder: Builder) -> MountOptList {
+        builder.into_args().1
+    }
+
+    // `RELATIME` and `STRICTATIME` were both `1 << 8` once, which made setting
+    // either one ask for both. Checking the structure rather than that one pair
+    // catches the next one too.
+    #[test]
+    fn every_flag_has_a_bit_to_itself() {
+        let mut seen = Flags::empty();
+
+        for flag in Flags::FLAGS {
+            let value = *flag.value();
+
+            // `DEFAULT` is a union of the others, so it is not one of the bits.
+            if value.bits().count_ones() != 1 {
+                continue;
+            }
+
+            assert!(
+                !seen.intersects(value),
+                "{} shares a bit with an earlier flag",
+                flag.name()
+            );
+
+            seen.insert(value);
+        }
+    }
+
+    // The two contradict each other, so asking for one has to deny the other.
+    #[test]
+    fn strict_atime_does_not_also_ask_for_relatime() {
+        let opts = options(Builder::new().strict_atime(true));
+
+        assert!(opts.contains(&MountOpt::StrictAtime), "{opts:?}");
+        assert!(opts.contains(&MountOpt::NoRelAtime), "{opts:?}");
+        assert!(!opts.contains(&MountOpt::RelAtime), "{opts:?}");
+    }
+
+    #[test]
+    fn relative_atime_does_not_also_ask_for_strictatime() {
+        let opts = options(Builder::new().relative_atime(true));
+
+        assert!(opts.contains(&MountOpt::RelAtime), "{opts:?}");
+        assert!(opts.contains(&MountOpt::NoStrictAtime), "{opts:?}");
+        assert!(!opts.contains(&MountOpt::StrictAtime), "{opts:?}");
+    }
+
+    // Every flag in `ARGS` contributes one option, whichever way it is set, and
+    // the four value options are the rest of the budget.
+    #[test]
+    fn the_options_fit_in_the_list() {
+        let full = Builder::new()
+            .fs_name(Some("myfs"))
+            .sub_type(Some("demo"))
+            .max_read(4096)
+            .block_size(512)
+            .allow_other(true)
+            .dir_sync(true)
+            .default_permissions(true)
+            .block_device(true);
+
+        assert_eq!(options(full).len(), MAX_OPTS);
     }
 }

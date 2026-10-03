@@ -29,7 +29,6 @@ pub enum MountOpt {
     AllowRoot,
     DefaultPermissions,
     BlockDev,
-    LargeRead,
     FsName(OsString),
     SubType(OsString),
     MaxRead(usize),
@@ -69,7 +68,6 @@ impl std::fmt::Display for MountOpt {
             Self::AllowRoot => f.write_str("allow_root"),
             Self::DefaultPermissions => f.write_str("default_permissions"),
             Self::BlockDev => f.write_str("blkdev"),
-            Self::LargeRead => f.write_str("large_read"),
             Self::FsName(name) => write!(f, "fsname={}", name.display()),
             Self::SubType(subtype) => write!(f, "subtype={}", subtype.display()),
             Self::MaxRead(max) => write!(f, "max_read={max}"),
@@ -147,7 +145,6 @@ impl std::str::FromStr for MountOpt {
                 b"allow_root" => Self::AllowRoot,
                 b"default_permissions" => Self::DefaultPermissions,
                 b"blkdev" => Self::BlockDev,
-                b"large_read" => Self::LargeRead,
                 _ => return Err(ParseMountOptError),
             })
         }

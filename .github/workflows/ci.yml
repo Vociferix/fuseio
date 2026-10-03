@@ -91,6 +91,29 @@ jobs:
           TMPDIR: ${{ runner.temp }}
         run: cargo test
 
+      # `DirectMount` calls `mount(2)` itself, so the tests for it need the
+      # privilege to mount. A user namespace supplies it without root, which
+      # also keeps the mounts out of the runner's own namespace, so a test that
+      # dies holding one leaves nothing behind. Ubuntu ships an AppArmor
+      # restriction that would refuse the namespace; the sysctl is absent on
+      # kernels that don't have it.
+      - name: Allow unprivileged user namespaces
+        if: runner.os == 'Linux'
+        run: |
+          knob=/proc/sys/kernel/apparmor_restrict_unprivileged_userns
+          if [ -e "$knob" ]; then
+            sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0
+          else
+            echo "no AppArmor restriction on this kernel"
+          fi
+      - name: Test mounting without a helper
+        if: runner.os == 'Linux'
+        env:
+          TMPDIR: ${{ runner.temp }}
+        run: |
+          unshare --user --map-root-user --mount -- \
+            cargo test --test direct -- --ignored
+
   test-freebsd:
     name: test (freebsd)
     runs-on: ubuntu-latest
@@ -106,3 +129,8 @@ jobs:
           run: |
             cargo clippy --all-targets -- -D warnings
             cargo test
+            # The same tests run here once `src/mount/direct/bsd.rs` stops
+            # being `todo!()`. This VM is already root, so no namespace or
+            # sysctl is needed -- only the line below.
+            #
+            #   cargo test --test direct -- --ignored

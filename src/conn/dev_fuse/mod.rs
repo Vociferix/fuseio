@@ -7,12 +7,13 @@ use crate::types::OFlag;
 #[cfg(target_os = "linux")]
 use super::RawBackingId;
 
+use compio::buf::IntoInner;
 use compio::driver::op::{CurrentDir, Mode, OFlags, OpenFile};
 use compio::io::{AsyncRead, AsyncWrite};
 use compio::runtime::fd::AsyncFd;
 use compio::runtime::submit;
 
-use std::os::fd::{AsFd, AsRawFd, BorrowedFd, FromRawFd, OwnedFd, RawFd};
+use std::os::fd::{AsFd, AsRawFd, BorrowedFd, OwnedFd, RawFd};
 
 #[cfg(target_os = "linux")]
 mod ioctl;
@@ -193,14 +194,13 @@ impl DevFuseSharedConn {
             Mode::from_bits_retain(0o666),
         );
 
-        let fd = submit(op).await.0? as RawFd;
+        // The operation owns the descriptor it opened and closes it on drop, so
+        // the only way to keep it is to take it out. Its `usize` result is
+        // always zero and says nothing about the descriptor.
+        let BufResult(res, op) = submit(op).await;
+        res?;
 
-        // SAFETY: The above call to the `openat` syscall (via compio) has returned
-        //         a valid file descriptor, so it is safe to take ownership, and
-        //         necessary to ensure the FD is closed on drop.
-        let fd = unsafe { OwnedFd::from_raw_fd(fd) };
-
-        Self::from_fd(fd)
+        Self::from_fd(op.into_inner())
     }
 
     /// Takes ownership of an already-open FUSE device.
