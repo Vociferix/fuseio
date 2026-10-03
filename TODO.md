@@ -18,3 +18,13 @@ Items to implement or revisit:
 * Document the test requirements in `README.md`
   * The `fusermount` tests mount for real, so they need `fusermount` or `fusermount3`
     installed (Ubuntu's `fuse3` package carries both) and a usable `/dev/fuse`
+* Enforce `MountOpt::AllowRoot`
+  * It is not a kernel mount option on any platform. libfuse mounts with `allow_other`
+    and then rejects requests whose uid is neither the owner's nor root's
+    (`fuse_req_check_allow_root`, `lib/fuse_lowlevel.c`)
+  * The mount half is handled, but nothing filters requests yet, so `AllowRoot`
+    currently grants the same access as `AllowOther`
+* Implement `DirectMount` for the BSDs (`src/mount/direct/bsd.rs`)
+  * `tests/direct.rs` already covers it; the FreeBSD CI step is commented out in
+    `.github/workflows/ci.yml` and wants a `getmntinfo(3)` counterpart to
+    `the_mount_table_describes_the_mount`
