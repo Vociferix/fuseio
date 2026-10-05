@@ -24,6 +24,13 @@ Items to implement or revisit:
   * Wants either the mocking system above, or a namespace with two uids mapped:
     `unshare --map-user=<n>` drops capabilities on exec, so it needs `newuidmap`
     or a root-mapped parent that forks a child which drops to the other uid
+* Check `RawHeader`'s layout against a live kernel
+  * `the_header_matches_fuse_in_header` pins the offsets against `struct fuse_in_header`,
+    but nothing confirms a real kernel agrees. INIT cannot do it: the kernel sends it with
+    `nocreds`, so `uid`/`gid`/`pid` are zero before kernel commit `794e811d1443` and only
+    `pid` is filled after it
+  * Wants a request that carries credentials, which means completing the INIT handshake
+    first and then provoking a real operation -- the mocking system above would do it
 * Implement `FUSE_ALLOW_IDMAP` (protocol 7.41), which lets the filesystem be mounted
   with a per-mount uid/gid translation (`mount_setattr(2)` with `MOUNT_ATTR_IDMAP`)
   * The wire bit is already in `KernelInitFlags` and `ReplyInitFlags` (`init_flags.rs`),
