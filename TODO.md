@@ -9,6 +9,8 @@ Items to implement or revisit:
   * 7.45 added `FUSE_NOTIFY_PRUNE` (notify code 9), which isn't implemented
   * 7.46 is entirely io_uring transport work (`FUSE_IO_URING_CMD_ADD_QUEUE`,
     bufpool, zero-copy), so 7.45 stays honest until that's considered
+  * `FUSE_OVER_IO_URING` (bit 41) is the flag that opts into it, and has no
+    `KernelCaps`/`FsCaps` counterpart either
 * Add a mocking system that simulates a FUSE device so users can write proper unit tests for `Fs` impls
 * Add `#[inline]` appropriately throughout the crate
 * Update public documentation to not expand on implementation details that are irrelevant to the user
@@ -31,6 +33,32 @@ Items to implement or revisit:
     `pid` is filled after it
   * Wants a request that carries credentials, which means completing the INIT handshake
     first and then provoking a real operation -- the mocking system above would do it
+* Close the remaining INIT flag gaps. Each of these is a wire bit in `init_flags.rs`
+  with no `KernelCaps` or `FsCaps` counterpart, so the kernel's offer is invisible and
+  `ReplyInitFlags::negotiate` can never set it
+  * `FUSE_SUBMOUNTS` (bit 27) is the one already half-exposed: `AttrsFlags::SUBMOUNT` and
+    `Attrs::is_submount_root` let a filesystem mark a submount root today, with no way to
+    learn whether the kernel will act on it. It is silently ignored when it won't
+  * `FUSE_REQUEST_TIMEOUT` (bit 42) is nearly wired: `negotiate` already takes a
+    `request_timeout` argument and `request_timeout` is in the `fuse_init_out` reply
+    struct, but the only caller passes `false` and no `Config` setter reaches it
+  * `FUSE_SECURITY_CTX` (bit 32) and `FUSE_CREATE_SUPP_GROUP` (bit 34) both append data to
+    `create`/`mkdir`/`symlink`/`mknod` as request extensions, sized by the header's
+    `total_extlen` -- which `RawHeader` discards as `_unused`. One mechanism, so one job
+  * `FUSE_HAS_RESEND` (bit 39) lets the kernel resend a pending request, marked with
+    `FUSE_UNIQUE_RESEND` (bit 63 of `unique`). Nothing masks that bit, which stays safe
+    only while the flag is unreachable
+  * `FUSE_ABORT_ERROR` (bit 21) makes a read after an administrative abort return
+    `ECONNABORTED` instead of `ENODEV`, letting a server tell an abort from the filesystem
+    going away. Unrelated to `ConnCaps::ABORT`, which is about whether the connection can
+    be aborted at all
+  * `FUSE_SPLICE_READ`/`WRITE`/`MOVE` (bits 7-9) advertise that the device supports
+    `splice(2)`, for a server wanting zero-copy device I/O. A performance option rather
+    than missing behaviour
+  * Deliberately not capabilities, so this audit need not be repeated: `FILE_OPS` (bit 2,
+    "not yet supported" in the kernel's own header), `BIG_WRITES`, `MAX_PAGES`, `INIT_EXT`
+    and `INIT_RESERVED` (plumbing, or always set by `negotiate`), and `MAP_ALIGNMENT` with
+    `HAS_INODE_DAX` (DAX, out of scope)
 * Implement `FUSE_ALLOW_IDMAP` (protocol 7.41), which lets the filesystem be mounted
   with a per-mount uid/gid translation (`mount_setattr(2)` with `MOUNT_ATTR_IDMAP`)
   * The wire bit is already in `KernelInitFlags` and `ReplyInitFlags` (`init_flags.rs`),
