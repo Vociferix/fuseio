@@ -18,12 +18,37 @@ Items to implement or revisit:
 * Document the test requirements in `README.md`
   * The `fusermount` tests mount for real, so they need `fusermount` or `fusermount3`
     installed (Ubuntu's `fuse3` package carries both) and a usable `/dev/fuse`
-* Enforce `MountOpt::AllowRoot`
-  * It is not a kernel mount option on any platform. libfuse mounts with `allow_other`
-    and then rejects requests whose uid is neither the owner's nor root's
-    (`fuse_req_check_allow_root`, `lib/fuse_lowlevel.c`)
-  * The mount half is handled, but nothing filters requests yet, so `AllowRoot`
-    currently grants the same access as `AllowOther`
+* Test the `MountOpt::AllowRoot` refusal end to end
+  * `src/access.rs` decides the policy and `handle_req` applies it, both unit tested,
+    but nothing exercises a real request from a foreign uid actually being refused
+  * Wants either the mocking system above, or a namespace with two uids mapped:
+    `unshare --map-user=<n>` drops capabilities on exec, so it needs `newuidmap`
+    or a root-mapped parent that forks a child which drops to the other uid
+* Check `RawHeader`'s layout against a live kernel
+  * `the_header_matches_fuse_in_header` pins the offsets against `struct fuse_in_header`,
+    but nothing confirms a real kernel agrees. INIT cannot do it: the kernel sends it with
+    `nocreds`, so `uid`/`gid`/`pid` are zero before kernel commit `794e811d1443` and only
+    `pid` is filled after it
+  * Wants a request that carries credentials, which means completing the INIT handshake
+    first and then provoking a real operation -- the mocking system above would do it
+* Implement `FUSE_ALLOW_IDMAP` (protocol 7.41), which lets the filesystem be mounted
+  with a per-mount uid/gid translation (`mount_setattr(2)` with `MOUNT_ATTR_IDMAP`)
+  * The wire bit is already in `KernelInitFlags` and `ReplyInitFlags` (`init_flags.rs`),
+    but there is no `KernelCaps`, `FsCaps` or `Feature` counterpart, so the kernel's offer
+    is invisible and `ReplyInitFlags::negotiate` can never set it. Parsed, unreachable
+  * Three constraints come with it:
+    * The kernel fails the handshake outright unless the mount has `default_permissions`
+      (`ok = false` in `fs/fuse/inode.c`), rather than ignoring the flag
+    * uid/gid are then sent only on inode-creation requests (`MKNOD`, `SYMLINK`, `MKDIR`,
+      `TMPFILE`, `CREATE`, and `RENAME2` with `RENAME_WHITEOUT`), translated through the
+      mount's idmap. Every other request carries `FUSE_INVALID_UIDGID` (`fs/fuse/req.c`),
+      which is why `default_permissions` is required: the server can no longer decide
+    * So it cannot coexist with `MountOpt::AllowRoot`. `src/access.rs` would refuse nearly
+      everything, an invalid uid being neither the owner's nor root's, and the mount would
+      look mysteriously broken rather than misconfigured. The two have to be rejected
+      together at mount or handshake time
+  * The `Fs` API hands every request a uid and gid, so it would need to express their
+    absence rather than report `-1`
 * Implement `DirectMount` for the BSDs (`src/mount/direct/bsd.rs`)
   * `tests/direct.rs` already covers it; the FreeBSD CI step is commented out in
     `.github/workflows/ci.yml` and wants a `getmntinfo(3)` counterpart to

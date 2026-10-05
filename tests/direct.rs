@@ -47,6 +47,14 @@ fn mountpoint(name: &str) -> std::path::PathBuf {
 }
 
 /// The opcode of a request, from the `opcode` field of its `fuse_in_header`.
+///
+/// Only the opcode: the `uid`, `gid` and `pid` of an INIT request say nothing.
+/// The kernel sends it with `nocreds` (`fs/fuse/inode.c`), which leaves all
+/// three at zero on kernels before `794e811d1443`, and fills only `pid` after
+/// it. Checking them here would assert the kernel's version rather than its
+/// layout -- `RawHeader`'s offsets are pinned against `struct fuse_in_header`
+/// in a unit test instead. A wire-level check wants a request that carries
+/// credentials, which means answering INIT first.
 fn opcode(request: &[u8]) -> u32 {
     u32::from_ne_bytes(request[4..8].try_into().expect("a header"))
 }

@@ -1,3 +1,4 @@
+use crate::access::Access;
 use crate::builder::MountOptList;
 use crate::conn::{Conn, ConnectionMeta, SharedConnection};
 use crate::handshake::{Config, Init, handshake};
@@ -21,6 +22,7 @@ use std::sync::Arc;
 
 pub struct Handle<F, U: Unmount> {
     pub(crate) id: usize,
+    pub(crate) access: Access,
     pub(crate) conn: U::SharedConn,
     pub(crate) fs: F,
     pub(crate) minor_ver: u32,
@@ -38,6 +40,7 @@ pub struct UnmountHandle {
 
 pub struct HandleIter<F, U: Unmount> {
     id: usize,
+    access: Access,
     conns: std::vec::IntoIter<(U::SharedConn, AsyncRx<Array<Message>>)>,
     fs: ManuallyDrop<F>,
     minor_ver: u32,
@@ -129,6 +132,7 @@ where
 
     Ok(HandleIter {
         id: 0,
+        access: Access::of(opts.as_ref()),
         conns: conns.into_iter(),
         fs: ManuallyDrop::new(fs),
         minor_ver: ver.1,
@@ -190,6 +194,7 @@ where
 
         Some(Handle {
             id,
+            access: self.access,
             conn,
             fs,
             minor_ver: self.minor_ver,
