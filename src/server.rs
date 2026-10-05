@@ -1,4 +1,5 @@
 use crate::Error;
+use crate::access::Access;
 use crate::async_rc::AsyncRc;
 use crate::buf::{Buf, BufPool, IntoIoBuf};
 use crate::cancel_token::CancelToken;
@@ -52,6 +53,7 @@ pub struct Server<F, U: Unmount> {
 
 pub struct ServerInner<C> {
     pub id: usize,
+    pub access: Access,
     pub conn: C,
     pub minor_ver: u32,
     pub flags: ReplyInitFlags,
@@ -156,6 +158,7 @@ where
 
         let inner = AsyncRc::new(ServerInner {
             id: h.id,
+            access: h.access,
             conn,
             minor_ver: h.minor_ver,
             flags: h.flags,
@@ -312,8 +315,32 @@ where
         let crate::proto::request::RawHeader {
             unique: id,
             opcode: op,
+            uid,
             ..
         } = unsafe { std::ptr::read(buf.as_ptr().cast()) };
+
+        // `allow_root` asks the kernel for `allow_other` and leaves the
+        // narrowing to here, so this is the only thing keeping the mount from
+        // being readable by everyone. Refused before the body is decoded: a
+        // caller who may not ask has no claim on the work of understanding the
+        // question.
+        if !this.access.allows(uid, op) {
+            log::debug!(
+                "worker {} refused request from uid {uid}: id={id}, opcode={op}",
+                this.inner.id,
+            );
+
+            let this = this.clone();
+            compio::runtime::spawn(async move {
+                let _ = this
+                    .conn
+                    .send_response_buf(token.into_inner(), Error::EACCES.into_reply(id))
+                    .await;
+            })
+            .detach();
+
+            return ControlFlow::Continue(());
+        }
 
         let full_req = match AnyRequest::decode(buf, this.minor_ver, this.flags) {
             Ok(req) => req,

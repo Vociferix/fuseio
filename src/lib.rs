@@ -1,5 +1,6 @@
 #![allow(async_fn_in_trait)]
 
+mod access;
 mod async_rc;
 mod builder;
 mod cancel_token;

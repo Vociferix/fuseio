@@ -178,6 +178,33 @@ pub struct RawHeader {
 
 const HDR_LEN: usize = std::mem::size_of::<RawHeader>();
 
+#[cfg(test)]
+mod header_tests {
+    use super::RawHeader;
+
+    use std::mem::{offset_of, size_of};
+
+    // `RawHeader` is read straight off the wire, so every field has to sit
+    // where `struct fuse_in_header` puts it. The `uid` in particular is what
+    // decides whether a request is served at all under `allow_root`, and
+    // reading it from the wrong place would be invisible until someone else's
+    // request arrived.
+    #[test]
+    fn the_header_matches_fuse_in_header() {
+        assert_eq!(offset_of!(RawHeader, len), 0);
+        assert_eq!(offset_of!(RawHeader, opcode), 4);
+        assert_eq!(offset_of!(RawHeader, unique), 8);
+        assert_eq!(offset_of!(RawHeader, nodeid), 16);
+        assert_eq!(offset_of!(RawHeader, uid), 24);
+        assert_eq!(offset_of!(RawHeader, gid), 28);
+        assert_eq!(offset_of!(RawHeader, pid), 32);
+
+        // `total_extlen` and `padding`, two `u16`s this crate has no use for.
+        assert_eq!(offset_of!(RawHeader, _unused), 36);
+        assert_eq!(size_of::<RawHeader>(), 40);
+    }
+}
+
 #[repr(C)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct Opcode(pub u32);

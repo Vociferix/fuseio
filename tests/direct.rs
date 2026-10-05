@@ -46,9 +46,14 @@ fn mountpoint(name: &str) -> std::path::PathBuf {
     dir
 }
 
+/// A `u32` field of a request's `fuse_in_header`, by byte offset.
+fn field(request: &[u8], at: usize) -> u32 {
+    u32::from_ne_bytes(request[at..at + 4].try_into().expect("a header"))
+}
+
 /// The opcode of a request, from the `opcode` field of its `fuse_in_header`.
 fn opcode(request: &[u8]) -> u32 {
-    u32::from_ne_bytes(request[4..8].try_into().expect("a header"))
+    field(request, 4)
 }
 
 #[compio::test]
@@ -62,7 +67,19 @@ async fn the_device_arrives_and_the_mount_goes_away() {
         let unmounter = pending.await?;
 
         let compio::buf::BufResult(res, request) = conn.recv_request(vec![0u8; BUFFER]).await;
-        let first = res.map(|(len, ())| (len, opcode(&request)));
+
+        // The identity fields as well as the opcode: this is the one place a
+        // real kernel can be asked whether `RawHeader` describes what it sends.
+        // `pid` is the telling one, being a value only this process knows.
+        let first = res.map(|(len, ())| {
+            (
+                len,
+                opcode(&request),
+                field(&request, 24),
+                field(&request, 28),
+                field(&request, 32),
+            )
+        });
 
         // Unmounted whatever the read did, so a failure cannot leave the mount
         // behind for the rest of the suite to trip over.
@@ -75,10 +92,29 @@ async fn the_device_arrives_and_the_mount_goes_away() {
 
     let _ = std::fs::remove_dir(&dir);
 
-    let (len, opcode) = outcome.expect("mount, read and unmount");
+    let (len, opcode, uid, gid, pid) = outcome.expect("mount, read and unmount");
 
     assert_eq!(opcode, FUSE_INIT);
     assert!(len >= 56, "an INIT request is a header and a body: {len}");
+
+    // The kernel sends INIT in the mounting thread's own context.
+    assert_eq!(uid, nix::unistd::getuid().as_raw(), "uid is not at 24");
+    assert_eq!(gid, nix::unistd::getgid().as_raw(), "gid is not at 28");
+
+    // The telling one, `uid` and `gid` both being zero in a namespace that maps
+    // only this user. Linux fills `pid` from `pid_nr_ns(task_pid(current), ..)`
+    // (`fs/fuse/req.c`), and `task_pid` is the *thread's*, so this is the id of
+    // the thread the harness spawned rather than the process id.
+    // TODO: Whether FreeBSD's fuse reports a thread or a process here is
+    //       unchecked, so only Linux asserts it.
+    #[cfg(any(target_os = "linux", target_os = "android"))]
+    assert_eq!(
+        pid,
+        nix::unistd::gettid().as_raw().cast_unsigned(),
+        "pid is not at 32"
+    );
+    #[cfg(not(any(target_os = "linux", target_os = "android")))]
+    let _ = pid;
 }
 
 /// A clone shares the connection, whether it got there through
