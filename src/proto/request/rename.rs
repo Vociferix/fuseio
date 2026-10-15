@@ -250,3 +250,200 @@ fn read_ext(buf: Buf) -> Result<(u64, u32, BufView, usize)> {
 
     Ok((newdir, flags, buf, old_name_len))
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    use crate::proto::request::Opcode;
+    use crate::proto::request::test_support::{latest, request, root};
+
+    /// `fuse_rename_in`: the destination directory, then both names.
+    fn compat_body(newdir: u64, names: &[u8]) -> Vec<u8> {
+        let mut body = newdir.to_ne_bytes().to_vec();
+        body.extend_from_slice(names);
+        body
+    }
+
+    /// `fuse_rename2_in`: the destination directory, the flags, then both names.
+    fn ext_body(newdir: u64, flags: u32, names: &[u8]) -> Vec<u8> {
+        let mut body = newdir.to_ne_bytes().to_vec();
+        body.extend_from_slice(&flags.to_ne_bytes());
+        body.extend_from_slice(&0u32.to_ne_bytes()); // padding
+        body.extend_from_slice(names);
+        body
+    }
+
+    /// macOS `FUSE_EXCHANGE`: both directories and the `exchangedata` options.
+    fn exchange_body(old_dir: u64, new_dir: u64, names: &[u8]) -> Vec<u8> {
+        let mut body = old_dir.to_ne_bytes().to_vec();
+        body.extend_from_slice(&new_dir.to_ne_bytes());
+        body.extend_from_slice(&0u64.to_ne_bytes()); // options
+        body.extend_from_slice(names);
+        body
+    }
+
+    fn rename2(flags: u32) -> Result<Rename> {
+        Rename::decode_rename2(
+            request(Opcode::RENAME2, &ext_body(2, flags, b"old\0new\0")),
+            root(),
+            latest(),
+        )
+    }
+
+    // `FUSE_RENAME` carries only the destination directory, so the move is
+    // always a plain replace.
+    #[test]
+    fn a_plain_rename_names_both_directories_and_both_names() {
+        let req = Rename::decode(
+            request(Opcode::RENAME, &compat_body(2, b"before\0after\0")),
+            root(),
+            latest(),
+        )
+        .expect("decodes");
+
+        assert_eq!(req.old_parent(), root().unwrap());
+        assert_eq!(req.new_parent().as_raw(), 2);
+        assert_eq!(req.old_name(), "before");
+        assert_eq!(req.new_name(), "after");
+        assert_eq!(req.rename_mode(), RenameMode::Replace);
+    }
+
+    // `renameat2`'s flags are what distinguish the modes, and the kernel sends
+    // them verbatim.
+    #[test]
+    fn the_flags_choose_the_mode() {
+        assert_eq!(rename2(0).unwrap().rename_mode(), RenameMode::Replace);
+        assert_eq!(rename2(1).unwrap().rename_mode(), RenameMode::NoReplace);
+        assert_eq!(rename2(2).unwrap().rename_mode(), RenameMode::Exchange);
+        assert_eq!(rename2(4).unwrap().rename_mode(), RenameMode::Whiteout);
+        assert_eq!(
+            rename2(4 | 1).unwrap().rename_mode(),
+            RenameMode::WhiteoutNoReplace
+        );
+    }
+
+    // A combination no `renameat2` accepts, and a bit nothing defines, are both
+    // requests this crate cannot honour rather than ones to guess at.
+    #[test]
+    fn a_flag_combination_that_means_nothing_is_refused() {
+        assert_eq!(rename2(1 | 2).unwrap_err(), Error::EINVAL);
+        assert_eq!(rename2(1 << 20).unwrap_err(), Error::EINVAL);
+    }
+
+    #[test]
+    fn a_rename2_names_both_directories_and_both_names() {
+        let req = rename2(0).expect("decodes");
+
+        assert_eq!(req.old_parent(), root().unwrap());
+        assert_eq!(req.new_parent().as_raw(), 2);
+        assert_eq!(req.old_name(), "old");
+        assert_eq!(req.new_name(), "new");
+    }
+
+    // `FUSE_EXCHANGE` takes both directories from its own body rather than the
+    // header, since neither is the request's inode.
+    #[test]
+    fn an_exchange_takes_both_directories_from_its_body() {
+        let req = Rename::decode_exchange(
+            request(Opcode::EXCHANGE, &exchange_body(3, 4, b"one\0two\0")),
+            None,
+            latest(),
+        )
+        .expect("decodes");
+
+        assert_eq!(req.old_parent().as_raw(), 3);
+        assert_eq!(req.new_parent().as_raw(), 4);
+        assert_eq!(req.old_name(), "one");
+        assert_eq!(req.new_name(), "two");
+        assert_eq!(req.rename_mode(), RenameMode::ExchangeData);
+    }
+
+    #[test]
+    fn a_destination_directory_of_zero_is_refused() {
+        let err = Rename::decode(
+            request(Opcode::RENAME, &compat_body(0, b"a\0b\0")),
+            root(),
+            latest(),
+        )
+        .unwrap_err();
+
+        assert_eq!(err, Error::EINVAL);
+    }
+
+    #[test]
+    fn an_exchange_with_a_zero_directory_is_refused() {
+        for (old, new) in [(0, 4), (3, 0)] {
+            let err = Rename::decode_exchange(
+                request(Opcode::EXCHANGE, &exchange_body(old, new, b"a\0b\0")),
+                None,
+                latest(),
+            )
+            .unwrap_err();
+
+            assert_eq!(err, Error::EINVAL, "old={old} new={new}");
+        }
+    }
+
+    // Without the terminator between them there is no telling where the first
+    // name ends.
+    #[test]
+    fn names_with_no_separator_are_refused() {
+        for buf in [
+            Rename::decode(
+                request(Opcode::RENAME, &compat_body(2, b"nonul")),
+                root(),
+                latest(),
+            ),
+            Rename::decode_rename2(
+                request(Opcode::RENAME2, &ext_body(2, 0, b"nonul")),
+                root(),
+                latest(),
+            ),
+            Rename::decode_exchange(
+                request(Opcode::EXCHANGE, &exchange_body(3, 4, b"nonul")),
+                None,
+                latest(),
+            ),
+        ] {
+            assert_eq!(buf.map(|_| ()).unwrap_err(), Error::EPROTO);
+        }
+    }
+
+    // The second name runs to the end of the request, so a kernel that left its
+    // terminator off is still unambiguous.
+    #[test]
+    fn an_unterminated_second_name_is_taken_as_the_rest() {
+        let req = Rename::decode(
+            request(Opcode::RENAME, &compat_body(2, b"old\0new")),
+            root(),
+            latest(),
+        )
+        .expect("decodes");
+
+        assert_eq!(req.old_name(), "old");
+        assert_eq!(req.new_name(), "new");
+    }
+
+    #[test]
+    fn a_body_too_short_for_its_layout_is_refused() {
+        assert_eq!(
+            Rename::decode(request(Opcode::RENAME, &[0u8; 4]), root(), latest())
+                .map(|_| ())
+                .unwrap_err(),
+            Error::EPROTO
+        );
+        assert_eq!(
+            Rename::decode_rename2(request(Opcode::RENAME2, &[0u8; 12]), root(), latest())
+                .map(|_| ())
+                .unwrap_err(),
+            Error::EPROTO
+        );
+        assert_eq!(
+            Rename::decode_exchange(request(Opcode::EXCHANGE, &[0u8; 20]), None, latest())
+                .map(|_| ())
+                .unwrap_err(),
+            Error::EPROTO
+        );
+    }
+}

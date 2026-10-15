@@ -2,6 +2,9 @@ use super::Cfg;
 use crate::types::{Gid, Ino, Pid, ReplyInitFlags, Request, Uid};
 use crate::{Error, Result, buf::Buf};
 
+#[cfg(test)]
+mod test_support;
+
 mod access;
 mod batch_forget;
 mod bmap;
