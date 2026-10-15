@@ -1,7 +1,7 @@
 use super::{Cfg, EncodeResp, IntoIoBuf, IoBuf, RawHeader};
 
 #[repr(C)]
-#[derive(Debug)]
+#[derive(Debug, Clone, Copy, bytemuck::NoUninit)]
 pub struct FsAttrs {
     blocks: u64,
     bfree: u64,
@@ -97,6 +97,7 @@ impl EncodeResp for FsAttrs {
     type Error = std::convert::Infallible;
 
     fn encode(self, id: u64, cfg: Cfg) -> Result<impl IntoIoBuf, Self::Error> {
+        #[derive(Clone, Copy, bytemuck::NoUninit)]
         #[repr(C)]
         struct Out {
             hdr: RawHeader,
@@ -112,7 +113,7 @@ impl EncodeResp for FsAttrs {
 
         impl IoBuf for Out {
             fn as_init(&self) -> &[u8] {
-                unsafe { std::slice::from_raw_parts(self.buf_ptr(), self.buf_len()) }
+                &bytemuck::bytes_of(self)[..self.buf_len()]
             }
 
             fn buf_ptr(&self) -> *const u8 {

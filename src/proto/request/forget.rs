@@ -1,9 +1,15 @@
-use super::{Cfg, HDR_LEN, Ino};
+use super::{Cfg, Ino, RawHeader};
 use crate::{Error, Result, buf::Buf};
 
 #[derive(Debug)]
 pub struct Forget {
     ino: Ino,
+    nlookup: u64,
+}
+
+#[derive(Clone, Copy, bytemuck::AnyBitPattern)]
+struct Raw {
+    _hdr: RawHeader,
     nlookup: u64,
 }
 
@@ -19,16 +25,17 @@ impl Forget {
 
 impl Forget {
     pub(super) fn decode(buf: Buf, ino: Option<Ino>, _: Cfg) -> Result<Self> {
-        if buf.len() < const { std::mem::size_of::<u64>() + HDR_LEN } {
+        let Some((raw, _)) = buf.as_slice().split_first::<Raw>() else {
             return Err(Error::EPROTO);
-        }
+        };
 
         let Some(ino) = ino else {
             return Err(Error::EINVAL);
         };
 
-        let nlookup = unsafe { std::ptr::read(buf.as_ptr().add(HDR_LEN) as *const u64) };
-
-        Ok(Self { ino, nlookup })
+        Ok(Self {
+            ino,
+            nlookup: raw.nlookup,
+        })
     }
 }

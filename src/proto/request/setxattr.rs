@@ -1,6 +1,9 @@
-use super::{Cfg, HDR_LEN, Ino};
+use super::{Cfg, Ino, RawHeader};
 use crate::types::{ReplyInitFlags, XattrMode};
-use crate::{Error, Result, buf::Buf};
+use crate::{
+    Error, Result,
+    buf::{Buf, BufView},
+};
 
 use std::ffi::OsStr;
 use std::os::unix::ffi::OsStrExt;
@@ -10,15 +13,16 @@ pub struct SetXattr {
     ino: Ino,
     xattr_mode: XattrMode,
     remove_sgid: bool,
-    buf: Buf,
-    key_start: usize,
-    key_end: usize,
+    buf: BufView,
+    key_len: usize,
     #[cfg(target_os = "macos")]
     offset: usize,
 }
 
+#[derive(Clone, Copy, bytemuck::AnyBitPattern)]
 #[repr(C)]
 struct Raw {
+    hdr: RawHeader,
     size: u32,
     flags: u32,
     #[cfg(target_os = "macos")]
@@ -30,14 +34,16 @@ struct Raw {
 const _: () = {
     // macOS appends `position` and its padding.
     #[cfg(not(target_os = "macos"))]
-    assert!(std::mem::size_of::<Raw>() == 8);
+    assert!(std::mem::size_of::<Raw>() == 8 + std::mem::size_of::<RawHeader>());
 
     #[cfg(target_os = "macos")]
-    assert!(std::mem::size_of::<Raw>() == 16);
+    assert!(std::mem::size_of::<Raw>() == 16 + std::mem::size_of::<RawHeader>());
 };
 
+#[derive(Clone, Copy, bytemuck::AnyBitPattern)]
 #[repr(C)]
 struct RawExt {
+    hdr: RawHeader,
     size: u32,
     flags: u32,
     setxattr_flags: RawFlags,
@@ -46,7 +52,7 @@ struct RawExt {
 
 bitflags::bitflags! {
     #[repr(C)]
-    #[derive(Clone, Copy)]
+    #[derive(Clone, Copy, bytemuck::AnyBitPattern)]
     struct RawFlags: u32 {
         const ACL_KILL_SGID = 1 << 0;
     }
@@ -67,11 +73,11 @@ impl SetXattr {
     }
 
     pub fn key(&self) -> &OsStr {
-        OsStr::from_bytes(&self.buf[self.key_start..self.key_end])
+        OsStr::from_bytes(&self.buf[..self.key_len])
     }
 
     pub fn value(&self) -> &[u8] {
-        &self.buf[(self.key_end + 1)..]
+        &self.buf[(self.key_len + 1)..]
     }
 
     /// The offset within the attribute to write at.
@@ -92,41 +98,64 @@ impl SetXattr {
 }
 
 impl SetXattr {
-    pub(super) fn decode(mut buf: Buf, ino: Option<Ino>, cfg: Cfg) -> Result<Self> {
-        let (size, flags, setxattr_flags, key_offset) =
+    pub(super) fn decode(buf: Buf, ino: Option<Ino>, cfg: Cfg) -> Result<Self> {
+        let (flags, setxattr_flags, offset, kv, key_len) =
             if cfg.flags.contains(ReplyInitFlags::SETXATTR_EXT) {
-                const KEY_OFFSET: usize = HDR_LEN + std::mem::size_of::<RawExt>();
-
-                if buf.len() < KEY_OFFSET {
+                let Some((raw, kv)) = buf.as_slice().split_first::<RawExt>() else {
                     return Err(Error::EPROTO);
-                }
+                };
 
-                let raw = unsafe { &*(buf.as_ptr().add(HDR_LEN) as *const RawExt) };
+                let Some(key_len) = memchr::memchr(0, kv) else {
+                    return Err(Error::EPROTO);
+                };
 
-                (raw.size as usize, raw.flags, raw.setxattr_flags, KEY_OFFSET)
+                let size = raw.size as usize;
+                let flags = raw.flags;
+                let setxattr_flags = raw.setxattr_flags;
+
+                let Some(buf) = buf.try_into_view(
+                    std::mem::size_of::<RawExt>()
+                        ..(std::mem::size_of::<RawExt>() + key_len + 1 + size),
+                ) else {
+                    return Err(Error::EPROTO);
+                };
+
+                (flags, setxattr_flags, 0, buf, key_len)
             } else {
-                const KEY_OFFSET: usize = HDR_LEN + std::mem::size_of::<Raw>();
-
-                if buf.len() < KEY_OFFSET {
+                let Some((raw, kv)) = buf.as_slice().split_first::<Raw>() else {
                     return Err(Error::EPROTO);
-                }
+                };
 
-                let raw = unsafe { &*(buf.as_ptr().add(HDR_LEN) as *const Raw) };
+                let Some(key_len) = memchr::memchr(0, kv) else {
+                    return Err(Error::EPROTO);
+                };
 
-                (raw.size as usize, raw.flags, RawFlags::empty(), KEY_OFFSET)
+                let size = raw.size as usize;
+                let flags = raw.flags;
+
+                // macOS always carries `position`, since it never negotiates the
+                // extended layout.
+                #[cfg(target_os = "macos")]
+                let offset = raw.position as usize;
+
+                #[cfg(not(target_os = "macos"))]
+                let offset = 0usize;
+
+                let Some(buf) = buf.try_into_view(
+                    std::mem::size_of::<Raw>()..(std::mem::size_of::<Raw>() + key_len + 1 + size),
+                ) else {
+                    return Err(Error::EPROTO);
+                };
+
+                (flags, RawFlags::empty(), offset, buf, key_len)
             };
 
         let Some(ino) = ino else {
             return Err(Error::EINVAL);
         };
 
-        // macOS always carries `position`, since it never negotiates the
-        // extended layout.
-        #[cfg(target_os = "macos")]
-        let offset = {
-            let raw = unsafe { &*(buf.as_ptr().add(HDR_LEN) as *const Raw) };
-            raw.position as usize
-        };
+        #[cfg(not(target_os = "macos"))]
+        let _ = offset;
 
         // TODO(e2e): assumes each kernel sends host-native setxattr(2) flags;
         // verify once end-to-end tests can be done.
@@ -161,31 +190,15 @@ impl SetXattr {
             _ => return Err(Error::EINVAL),
         };
 
-        let Some(key_len) = memchr::memchr(0, &buf[key_offset..]) else {
-            return Err(Error::EPROTO);
-        };
-        let key_end = key_offset + key_len;
-
-        // The value follows the key's NUL terminator.
-        let Some(value_end) = (key_end + 1).checked_add(size) else {
-            return Err(Error::EPROTO);
-        };
-
-        if buf.len() < value_end {
-            return Err(Error::EPROTO);
-        }
-        buf.truncate(value_end);
-
         let remove_sgid = setxattr_flags.contains(RawFlags::ACL_KILL_SGID)
-            && &buf[key_offset..key_end] == b"system.posix_acl_access";
+            && &kv[..key_len] == b"system.posix_acl_access";
 
         Ok(Self {
             ino,
             xattr_mode,
             remove_sgid,
-            buf,
-            key_start: key_offset,
-            key_end,
+            buf: kv,
+            key_len,
             #[cfg(target_os = "macos")]
             offset,
         })
@@ -210,7 +223,7 @@ mod tests {
     fn request_at(key: &[u8], value: &[u8], size: u32, position: u32) -> Buf {
         let mut buf = BufPool::new().checkout_with_capacity(256);
 
-        buf.extend_from_slice(&[0u8; HDR_LEN]);
+        buf.extend_from_slice(&[0u8; std::mem::size_of::<RawHeader>()]);
 
         buf.extend_from_slice(&size.to_ne_bytes());
         buf.extend_from_slice(&0u32.to_ne_bytes());
@@ -296,7 +309,7 @@ mod tests {
     #[test]
     fn rejects_an_unterminated_key() {
         let mut buf = BufPool::new().checkout_with_capacity(256);
-        buf.extend_from_slice(&[0u8; HDR_LEN]);
+        buf.extend_from_slice(&[0u8; std::mem::size_of::<RawHeader>()]);
         buf.extend_from_slice(&0u32.to_ne_bytes());
         buf.extend_from_slice(&0u32.to_ne_bytes());
         #[cfg(target_os = "macos")]
@@ -315,7 +328,7 @@ mod tests {
     #[test]
     fn rejects_a_truncated_body() {
         let mut buf = BufPool::new().checkout_with_capacity(256);
-        buf.extend_from_slice(&[0u8; HDR_LEN]);
+        buf.extend_from_slice(&[0u8; std::mem::size_of::<RawHeader>()]);
         buf.extend_from_slice(&0u32.to_ne_bytes());
 
         assert_eq!(

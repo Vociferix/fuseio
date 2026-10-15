@@ -1,6 +1,6 @@
 use super::{FileHandle, Ino};
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct CopyFileRangePos {
     pub(crate) ino: Ino,
     pub(crate) fh: FileHandle,

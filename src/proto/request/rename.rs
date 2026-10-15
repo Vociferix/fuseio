@@ -1,6 +1,9 @@
-use super::{Cfg, HDR_LEN, Ino};
+use super::{Cfg, Ino, RawHeader};
 use crate::types::RenameMode;
-use crate::{Error, Result, buf::Buf};
+use crate::{
+    Error, Result,
+    buf::{Buf, BufView},
+};
 
 #[cfg(target_os = "macos")]
 use crate::types::ReplyInitFlags;
@@ -14,9 +17,8 @@ use std::os::unix::ffi::OsStrExt;
 pub struct Rename {
     old_parent: Ino,
     new_parent: Ino,
-    buf: Buf,
-    old_name_start: usize,
-    old_name_end: usize,
+    buf: BufView,
+    old_name_len: usize,
     mode: RenameMode,
 }
 
@@ -30,11 +32,11 @@ impl Rename {
     }
 
     pub fn old_name(&self) -> &OsStr {
-        OsStr::from_bytes(&self.buf[self.old_name_start..self.old_name_end])
+        OsStr::from_bytes(&self.buf[..self.old_name_len])
     }
 
     pub fn new_name(&self) -> &OsStr {
-        OsStr::from_bytes(&self.buf[(self.old_name_end + 1)..])
+        OsStr::from_bytes(&self.buf[(self.old_name_len + 1)..])
     }
 
     pub fn rename_mode(&self) -> RenameMode {
@@ -42,24 +44,32 @@ impl Rename {
     }
 }
 
+#[derive(Clone, Copy, bytemuck::AnyBitPattern)]
+#[repr(C)]
+struct RawCompat {
+    hdr: RawHeader,
+    newdir: u64,
+}
+
 /// `fuse_rename2_in`, also sent by macOS for `FUSE_RENAME` when the rename flags
 /// are negotiated.
+#[derive(Clone, Copy, bytemuck::AnyBitPattern)]
 #[repr(C)]
 struct RawExt {
+    hdr: RawHeader,
     newdir: u64,
     flags: u32,
     _unused: u32,
 }
 
+#[derive(Clone, Copy, bytemuck::AnyBitPattern)]
 #[repr(C)]
 struct RawExchange {
+    hdr: RawHeader,
     old_dir: u64,
     new_dir: u64,
     _options: u64,
 }
-
-const COMPAT_NAME_OFFSET: usize = HDR_LEN + std::mem::size_of::<u64>();
-const EXT_NAME_OFFSET: usize = HDR_LEN + std::mem::size_of::<RawExt>();
 
 impl Rename {
     /// Decodes `FUSE_RENAME`.
@@ -73,7 +83,7 @@ impl Rename {
         if cfg.flags.intersects(
             ReplyInitFlags::DARWIN_RENAME_SWAP.union(ReplyInitFlags::DARWIN_RENAME_EXCL),
         ) {
-            let (newdir, flags) = read_ext(&buf)?;
+            let (newdir, flags, names, old_name_len) = read_ext(buf)?;
 
             // TODO(e2e): assumes host-native renamex_np(2) flags; verify once
             // end-to-end tests can be done.
@@ -84,23 +94,39 @@ impl Rename {
                 _ => return Err(Error::EINVAL),
             };
 
-            return Self::from_parts(buf, ino, newdir, EXT_NAME_OFFSET, mode);
+            return Self::from_parts(ino, newdir, mode, names, old_name_len);
         }
 
-        if buf.len() < COMPAT_NAME_OFFSET {
+        let Some((raw, names)) = buf.as_slice().split_first::<RawCompat>() else {
             return Err(Error::EPROTO);
-        }
+        };
 
-        let newdir = unsafe { std::ptr::read(buf.as_ptr().add(HDR_LEN) as *const u64) };
+        let newdir = raw.newdir;
 
-        Self::from_parts(buf, ino, newdir, COMPAT_NAME_OFFSET, RenameMode::Replace)
+        let Some(old_name_len) = memchr::memchr(0, names) else {
+            return Err(Error::EPROTO);
+        };
+
+        let old_name = &names[(old_name_len + 1)..];
+        let Some(buf) = (if let Some(new_name_len) = memchr::memchr(0, old_name) {
+            buf.try_into_view(
+                std::mem::size_of::<RawCompat>()
+                    ..(std::mem::size_of::<RawCompat>() + old_name_len + 1 + new_name_len),
+            )
+        } else {
+            buf.try_into_view(std::mem::size_of::<RawCompat>()..)
+        }) else {
+            return Err(Error::EPROTO);
+        };
+
+        Self::from_parts(ino, newdir, RenameMode::Replace, buf, old_name_len)
     }
 
     /// Decodes `FUSE_RENAME2`.
     // `RENAME_*` are `c_uint` on Linux and defined here elsewhere.
     #[allow(clippy::unnecessary_cast)]
     pub(super) fn decode_rename2(buf: Buf, ino: Option<Ino>, _: Cfg) -> Result<Self> {
-        let (newdir, flags) = read_ext(&buf)?;
+        let (newdir, flags, names, old_name_len) = read_ext(buf)?;
 
         // TODO(e2e): assumes the kernel sends host-native renameat2(2) flags;
         // verify once end-to-end tests can be done.
@@ -129,7 +155,7 @@ impl Rename {
             _ => return Err(Error::EINVAL),
         };
 
-        Self::from_parts(buf, ino, newdir, EXT_NAME_OFFSET, mode)
+        Self::from_parts(ino, newdir, mode, names, old_name_len)
     }
 
     /// Decodes macOS `FUSE_EXCHANGE` (`exchangedata(2)`).
@@ -138,32 +164,47 @@ impl Rename {
     /// layout, so a connection that speaks for a macFUSE peer can be served on
     /// any host.
     pub(super) fn decode_exchange(buf: Buf, _: Option<Ino>, _: Cfg) -> Result<Self> {
-        const NAMES_OFFSET: usize = HDR_LEN + std::mem::size_of::<RawExchange>();
-
-        if buf.len() < NAMES_OFFSET {
-            return Err(Error::EPROTO);
-        }
-
         // TODO(e2e): `options` (exchangedata(2) FSOPT_* flags) is ignored on the
         // assumption that the kernel already applied them while resolving both
         // paths; verify once end-to-end tests can be done.
-        let raw = unsafe { std::ptr::read(buf.as_ptr().add(HDR_LEN) as *const RawExchange) };
+        let Some((raw, names)) = buf.as_slice().split_first::<RawExchange>() else {
+            return Err(Error::EPROTO);
+        };
+
+        let old_dir = raw.old_dir;
+        let new_dir = raw.new_dir;
+
+        let Some(old_name_len) = memchr::memchr(0, names) else {
+            return Err(Error::EPROTO);
+        };
+
+        let old_name = &names[(old_name_len + 1)..];
+        let Some(buf) = (if let Some(new_name_len) = memchr::memchr(0, old_name) {
+            buf.try_into_view(
+                std::mem::size_of::<RawExchange>()
+                    ..(std::mem::size_of::<RawExchange>() + old_name_len + 1 + new_name_len),
+            )
+        } else {
+            buf.try_into_view(std::mem::size_of::<RawExchange>()..)
+        }) else {
+            return Err(Error::EPROTO);
+        };
 
         Self::from_parts(
-            buf,
-            Ino::from_raw(raw.old_dir),
-            raw.new_dir,
-            NAMES_OFFSET,
+            Ino::from_raw(old_dir),
+            new_dir,
             RenameMode::ExchangeData,
+            buf,
+            old_name_len,
         )
     }
 
     fn from_parts(
-        mut buf: Buf,
         ino: Option<Ino>,
         newdir: u64,
-        old_name_start: usize,
         mode: RenameMode,
+        names: BufView,
+        old_name_len: usize,
     ) -> Result<Self> {
         let Some(ino) = ino else {
             return Err(Error::EINVAL);
@@ -173,33 +214,39 @@ impl Rename {
             return Err(Error::EINVAL);
         };
 
-        let Some(old_name_len) = memchr::memchr(0, &buf[old_name_start..]) else {
-            return Err(Error::EPROTO);
-        };
-
-        let old_name_end = old_name_start + old_name_len;
-
-        if let Some(new_name_len) = memchr::memchr(0, &buf[(old_name_end + 1)..]) {
-            buf.truncate(old_name_end + 1 + new_name_len);
-        }
-
         Ok(Self {
             old_parent: ino,
             new_parent,
-            buf,
-            old_name_start,
-            old_name_end,
+            buf: names,
+            old_name_len,
             mode,
         })
     }
 }
 
-fn read_ext(buf: &Buf) -> Result<(u64, u32)> {
-    if buf.len() < EXT_NAME_OFFSET {
+fn read_ext(buf: Buf) -> Result<(u64, u32, BufView, usize)> {
+    let Some((raw, names)) = buf.as_slice().split_first::<RawExt>() else {
         return Err(Error::EPROTO);
-    }
+    };
 
-    let raw = unsafe { &*(buf.as_ptr().add(HDR_LEN) as *const RawExt) };
+    let newdir = raw.newdir;
+    let flags = raw.flags;
 
-    Ok((raw.newdir, raw.flags))
+    let Some(old_name_len) = memchr::memchr(0, names) else {
+        return Err(Error::EPROTO);
+    };
+
+    let old_name = &names[(old_name_len + 1)..];
+    let Some(buf) = (if let Some(new_name_len) = memchr::memchr(0, old_name) {
+        buf.try_into_view(
+            std::mem::size_of::<RawExt>()
+                ..(std::mem::size_of::<RawExt>() + old_name_len + 1 + new_name_len),
+        )
+    } else {
+        buf.try_into_view(std::mem::size_of::<RawExt>()..)
+    }) else {
+        return Err(Error::EPROTO);
+    };
+
+    Ok((newdir, flags, buf, old_name_len))
 }

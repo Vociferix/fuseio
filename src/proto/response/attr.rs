@@ -4,7 +4,7 @@ use crate::types::{DeviceNumber, FileFlag, Gid, Ino, InodeKind, Mode, SFlag, Uid
 use std::time::{Duration, SystemTime};
 
 #[repr(C)]
-#[derive(Debug, Default)]
+#[derive(Debug, Default, Clone, Copy, bytemuck::NoUninit)]
 pub struct Attrs {
     attr_valid: u64,
     attr_valid_nsec: u32,
@@ -12,6 +12,7 @@ pub struct Attrs {
     attr: InodeAttrs,
 }
 
+#[derive(Clone, Copy, bytemuck::NoUninit)]
 #[repr(C)]
 struct AttrsCompat {
     attr_valid: u64,
@@ -21,7 +22,7 @@ struct AttrsCompat {
 }
 
 #[repr(C)]
-#[derive(Debug)]
+#[derive(Debug, Clone, Copy, bytemuck::NoUninit, bytemuck::AnyBitPattern)]
 pub struct InodeAttrs {
     ino: u64,
     size: u64,
@@ -42,7 +43,7 @@ pub struct InodeAttrs {
     gid: u32,
     rdev: DeviceNumber,
     #[cfg(target_os = "macos")]
-    chflags: FileFlag,
+    chflags: u32,
     blksize: u32,
     flags: AttrsFlags,
 }
@@ -60,6 +61,7 @@ const _: () = {
     assert!(std::mem::size_of::<InodeAttrs>() == 104);
 };
 
+#[derive(Clone, Copy, bytemuck::NoUninit, bytemuck::AnyBitPattern)]
 #[repr(C)]
 /// `fuse_attr` before 7.9, which ends before `blksize`.
 ///
@@ -85,7 +87,7 @@ pub(super) struct InodeAttrsCompat {
     gid: u32,
     rdev: DeviceNumber,
     #[cfg(target_os = "macos")]
-    chflags: FileFlag,
+    chflags: u32,
 }
 
 const _: () = {
@@ -105,7 +107,7 @@ const _: () = {
 
 bitflags::bitflags! {
     #[repr(C)]
-    #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Default)]
+    #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Default, bytemuck::NoUninit, bytemuck::AnyBitPattern)]
     struct AttrsFlags: u32 {
         const SUBMOUNT = 1 << 0;
         const DAX = 1 << 1;
@@ -227,7 +229,7 @@ impl InodeAttrs {
     pub fn flags(mut self, flags: FileFlag) -> Self {
         #[cfg(target_os = "macos")]
         {
-            self.chflags = flags;
+            self.chflags = flags.bits();
         }
 
         #[cfg(not(target_os = "macos"))]
@@ -242,7 +244,7 @@ impl InodeAttrs {
     pub fn add_flags(mut self, flags: FileFlag) -> Self {
         #[cfg(target_os = "macos")]
         {
-            self.chflags.insert(flags);
+            self.chflags |= flags.bits();
         }
 
         #[cfg(not(target_os = "macos"))]
@@ -257,7 +259,7 @@ impl InodeAttrs {
     pub fn clear_flags(mut self, flags: FileFlag) -> Self {
         #[cfg(target_os = "macos")]
         {
-            self.chflags.remove(flags);
+            self.chflags &= !flags.bits();
         }
 
         #[cfg(not(target_os = "macos"))]
@@ -290,12 +292,14 @@ impl EncodeResp for Attrs {
     type Error = std::convert::Infallible;
 
     fn encode(self, id: u64, cfg: Cfg) -> Result<impl IntoIoBuf, Self::Error> {
+        #[derive(Clone, Copy, bytemuck::NoUninit)]
         #[repr(C)]
         struct Out {
             hdr: RawHeader,
             attr: Attrs,
         }
 
+        #[derive(Clone, Copy, bytemuck::NoUninit)]
         #[repr(C)]
         struct OutCompat {
             hdr: RawHeader,
@@ -304,7 +308,7 @@ impl EncodeResp for Attrs {
 
         impl IoBuf for Out {
             fn as_init(&self) -> &[u8] {
-                unsafe { std::slice::from_raw_parts(self.buf_ptr(), self.buf_len()) }
+                &bytemuck::bytes_of(self)[..self.buf_len()]
             }
 
             fn buf_ptr(&self) -> *const u8 {
@@ -335,8 +339,10 @@ impl EncodeResp for Attrs {
 
 impl Default for InodeAttrs {
     fn default() -> Self {
+        use bytemuck::Zeroable;
+
         #[allow(unused_mut)]
-        let mut attrs: Self = unsafe { std::mem::MaybeUninit::zeroed().assume_init() };
+        let mut attrs = Self::zeroed();
 
         #[cfg(target_os = "macos")]
         {

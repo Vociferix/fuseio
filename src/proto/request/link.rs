@@ -1,16 +1,23 @@
-use super::{Cfg, HDR_LEN, Ino};
-use crate::{Error, Result, buf::Buf};
+use super::{Cfg, Ino, RawHeader};
+use crate::{
+    Error, Result,
+    buf::{Buf, BufView},
+};
 
 use std::ffi::OsStr;
-use std::os::unix::ffi::OsStrExt;
-
-const NAME_OFFSET: usize = HDR_LEN + std::mem::size_of::<u64>();
 
 #[derive(Debug)]
 pub struct Link {
     parent: Ino,
     ino: Ino,
-    buf: Buf,
+    buf: BufView,
+}
+
+#[derive(Clone, Copy, bytemuck::AnyBitPattern)]
+#[repr(C)]
+struct Raw {
+    hdr: RawHeader,
+    src: u64,
 }
 
 impl Link {
@@ -25,29 +32,31 @@ impl Link {
     }
 
     pub fn name(&self) -> &OsStr {
-        OsStr::from_bytes(&self.buf[NAME_OFFSET..])
+        self.buf.as_os_str()
     }
 }
 
 impl Link {
-    pub(super) fn decode(mut buf: Buf, ino: Option<Ino>, _: Cfg) -> Result<Self> {
-        if buf.len() < NAME_OFFSET {
+    pub(super) fn decode(buf: Buf, ino: Option<Ino>, _: Cfg) -> Result<Self> {
+        let Some((raw, name)) = buf.as_slice().split_first::<Raw>() else {
             return Err(Error::EPROTO);
-        }
+        };
 
         let Some(ino) = ino else {
             return Err(Error::EINVAL);
         };
 
-        let src = unsafe { std::ptr::read(buf.as_ptr().add(HDR_LEN) as *const u64) };
-
-        let Some(src) = Ino::from_raw(src) else {
+        let Some(src) = Ino::from_raw(raw.src) else {
             return Err(Error::EINVAL);
         };
 
-        if let Some(name_len) = memchr::memchr(0, &buf[NAME_OFFSET..]) {
-            buf.truncate(NAME_OFFSET + name_len);
-        }
+        let Some(buf) = (if let Some(name_len) = memchr::memchr(0, name) {
+            buf.try_into_view(std::mem::size_of::<Raw>()..(std::mem::size_of::<Raw>() + name_len))
+        } else {
+            buf.try_into_view(std::mem::size_of::<Raw>()..)
+        }) else {
+            return Err(Error::EPROTO);
+        };
 
         Ok(Self {
             parent: ino,

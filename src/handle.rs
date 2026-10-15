@@ -187,6 +187,9 @@ where
         let (conn, rx) = self.conns.next()?;
 
         let fs = if self.conns.len() == 0 {
+            // SAFETY: This is the last connection, so this is the last handle
+            //         the iterator will yield and `self.fs` is never read
+            //         again. `Drop` only touches it when connections remain.
             unsafe { ManuallyDrop::take(&mut self.fs) }
         } else {
             (*self.fs).clone()
@@ -234,6 +237,8 @@ where
 {
     fn drop(&mut self) {
         if let Some((conn, _)) = self.conns.next() {
+            // SAFETY: A connection remains, so `next` never reached the branch
+            //         that takes `self.fs`, and this is the only drop of it.
             unsafe {
                 ManuallyDrop::drop(&mut self.fs);
             }

@@ -231,6 +231,9 @@ where
         {
             either::Left(()) => ControlFlow::Break(false),
             either::Right(BufResult(Ok((len, token)), mut buf)) => {
+                // SAFETY: `len` is what the connection reported reading, so
+                //         it is within the capacity handed to `recv_request`
+                //         and every byte below it was written by the read.
                 unsafe {
                     buf.set_len(len);
                 }
@@ -297,7 +300,10 @@ where
     }
 
     async fn handle_req(this: &AsyncRc<Self>, token: Token<U>, buf: Buf) -> ControlFlow<bool> {
-        if buf.len() < std::mem::size_of::<crate::proto::request::RawHeader>() {
+        let Some((hdr, _)) = buf
+            .as_slice()
+            .split_first::<crate::proto::request::RawHeader>()
+        else {
             this.discard_token(token).await;
 
             if buf.is_empty() {
@@ -310,14 +316,11 @@ where
                 buf.len()
             );
             return ControlFlow::Continue(());
-        }
+        };
 
-        let crate::proto::request::RawHeader {
-            unique: id,
-            opcode: op,
-            uid,
-            ..
-        } = unsafe { std::ptr::read(buf.as_ptr().cast()) };
+        let id = hdr.unique;
+        let op = hdr.opcode;
+        let uid = hdr.uid;
 
         // `allow_root` asks the kernel for `allow_other` and leaves the
         // narrowing to here, so this is the only thing keeping the mount from

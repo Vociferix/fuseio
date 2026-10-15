@@ -16,7 +16,6 @@ mod lseek;
 mod open;
 mod poll;
 mod posix_lock;
-//mod readlink; // use Data
 mod statfs;
 mod statx;
 mod write;
@@ -41,7 +40,7 @@ pub use xattr::XattrLen;
 pub use xtimes::XTimes;
 
 #[repr(C)]
-#[derive(Debug, Default)]
+#[derive(Debug, Default, Clone, Copy, bytemuck::NoUninit, bytemuck::AnyBitPattern)]
 struct RawHeader {
     len: u32,
     err: i32,
@@ -78,19 +77,5 @@ where
                 Ok(buf.right_buf())
             }
         }
-    }
-}
-
-impl IoBuf for RawHeader {
-    fn as_init(&self) -> &[u8] {
-        unsafe { std::slice::from_raw_parts(self.buf_ptr(), self.buf_len()) }
-    }
-
-    fn buf_len(&self) -> usize {
-        const { std::mem::size_of::<RawHeader>() }
-    }
-
-    fn buf_ptr(&self) -> *const u8 {
-        self as *const Self as *const u8
     }
 }

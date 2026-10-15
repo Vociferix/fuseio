@@ -307,6 +307,9 @@ async fn receive_fd(sock: OwnedFd) -> Result<OwnedFd> {
             // One is all the protocol sends; close anything further rather than
             // leaking it.
             for extra in fds {
+                // SAFETY: As above -- the kernel installed each of these
+                //         descriptors in this process and nothing else owns
+                //         them, so taking them only to close them is sound.
                 drop(unsafe { OwnedFd::from_raw_fd(extra) });
             }
 

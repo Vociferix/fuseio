@@ -1,5 +1,5 @@
-use super::{Cfg, EncodeNotify, IntoIoBuf, IoBuf, NotifyCode, RawHeader};
-use crate::buf::Vectored;
+use super::{Cfg, EncodeNotify, IntoIoBuf, NotifyCode, RawHeader};
+use crate::buf::{Pod, Vectored};
 use crate::types::Ino;
 
 use compio::buf::IoVectoredBuf;
@@ -25,6 +25,7 @@ impl<B: IntoIoBuf> EncodeNotify for Delete<B> {
     type Error = crate::Error;
 
     fn encode(self, _: Cfg) -> Result<impl IntoIoBuf, Self::Error> {
+        #[derive(Clone, Copy, bytemuck::NoUninit)]
         #[repr(C)]
         struct Out {
             hdr: RawHeader,
@@ -32,20 +33,6 @@ impl<B: IntoIoBuf> EncodeNotify for Delete<B> {
             child: u64,
             namelen: u32,
             _unused: u32,
-        }
-
-        impl IoBuf for Out {
-            fn as_init(&self) -> &[u8] {
-                unsafe { std::slice::from_raw_parts(self.buf_ptr(), self.buf_len()) }
-            }
-
-            fn buf_ptr(&self) -> *const u8 {
-                self as *const Self as *const u8
-            }
-
-            fn buf_len(&self) -> usize {
-                const { std::mem::size_of::<Out>() }
-            }
         }
 
         let buf = self.name.into_io_buf_with_nul();
@@ -64,7 +51,7 @@ impl<B: IntoIoBuf> EncodeNotify for Delete<B> {
         };
 
         Ok(Vectored((
-            Out {
+            Pod(Out {
                 hdr: RawHeader {
                     len,
                     code: NotifyCode::DELETE,
@@ -74,7 +61,7 @@ impl<B: IntoIoBuf> EncodeNotify for Delete<B> {
                 child: self.child.as_raw(),
                 namelen,
                 _unused: 0,
-            },
+            }),
             buf,
         )))
     }

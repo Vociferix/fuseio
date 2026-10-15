@@ -1,9 +1,11 @@
-use super::{Cfg, HDR_LEN, Ino};
+use super::{Cfg, Ino, RawHeader};
 use crate::types::{DeviceNumber, InodeKind, Mode, SFlag};
-use crate::{Error, Result, buf::Buf};
+use crate::{
+    Error, Result,
+    buf::{Buf, BufView},
+};
 
 use std::ffi::OsStr;
-use std::os::unix::ffi::OsStrExt;
 
 #[derive(Debug)]
 pub struct MkNod {
@@ -11,8 +13,7 @@ pub struct MkNod {
     mode: Mode,
     umask: Mode,
     rdev: DeviceNumber,
-    buf: Buf,
-    name_start: usize,
+    buf: BufView,
 }
 
 impl MkNod {
@@ -35,8 +36,7 @@ impl MkNod {
             SFlag::S_IFCHR => InodeKind::CharDev,
             SFlag::S_IFBLK => InodeKind::BlockDev,
             SFlag::S_IFIFO => InodeKind::Fifo,
-            SFlag::S_IFSOCK => InodeKind::Socket,
-            _ => unsafe { std::hint::unreachable_unchecked() },
+            _ => InodeKind::Socket,
         }
     }
 
@@ -46,18 +46,22 @@ impl MkNod {
     }
 
     pub fn name(&self) -> &OsStr {
-        OsStr::from_bytes(&self.buf[self.name_start..])
+        self.buf.as_os_str()
     }
 }
 
+#[derive(Clone, Copy, bytemuck::AnyBitPattern)]
 #[repr(C)]
 struct RawCompat {
+    hdr: RawHeader,
     mode: u32,
     rdev: u32,
 }
 
+#[derive(Clone, Copy, bytemuck::AnyBitPattern)]
 #[repr(C)]
 struct Raw {
+    hdr: RawHeader,
     mode: u32,
     rdev: u32,
     umask: u32,
@@ -65,35 +69,37 @@ struct Raw {
 }
 
 impl MkNod {
-    pub(super) fn decode(mut buf: Buf, ino: Option<Ino>, cfg: Cfg) -> Result<Self> {
+    pub(super) fn decode(buf: Buf, ino: Option<Ino>, cfg: Cfg) -> Result<Self> {
         if cfg.minor_ver < 12 {
-            const NAME_OFFSET: usize = HDR_LEN + std::mem::size_of::<RawCompat>();
-
-            if buf.len() < NAME_OFFSET {
+            let Some((raw, name)) = buf.as_slice().split_first::<RawCompat>() else {
                 return Err(Error::EPROTO);
-            }
+            };
 
             let Some(ino) = ino else {
                 return Err(Error::EINVAL);
             };
 
-            let hdr = unsafe { std::ptr::read(buf.as_ptr().add(HDR_LEN) as *const RawCompat) };
-
             // TODO(e2e): assumes host-native mode values; verify once end-to-end tests
             // can be done.
-            let mode = Mode::from_bits_retain(hdr.mode as nix::libc::mode_t);
-            let rdev = DeviceNumber::from_raw(hdr.rdev);
+            let mode = Mode::from_bits_retain(raw.mode as nix::libc::mode_t);
+            let rdev = DeviceNumber::from_raw(raw.rdev);
 
             if !matches!(
-                SFlag::from_bits_truncate(hdr.mode as nix::libc::mode_t),
+                SFlag::from_bits_truncate(raw.mode as nix::libc::mode_t),
                 SFlag::S_IFSOCK | SFlag::S_IFIFO | SFlag::S_IFBLK | SFlag::S_IFCHR | SFlag::S_IFREG
             ) {
                 return Err(Error::EINVAL);
             }
 
-            let name_len =
-                memchr::memchr(0, &buf[NAME_OFFSET..]).unwrap_or_else(|| buf.len() - NAME_OFFSET);
-            buf.truncate(NAME_OFFSET + name_len);
+            let Some(buf) = (if let Some(name_len) = memchr::memchr(0, name) {
+                buf.try_into_view(
+                    std::mem::size_of::<RawCompat>()..(std::mem::size_of::<RawCompat>() + name_len),
+                )
+            } else {
+                buf.try_into_view(std::mem::size_of::<RawCompat>()..)
+            }) else {
+                return Err(Error::EPROTO);
+            };
 
             Ok(Self {
                 parent: ino,
@@ -101,26 +107,21 @@ impl MkNod {
                 umask: Mode::empty(),
                 rdev,
                 buf,
-                name_start: NAME_OFFSET,
             })
         } else {
-            const NAME_OFFSET: usize = HDR_LEN + std::mem::size_of::<Raw>();
-
-            if buf.len() < NAME_OFFSET {
+            let Some((raw, name)) = buf.as_slice().split_first::<Raw>() else {
                 return Err(Error::EPROTO);
-            }
+            };
 
             let Some(ino) = ino else {
                 return Err(Error::EINVAL);
             };
 
-            let hdr = unsafe { std::ptr::read(buf.as_ptr().add(HDR_LEN) as *const Raw) };
-
             // TODO(e2e): assumes host-native mode values; verify once end-to-end tests
             // can be done.
-            let mode = Mode::from_bits_retain(hdr.mode as nix::libc::mode_t);
-            let umask = Mode::from_bits_truncate(hdr.umask as nix::libc::mode_t);
-            let rdev = DeviceNumber::from_raw(hdr.rdev);
+            let mode = Mode::from_bits_retain(raw.mode as nix::libc::mode_t);
+            let umask = Mode::from_bits_truncate(raw.umask as nix::libc::mode_t);
+            let rdev = DeviceNumber::from_raw(raw.rdev);
 
             if !matches!(
                 SFlag::from_bits_truncate(mode.bits()),
@@ -129,9 +130,15 @@ impl MkNod {
                 return Err(Error::EINVAL);
             }
 
-            let name_len =
-                memchr::memchr(0, &buf[NAME_OFFSET..]).unwrap_or_else(|| buf.len() - NAME_OFFSET);
-            buf.truncate(NAME_OFFSET + name_len);
+            let Some(buf) = (if let Some(name_len) = memchr::memchr(0, name) {
+                buf.try_into_view(
+                    std::mem::size_of::<Raw>()..(std::mem::size_of::<Raw>() + name_len),
+                )
+            } else {
+                buf.try_into_view(std::mem::size_of::<Raw>()..)
+            }) else {
+                return Err(Error::EPROTO);
+            };
 
             Ok(Self {
                 parent: ino,
@@ -139,7 +146,6 @@ impl MkNod {
                 umask,
                 rdev,
                 buf,
-                name_start: NAME_OFFSET,
             })
         }
     }
@@ -148,6 +154,8 @@ impl MkNod {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    use std::os::unix::ffi::OsStrExt;
 
     use crate::buf::BufPool;
     use crate::types::{DeviceNumber, ReplyInitFlags};
@@ -162,7 +170,7 @@ mod tests {
     fn request(mode: u32, rdev: u32, umask: Option<u32>) -> Buf {
         let mut buf = BufPool::new().checkout_with_capacity(128);
 
-        buf.extend_from_slice(&[0u8; HDR_LEN]);
+        buf.extend_from_slice(&[0u8; std::mem::size_of::<RawHeader>()]);
         buf.extend_from_slice(&mode.to_ne_bytes());
         buf.extend_from_slice(&rdev.to_ne_bytes());
 

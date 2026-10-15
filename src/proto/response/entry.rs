@@ -4,7 +4,7 @@ use crate::types::Ino;
 
 use std::time::Duration;
 
-#[derive(Debug)]
+#[derive(Debug, Clone, Copy, bytemuck::NoUninit)]
 #[repr(C)]
 pub struct Entry {
     ino: u64,
@@ -87,6 +87,7 @@ impl EncodeResp for Entry {
     type Error = crate::Error;
 
     fn encode(self, id: u64, cfg: Cfg) -> Result<impl IntoIoBuf, Self::Error> {
+        #[derive(Clone, Copy, bytemuck::NoUninit)]
         #[repr(C)]
         struct Out {
             hdr: RawHeader,
@@ -101,7 +102,7 @@ impl EncodeResp for Entry {
 
         impl IoBuf for Out {
             fn as_init(&self) -> &[u8] {
-                unsafe { std::slice::from_raw_parts(self.buf_ptr(), self.buf_len()) }
+                &bytemuck::bytes_of(self)[..self.buf_len()]
             }
 
             fn buf_ptr(&self) -> *const u8 {

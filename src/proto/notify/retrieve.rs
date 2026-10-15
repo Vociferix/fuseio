@@ -1,4 +1,5 @@
-use super::{Cfg, EncodeNotify, IntoIoBuf, IoBuf, NotifyCode, RawHeader};
+use super::{Cfg, EncodeNotify, IntoIoBuf, NotifyCode, RawHeader};
+use crate::buf::Pod;
 use crate::types::Ino;
 
 #[derive(Debug)]
@@ -24,6 +25,7 @@ impl EncodeNotify for Retrieve {
     type Error = crate::Error;
 
     fn encode(self, _: Cfg) -> Result<impl IntoIoBuf, Self::Error> {
+        #[derive(Clone, Copy, bytemuck::NoUninit)]
         #[repr(C)]
         struct Out {
             hdr: RawHeader,
@@ -34,25 +36,11 @@ impl EncodeNotify for Retrieve {
             _unused: u32,
         }
 
-        impl IoBuf for Out {
-            fn as_init(&self) -> &[u8] {
-                unsafe { std::slice::from_raw_parts(self.buf_ptr(), self.buf_len()) }
-            }
-
-            fn buf_ptr(&self) -> *const u8 {
-                self as *const Self as *const u8
-            }
-
-            fn buf_len(&self) -> usize {
-                const { std::mem::size_of::<Out>() }
-            }
-        }
-
         let Ok(size) = u32::try_from(self.size) else {
             return Err(crate::Error::ERANGE);
         };
 
-        Ok(Out {
+        Ok(Pod(Out {
             hdr: RawHeader {
                 len: const { std::mem::size_of::<Out>() as u32 },
                 code: NotifyCode::RETRIEVE,
@@ -63,6 +51,6 @@ impl EncodeNotify for Retrieve {
             offset: self.offset,
             size,
             _unused: 0,
-        })
+        }))
     }
 }

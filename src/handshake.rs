@@ -485,6 +485,10 @@ where
 
     impl compio::buf::IoBufMut for Buf {
         fn as_uninit(&mut self) -> &mut [std::mem::MaybeUninit<u8>] {
+            // SAFETY: `self.0` is an array of exactly `MIN_READ_BUFFER` bytes,
+            //         and `&mut self` makes this the only reference to it.
+            //         Every byte is initialized, which `MaybeUninit<u8>`
+            //         permits.
             unsafe { std::slice::from_raw_parts_mut(self.0.as_mut_ptr().cast(), MIN_READ_BUFFER) }
         }
 
@@ -583,6 +587,9 @@ where
 
 impl compio::buf::IoBuf for InitRespRaw {
     fn as_init(&self) -> &[u8] {
+        // SAFETY: `buf_len` is the `len` this reply's header was built with,
+        //         which never exceeds the struct, and every byte up to it was
+        //         written before the reply was handed over.
         unsafe { std::slice::from_raw_parts(self.buf_ptr(), self.buf_len()) }
     }
 

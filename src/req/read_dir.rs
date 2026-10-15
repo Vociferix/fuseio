@@ -53,6 +53,7 @@ pub struct DirEntry<T> {
 pub(crate) const DIRENT_ALIGN: usize = std::mem::size_of::<u64>();
 pub(crate) const DIRENT_PADDING: [u8; DIRENT_ALIGN] = [0; DIRENT_ALIGN];
 
+#[derive(Clone, Copy, bytemuck::NoUninit)]
 #[repr(C)]
 pub struct RawDirEntry {
     pub ino: u64,
@@ -187,14 +188,8 @@ impl DirEntryBuf {
             namelen,
             kind: u32::from(SFlag::from(entry.kind).bits()) >> 12,
         };
-        let raw = unsafe {
-            std::slice::from_raw_parts(
-                &raw as *const RawDirEntry as *const u8,
-                std::mem::size_of::<RawDirEntry>(),
-            )
-        };
 
-        self.buf.extend_from_slice(raw);
+        self.buf.extend_from_slice(bytemuck::bytes_of(&raw));
         self.buf.extend_from_slice(name);
         self.buf.extend_from_slice(&DIRENT_PADDING[..padding_len]);
 

@@ -1,4 +1,4 @@
-use super::{Cfg, HDR_LEN, Ino};
+use super::{Cfg, Ino, RawHeader};
 use crate::buf::{Buf, BufPool};
 use crate::{Error, Result};
 
@@ -21,8 +21,10 @@ pub struct SharedNotifyReply {
     buf: AVec<u8, ConstAlign<{ crate::buf::ALIGN }>>,
 }
 
+#[derive(Clone, Copy, bytemuck::AnyBitPattern)]
 #[repr(C)]
 struct Raw {
+    hdr: RawHeader,
     _unused0: u64,
     offset: u64,
     size: u32,
@@ -31,15 +33,13 @@ struct Raw {
     _unused3: u64,
 }
 
-const DATA_OFFSET: usize = HDR_LEN + std::mem::size_of::<Raw>();
-
 impl NotifyReply {
     pub fn offset(&self) -> u64 {
         self.offset
     }
 
     pub fn data(&self) -> &[u8] {
-        &self.buf[DATA_OFFSET..]
+        &self.buf[std::mem::size_of::<Raw>()..]
     }
 
     pub(crate) fn share(self) -> SharedNotifyReply {
@@ -52,28 +52,21 @@ impl NotifyReply {
 
 impl NotifyReply {
     pub(super) fn decode(mut buf: Buf, _: Option<Ino>, _: Cfg) -> Result<Self> {
-        if buf.len() < DATA_OFFSET {
+        let Some((raw, data)) = buf.as_slice().split_first::<Raw>() else {
             return Err(Error::EPROTO);
-        }
-
-        let raw = unsafe { std::ptr::read(buf.as_ptr().add(HDR_LEN) as *const Raw) };
+        };
 
         let len = raw.size as usize;
 
-        let Some(expected_len) = len.checked_add(DATA_OFFSET) else {
-            return Err(Error::EINVAL);
-        };
-
-        if buf.len() < expected_len {
+        if data.len() < len {
             return Err(Error::EINVAL);
         }
 
-        buf.truncate(expected_len);
+        let offset = raw.offset;
 
-        Ok(Self {
-            offset: raw.offset,
-            buf,
-        })
+        buf.truncate(std::mem::size_of::<Raw>() + len);
+
+        Ok(Self { offset, buf })
     }
 }
 

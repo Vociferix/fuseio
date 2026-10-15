@@ -65,8 +65,9 @@ impl CancelToken {
                 let mut wakers = self.token.wakers.borrow_mut();
 
                 if let Some(id) = self.id {
-                    let waker = unsafe { wakers.get_mut(id).unwrap_unchecked() };
-                    if !waker.will_wake(cx.waker()) {
+                    if let Some(waker) = wakers.get_mut(id)
+                        && !waker.will_wake(cx.waker())
+                    {
                         *waker = cx.waker().clone();
                     }
                 } else {

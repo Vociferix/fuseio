@@ -1,4 +1,4 @@
-use super::{Cfg, HDR_LEN, Ino};
+use super::{Cfg, Ino, RawHeader};
 use crate::types::{FileHandle, PollFlags};
 use crate::{Error, Result, buf::Buf};
 
@@ -12,14 +12,16 @@ pub struct Poll {
 
 bitflags::bitflags! {
     #[repr(C)]
-    #[derive(Copy, Clone)]
+    #[derive(Copy, Clone, bytemuck::AnyBitPattern)]
     struct RawFlags: u32 {
         const SCHEDULE_NOTIFY = 1 << 0;
     }
 }
 
+#[derive(Clone, Copy, bytemuck::AnyBitPattern)]
 #[repr(C)]
 struct Raw {
+    hdr: RawHeader,
     fh: u64,
     kh: u64,
     flags: RawFlags,
@@ -46,15 +48,13 @@ impl Poll {
 
 impl Poll {
     pub(super) fn decode(buf: Buf, ino: Option<Ino>, _: Cfg) -> Result<Self> {
-        if buf.len() < const { HDR_LEN + std::mem::size_of::<Raw>() } {
+        let Some((raw, _)) = buf.as_slice().split_first::<Raw>() else {
             return Err(Error::EPROTO);
-        }
+        };
 
         let Some(ino) = ino else {
             return Err(Error::EINVAL);
         };
-
-        let raw = unsafe { &*(buf.as_ptr().add(HDR_LEN) as *const Raw) };
 
         Ok(Self {
             ino,
@@ -88,7 +88,7 @@ mod tests {
     fn request(flags: u32) -> Buf {
         let mut buf = BufPool::new().checkout_with_capacity(64);
 
-        buf.extend_from_slice(&[0u8; HDR_LEN]);
+        buf.extend_from_slice(&[0u8; std::mem::size_of::<RawHeader>()]);
         buf.extend_from_slice(&9u64.to_ne_bytes()); // fh
         buf.extend_from_slice(&5u64.to_ne_bytes()); // kh
         buf.extend_from_slice(&flags.to_ne_bytes());
@@ -117,7 +117,7 @@ mod tests {
     #[test]
     fn a_short_body_is_rejected() {
         let mut buf = BufPool::new().checkout_with_capacity(64);
-        buf.extend_from_slice(&[0u8; HDR_LEN]);
+        buf.extend_from_slice(&[0u8; std::mem::size_of::<RawHeader>()]);
         buf.extend_from_slice(&9u64.to_ne_bytes());
 
         assert_eq!(

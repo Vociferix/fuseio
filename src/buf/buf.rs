@@ -1,6 +1,7 @@
 use super::{ALIGN, BufPool};
 
 use std::mem::{ManuallyDrop, MaybeUninit};
+use std::ptr::NonNull;
 
 use aligned_vec::{AVec, ConstAlign};
 
@@ -16,18 +17,29 @@ pub struct BufIntoIter {
     end: usize,
 }
 
+/// Bytes whose first one is at an address that is a multiple of [`ALIGN`].
+///
+/// That is what makes it sound to reinterpret a prefix as some `T`. [`Buf`]
+/// only ever builds one from the base of its [`AVec`], which is aligned by
+/// construction, and the `split_*` methods preserve the invariant by refusing
+/// any `T` whose size is not itself a multiple of [`ALIGN`].
+#[derive(PartialEq, Eq, PartialOrd, Ord, Hash)]
+#[repr(transparent)]
+pub struct BufSlice([u8]);
+
+pub struct BufView {
+    buf: AVec<u8, ConstAlign<ALIGN>>,
+    pool: BufPool,
+    view: NonNull<[u8]>,
+}
+
 impl Buf {
     pub fn new(pool: BufPool) -> Self {
         pool.checkout_owned()
     }
 
     pub(crate) fn from_avec(avec: AVec<u8, ConstAlign<ALIGN>>, pool: BufPool) -> Self {
-        let mut buf = std::mem::ManuallyDrop::new(avec);
-        let ptr = buf.as_mut_ptr();
-        let len = buf.len();
-        let cap = buf.capacity();
-        let buf = unsafe { AVec::from_raw_parts(ptr.cast(), ALIGN, len, cap) };
-        Buf { buf, pool }
+        Buf { buf: avec, pool }
     }
 
     pub fn with_capacity(capacity: usize, pool: BufPool) -> Self {
@@ -58,21 +70,12 @@ impl Buf {
         self.buf.as_mut_ptr().cast()
     }
 
-    pub fn as_slice(&self) -> &[u8] {
-        unsafe { std::slice::from_raw_parts(self.as_ptr(), self.len()) }
+    pub fn as_bytes(&self) -> &[u8] {
+        self.buf.as_slice()
     }
 
-    pub fn as_mut_slice(&mut self) -> &mut [u8] {
-        unsafe { std::slice::from_raw_parts_mut(self.as_mut_ptr(), self.len()) }
-    }
-
-    pub fn spare_capacity_mut(&mut self) -> &mut [MaybeUninit<u8>] {
-        unsafe {
-            std::slice::from_raw_parts_mut(
-                self.as_mut_ptr().cast(),
-                self.capacity().unchecked_sub(self.len()),
-            )
-        }
+    pub fn as_mut_bytes(&mut self) -> &mut [u8] {
+        self.buf.as_mut_slice()
     }
 
     pub fn reserve(&mut self, additional: usize) {
@@ -96,98 +99,86 @@ impl Buf {
     /// `new_len` must not exceed the buffer's capacity, and every byte below it
     /// must be initialized.
     pub unsafe fn set_len(&mut self, new_len: usize) {
+        // SAFETY: `AVec::set_len` asks for exactly what this function asks of
+        //         its own caller, so the obligation is passed straight along.
         unsafe {
             self.buf.set_len(new_len);
         }
     }
 
     pub fn push(&mut self, byte: u8) {
-        let len = self.len();
-        if len == self.capacity() {
-            self.reserve((len * 2).max(1));
-        }
-
-        unsafe {
-            *self.as_mut_ptr().add(len) = byte;
-        }
-        unsafe {
-            self.set_len(len.unchecked_add(1));
-        }
+        self.buf.push(byte);
     }
 
     pub fn pop(&mut self) -> Option<u8> {
-        let len = self.len();
-        if len == 0 {
-            return None;
-        }
-
-        let new_len = unsafe { len.unchecked_sub(1) };
-
-        let ptr = unsafe { self.as_mut_ptr().add(new_len) };
-
-        unsafe {
-            self.set_len(new_len);
-        }
-
-        Some(unsafe { *ptr })
+        self.buf.pop()
     }
 
     pub fn extend_from_slice(&mut self, slice: &[u8]) {
-        let slice_len = slice.len();
-        let len = self.len();
-        let new_len = slice_len + len;
-        self.reserve(slice_len.max(len * 2));
-
-        unsafe {
-            std::ptr::copy_nonoverlapping(slice.as_ptr(), self.as_mut_ptr().add(len), slice.len());
-            self.set_len(new_len);
-        }
+        self.buf.extend_from_slice(slice);
     }
 
     pub fn resize(&mut self, new_len: usize, default: u8) {
-        let len = self.len();
-        if new_len < len {
-            unsafe {
-                self.set_len(new_len);
-            }
-        } else if new_len > len {
-            let reserve = new_len.max(len * 2);
-            self.reserve(unsafe { reserve.unchecked_sub(len) });
-
-            unsafe {
-                std::ptr::write_bytes(self.as_mut_ptr().add(len), default, new_len - len);
-                self.set_len(new_len);
-            }
-        }
+        self.buf.resize(new_len, default);
     }
 
     pub fn truncate(&mut self, new_len: usize) {
-        let len = self.len();
-        if new_len > len {
-            panic!("truncated length is greater than current length");
-        }
-
-        unsafe {
-            self.set_len(new_len);
-        }
+        self.buf.truncate(new_len);
     }
 
     pub fn clear(&mut self) {
-        unsafe {
-            self.buf.set_len(0);
+        self.buf.clear();
+    }
+
+    pub fn take(&mut self) -> Self {
+        let pool = self.pool.clone();
+        Self {
+            buf: std::mem::replace(&mut self.buf, AVec::new(ALIGN)),
+            pool,
         }
     }
 
-    pub(crate) fn steal(self) -> AVec<u8, ConstAlign<ALIGN>> {
-        let mut this = std::mem::ManuallyDrop::new(self);
-        let mut buf =
-            std::mem::ManuallyDrop::new(std::mem::replace(&mut this.buf, AVec::new(ALIGN)));
-        unsafe { std::ptr::drop_in_place(&mut this.pool) };
+    pub(crate) fn steal(mut self) -> AVec<u8, ConstAlign<ALIGN>> {
+        std::mem::replace(&mut self.buf, AVec::new(ALIGN))
+    }
 
-        let ptr = buf.as_mut_ptr();
-        let len = buf.len();
-        let cap = buf.capacity();
-        unsafe { AVec::from_raw_parts(ptr.cast(), ALIGN, len, cap) }
+    pub(crate) fn as_slice(&self) -> &BufSlice {
+        // SAFETY: `BufSlice` is `repr(transparent)` over `[u8]`, so the two have
+        //         the same layout. The bytes start at the base of an
+        //         `AVec<u8, ConstAlign<ALIGN>>`, which satisfies the alignment
+        //         `BufSlice` promises.
+        unsafe { &*(self.as_bytes() as *const [u8] as *const BufSlice) }
+    }
+
+    pub(crate) fn as_slice_mut(&mut self) -> &mut BufSlice {
+        // SAFETY: As in `as_slice`, plus the `&mut self` borrow making this the
+        //         only reference to the bytes.
+        unsafe { &mut *(self.as_mut_bytes() as *mut [u8] as *mut BufSlice) }
+    }
+
+    pub(crate) fn try_into_view<R>(self, range: R) -> Option<BufView>
+    where
+        R: std::ops::RangeBounds<usize>,
+    {
+        let this = ManuallyDrop::new(self);
+
+        // SAFETY: `this` is wrapped in `ManuallyDrop`, so `Buf::drop` never runs
+        //         and neither field is dropped through it. Each is read exactly
+        //         once and owned by a local from here on, so nothing is
+        //         duplicated. Moving them out by hand is what lets this bypass
+        //         `Buf::drop`, which would return the buffer to the pool.
+        let buf = unsafe { std::ptr::read(&this.buf) };
+        // SAFETY: As above, for the other field.
+        let pool = unsafe { std::ptr::read(&this.pool) };
+
+        let Some(view) = buf.get((range.start_bound().cloned(), range.end_bound().cloned())) else {
+            pool.checkin(buf);
+            return None;
+        };
+
+        let view = NonNull::from_ref(view);
+
+        Some(BufView { buf, pool, view })
     }
 }
 
@@ -201,38 +192,38 @@ impl Drop for Buf {
 impl Clone for Buf {
     fn clone(&self) -> Self {
         let mut buf = self.pool.checkout_with_capacity(self.len());
-        buf.extend_from_slice(self.as_slice());
+        buf.extend_from_slice(self.as_bytes());
         buf
     }
 }
 
 impl std::fmt::Debug for Buf {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        std::fmt::Debug::fmt(self.as_slice(), f)
+        std::fmt::Debug::fmt(self.as_bytes(), f)
     }
 }
 
 impl std::borrow::Borrow<[u8]> for Buf {
     fn borrow(&self) -> &[u8] {
-        self.as_slice()
+        self.as_bytes()
     }
 }
 
 impl std::borrow::BorrowMut<[u8]> for Buf {
     fn borrow_mut(&mut self) -> &mut [u8] {
-        self.as_mut_slice()
+        self.as_mut_bytes()
     }
 }
 
 impl AsRef<[u8]> for Buf {
     fn as_ref(&self) -> &[u8] {
-        self.as_slice()
+        self.as_bytes()
     }
 }
 
 impl AsMut<[u8]> for Buf {
     fn as_mut(&mut self) -> &mut [u8] {
-        self.as_mut_slice()
+        self.as_mut_bytes()
     }
 }
 
@@ -240,13 +231,13 @@ impl std::ops::Deref for Buf {
     type Target = [u8];
 
     fn deref(&self) -> &[u8] {
-        self.as_slice()
+        self.as_bytes()
     }
 }
 
 impl std::ops::DerefMut for Buf {
     fn deref_mut(&mut self) -> &mut [u8] {
-        self.as_mut_slice()
+        self.as_mut_bytes()
     }
 }
 
@@ -257,7 +248,7 @@ where
     type Output = <I as std::slice::SliceIndex<[u8]>>::Output;
 
     fn index(&self, index: I) -> &Self::Output {
-        self.as_slice().index(index)
+        self.as_bytes().index(index)
     }
 }
 
@@ -266,7 +257,7 @@ where
     I: std::slice::SliceIndex<[u8]>,
 {
     fn index_mut(&mut self, index: I) -> &mut Self::Output {
-        self.as_mut_slice().index_mut(index)
+        self.as_mut_bytes().index_mut(index)
     }
 }
 
@@ -275,7 +266,7 @@ impl<'a> IntoIterator for &'a Buf {
     type IntoIter = std::slice::Iter<'a, u8>;
 
     fn into_iter(self) -> Self::IntoIter {
-        self.as_slice().iter()
+        self.as_bytes().iter()
     }
 }
 
@@ -284,7 +275,7 @@ impl<'a> IntoIterator for &'a mut Buf {
     type IntoIter = std::slice::IterMut<'a, u8>;
 
     fn into_iter(self) -> Self::IntoIter {
-        self.as_mut_slice().iter_mut()
+        self.as_mut_bytes().iter_mut()
     }
 }
 
@@ -292,14 +283,14 @@ impl IntoIterator for Buf {
     type Item = u8;
     type IntoIter = BufIntoIter;
 
-    fn into_iter(mut self) -> Self::IntoIter {
+    fn into_iter(self) -> Self::IntoIter {
         let len = self.len();
-        unsafe {
-            self.set_len(0);
-        }
-
         let this = ManuallyDrop::new(self);
+        // SAFETY: `this` is wrapped in `ManuallyDrop`, so neither field is
+        //         dropped through it. Each is read once and moves into the
+        //         iterator, which checks the buffer back in when it drops.
         let pool = unsafe { std::ptr::read(&this.pool) };
+        // SAFETY: As above, for the other field.
         let buf = unsafe { std::ptr::read(&this.buf) };
 
         BufIntoIter {
@@ -312,20 +303,12 @@ impl IntoIterator for Buf {
 }
 
 impl BufIntoIter {
-    fn as_ptr(&self) -> *const u8 {
-        unsafe { self.buf.as_ptr().add(self.start) }
-    }
-
-    fn as_mut_ptr(&mut self) -> *mut u8 {
-        unsafe { self.buf.as_mut_ptr().add(self.start) }
-    }
-
     pub fn as_slice(&self) -> &[u8] {
-        unsafe { std::slice::from_raw_parts(self.as_ptr(), self.len()) }
+        &self.buf[self.start..self.end]
     }
 
     pub fn as_mut_slice(&mut self) -> &mut [u8] {
-        unsafe { std::slice::from_raw_parts_mut(self.as_mut_ptr(), self.len()) }
+        &mut self.buf[self.start..self.end]
     }
 }
 
@@ -340,38 +323,81 @@ impl Iterator for BufIntoIter {
     type Item = u8;
 
     fn next(&mut self) -> Option<u8> {
-        let start = self.start;
-
-        if start == self.end {
-            return None;
-        }
-
+        let &byte = self.as_slice().first()?;
         self.start += 1;
+        Some(byte)
+    }
 
-        Some(unsafe { *self.as_ptr().add(start) })
+    fn size_hint(&self) -> (usize, Option<usize>) {
+        let len = self.len();
+        (len, Some(len))
+    }
+
+    fn nth(&mut self, n: usize) -> Option<u8> {
+        let Some(&byte) = self.as_slice().get(n) else {
+            self.start = self.end;
+            return None;
+        };
+        self.start += n + 1;
+        Some(byte)
+    }
+
+    fn last(mut self) -> Option<u8> {
+        self.next_back()
+    }
+
+    fn count(self) -> usize {
+        self.len()
+    }
+
+    fn fold<B, F>(self, init: B, mut f: F) -> B
+    where
+        F: FnMut(B, Self::Item) -> B,
+    {
+        self.as_slice()
+            .iter()
+            .fold(init, move |acc, &byte| f(acc, byte))
     }
 }
 
 impl DoubleEndedIterator for BufIntoIter {
     fn next_back(&mut self) -> Option<u8> {
-        let end = self.end;
+        let &byte = self.as_slice().last()?;
+        self.end -= 1;
+        Some(byte)
+    }
 
-        if self.start == end {
+    fn nth_back(&mut self, n: usize) -> Option<u8> {
+        let Some(&byte) = self
+            .len()
+            .checked_sub(n)
+            .and_then(|i| i.checked_sub(1))
+            .and_then(|i| self.as_slice().get(i))
+        else {
+            self.end = self.start;
             return None;
-        }
+        };
+        self.end -= n + 1;
+        Some(byte)
+    }
 
-        let end = unsafe { end.unchecked_sub(1) };
-        self.end = end;
-
-        Some(unsafe { *self.as_ptr().add(end) })
+    fn rfold<B, F>(self, init: B, mut f: F) -> B
+    where
+        F: FnMut(B, Self::Item) -> B,
+    {
+        self.as_slice()
+            .iter()
+            .rfold(init, move |acc, &byte| f(acc, byte))
     }
 }
 
 impl ExactSizeIterator for BufIntoIter {
     fn len(&self) -> usize {
-        unsafe { self.end.unchecked_sub(self.start) }
+        self.end.saturating_sub(self.start)
     }
 }
+
+impl std::iter::FusedIterator for BufIntoIter {}
 
 impl std::io::Write for Buf {
     fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
@@ -431,7 +457,7 @@ impl compio::io::AsyncWrite for Buf {
 
 impl compio::buf::IoBuf for Buf {
     fn as_init(&self) -> &[u8] {
-        self.as_slice()
+        self.as_bytes()
     }
 
     fn buf_len(&self) -> usize {
@@ -447,7 +473,13 @@ impl compio::buf::IoBuf for Buf {
     }
 }
 
+/// # Safety
+///
+/// `new_len` must not exceed `buf`'s capacity, and every byte below it must be
+/// initialized.
 unsafe fn set_len(buf: &mut Buf, new_len: usize) {
+    // SAFETY: `Buf::set_len` asks for exactly what this function asks of its
+    //         own caller.
     unsafe {
         buf.set_len(new_len);
     }
@@ -455,12 +487,18 @@ unsafe fn set_len(buf: &mut Buf, new_len: usize) {
 
 impl compio::buf::SetLen for Buf {
     unsafe fn set_len(&mut self, new_len: usize) {
+        // SAFETY: `SetLen::set_len` places the same requirement on its caller
+        //         that the free function below does, so it carries over.
         unsafe { set_len(self, new_len) }
     }
 }
 
 impl compio::buf::IoBufMut for Buf {
     fn as_uninit(&mut self) -> &mut [MaybeUninit<u8>] {
+        // SAFETY: The allocation really is `capacity()` bytes long, and `&mut
+        //         self` makes this the only reference to it. The bytes past
+        //         `len()` are uninitialized, which is precisely what
+        //         `MaybeUninit<u8>` allows the caller to see.
         unsafe { std::slice::from_raw_parts_mut(self.buf.as_mut_ptr().cast(), self.buf.capacity()) }
     }
 
@@ -500,5 +538,312 @@ impl compio::buf::IoBufMut for Buf {
             });
         }
         Ok(())
+    }
+}
+
+impl BufSlice {
+    pub fn len(&self) -> usize {
+        self.0.len()
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.0.is_empty()
+    }
+
+    pub fn as_bytes(&self) -> &[u8] {
+        &self.0
+    }
+
+    pub fn as_bytes_mut(&mut self) -> &mut [u8] {
+        &mut self.0
+    }
+
+    pub fn split_first<T>(&self) -> Option<(&T, &Self)>
+    where
+        T: bytemuck::AnyBitPattern,
+    {
+        if std::mem::align_of::<T>() > ALIGN || !std::mem::size_of::<T>().is_multiple_of(ALIGN) {
+            return None;
+        }
+
+        self.0
+            .split_at_checked(std::mem::size_of::<T>())
+            .map(|(first, last)| {
+                // SAFETY: The guard above rejected any `T` needing more alignment than
+                //         `ALIGN`, and `self` starts `ALIGN`-aligned, so `first`
+                //         is aligned for `T`. `split_at_checked` guarantees it is
+                //         `size_of::<T>()` bytes long, and `T: AnyBitPattern` means
+                //         any contents of those bytes are a valid `T`.
+                let first = unsafe { &*(first.as_ptr().cast()) };
+                // SAFETY: `BufSlice` is `repr(transparent)` over `[u8]`. The remainder
+                //         keeps the alignment invariant because the guard above
+                //         admits only a `T` whose size is a multiple of `ALIGN`.
+                let last = unsafe { &*(last as *const [u8] as *const BufSlice) };
+
+                (first, last)
+            })
+    }
+
+    pub fn split_first_mut<T>(&mut self) -> Option<(&mut T, &mut Self)>
+    where
+        T: bytemuck::AnyBitPattern + bytemuck::NoUninit,
+    {
+        if std::mem::align_of::<T>() > ALIGN || !std::mem::size_of::<T>().is_multiple_of(ALIGN) {
+            return None;
+        }
+
+        self.0
+            .split_at_mut_checked(std::mem::size_of::<T>())
+            .map(|(first, last)| {
+                // SAFETY: The guard above rejected any `T` needing more alignment than
+                //         `ALIGN`, and `self` starts `ALIGN`-aligned, so `first`
+                //         is aligned for `T`. `split_at_checked` guarantees it is
+                //         `size_of::<T>()` bytes long, and `T: AnyBitPattern` means
+                //         any contents of those bytes are a valid `T`. The `&mut self`
+                //         borrow makes these the only references to the bytes,
+                //         and `T: NoUninit` keeps the caller from writing
+                //         padding the buffer would then expose.
+                let first = unsafe { &mut *(first.as_mut_ptr().cast()) };
+                // SAFETY: `BufSlice` is `repr(transparent)` over `[u8]`. The remainder
+                //         keeps the alignment invariant because the guard above
+                //         admits only a `T` whose size is a multiple of `ALIGN`.
+                let last = unsafe { &mut *(last as *mut [u8] as *mut BufSlice) };
+
+                (first, last)
+            })
+    }
+
+    pub fn split_slice<T>(&self, len: usize) -> Option<(&[T], &Self)>
+    where
+        T: bytemuck::AnyBitPattern,
+    {
+        if std::mem::align_of::<T>() > ALIGN || !std::mem::size_of::<T>().is_multiple_of(ALIGN) {
+            return None;
+        }
+
+        self.0
+            .split_at_checked(len.checked_mul(std::mem::size_of::<T>())?)
+            .map(|(first, last)| {
+                // SAFETY: The guard above rejected any `T` needing more alignment than
+                //         `ALIGN`, and `self` starts `ALIGN`-aligned, so `first`
+                //         is aligned for `T`. `split_at_checked` guarantees it is
+                //         `size_of::<T>()` bytes long, and `T: AnyBitPattern` means
+                //         any contents of those bytes are a valid `T`. The checked
+                //         multiplication above means `first` is exactly `len`
+                //         values of `T` long.
+                let first = unsafe { std::slice::from_raw_parts(first.as_ptr().cast(), len) };
+                // SAFETY: `BufSlice` is `repr(transparent)` over `[u8]`. The remainder
+                //         keeps the alignment invariant because the guard above
+                //         admits only a `T` whose size is a multiple of `ALIGN`.
+                let last = unsafe { &*(last as *const [u8] as *const BufSlice) };
+
+                (first, last)
+            })
+    }
+
+    pub fn split_slice_mut<T>(&mut self, len: usize) -> Option<(&mut [T], &mut Self)>
+    where
+        T: bytemuck::AnyBitPattern + bytemuck::NoUninit,
+    {
+        if std::mem::align_of::<T>() > ALIGN || !std::mem::size_of::<T>().is_multiple_of(ALIGN) {
+            return None;
+        }
+
+        self.0
+            .split_at_mut_checked(len.checked_mul(std::mem::size_of::<T>())?)
+            .map(|(first, last)| {
+                // SAFETY: The guard above rejected any `T` needing more alignment than
+                //         `ALIGN`, and `self` starts `ALIGN`-aligned, so `first`
+                //         is aligned for `T`. `split_at_checked` guarantees it is
+                //         `size_of::<T>()` bytes long, and `T: AnyBitPattern` means
+                //         any contents of those bytes are a valid `T`. The checked
+                //         multiplication above means `first` is exactly `len`
+                //         values of `T` long, the `&mut self` borrow makes
+                //         these the only references to the bytes, and
+                //         `T: NoUninit` keeps the caller from writing padding
+                //         the buffer would then expose.
+                let first =
+                    unsafe { std::slice::from_raw_parts_mut(first.as_mut_ptr().cast(), len) };
+                // SAFETY: `BufSlice` is `repr(transparent)` over `[u8]`. The remainder
+                //         keeps the alignment invariant because the guard above
+                //         admits only a `T` whose size is a multiple of `ALIGN`.
+                let last = unsafe { &mut *(last as *mut [u8] as *mut BufSlice) };
+
+                (first, last)
+            })
+    }
+}
+
+impl std::ops::Deref for BufSlice {
+    type Target = [u8];
+
+    fn deref(&self) -> &Self::Target {
+        &self.0
+    }
+}
+
+impl std::ops::DerefMut for BufSlice {
+    fn deref_mut(&mut self) -> &mut Self::Target {
+        &mut self.0
+    }
+}
+
+impl std::borrow::Borrow<[u8]> for BufSlice {
+    fn borrow(&self) -> &[u8] {
+        &self.0
+    }
+}
+
+impl std::borrow::BorrowMut<[u8]> for BufSlice {
+    fn borrow_mut(&mut self) -> &mut [u8] {
+        &mut self.0
+    }
+}
+
+impl AsRef<[u8]> for BufSlice {
+    fn as_ref(&self) -> &[u8] {
+        &self.0
+    }
+}
+
+impl AsMut<[u8]> for BufSlice {
+    fn as_mut(&mut self) -> &mut [u8] {
+        &mut self.0
+    }
+}
+
+impl std::fmt::Debug for BufSlice {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        std::fmt::Debug::fmt(&self.0, f)
+    }
+}
+
+impl Default for &BufSlice {
+    fn default() -> Self {
+        // SAFETY: `BufSlice` is `repr(transparent)` over `[u8]`, so this
+        //         rewrites a slice fat pointer into another of the same shape.
+        //         An empty `&[u64]` has a length of zero, which is also zero
+        //         bytes, and its dangling pointer is `u64`-aligned, so the
+        //         result upholds the alignment invariant without owning
+        //         anything.
+        const DEFAULT: &BufSlice = unsafe {
+            let aligned_slice: &'static [u64] = &[];
+            std::mem::transmute(aligned_slice)
+        };
+        DEFAULT
+    }
+}
+
+impl BufView {
+    pub fn len(&self) -> usize {
+        self.view.len()
+    }
+
+    #[allow(dead_code)]
+    pub fn is_empty(&self) -> bool {
+        self.view.is_empty()
+    }
+
+    pub fn as_bytes(&self) -> &[u8] {
+        // SAFETY: `view` points into `buf`, which this same struct owns, so the
+        //         bytes outlive the borrow. Moving a `BufView` moves only the
+        //         `AVec` header; its heap allocation stays put, so the pointer
+        //         is not invalidated. Nothing hands out a `&mut` to those bytes.
+        unsafe { self.view.as_ref() }
+    }
+
+    pub fn as_os_str(&self) -> &std::ffi::OsStr {
+        std::os::unix::ffi::OsStrExt::from_bytes(self.as_bytes())
+    }
+}
+
+impl std::ops::Deref for BufView {
+    type Target = [u8];
+
+    fn deref(&self) -> &Self::Target {
+        self.as_ref()
+    }
+}
+
+impl std::borrow::Borrow<[u8]> for BufView {
+    fn borrow(&self) -> &[u8] {
+        self.as_bytes()
+    }
+}
+
+impl AsRef<[u8]> for BufView {
+    fn as_ref(&self) -> &[u8] {
+        self.as_bytes()
+    }
+}
+
+impl Clone for BufView {
+    fn clone(&self) -> Self {
+        let mut buf = self.pool.checkout_with_capacity(self.len());
+        buf.extend_from_slice(self);
+        buf.into()
+    }
+
+    fn clone_from(&mut self, other: &Self) {
+        self.buf.clear();
+        self.buf.extend_from_slice(other);
+        self.view = NonNull::from_ref(self.buf.as_slice());
+    }
+}
+
+impl std::fmt::Debug for BufView {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        std::fmt::Debug::fmt(self.as_bytes(), f)
+    }
+}
+
+impl PartialEq for BufView {
+    fn eq(&self, other: &Self) -> bool {
+        self.as_bytes() == other.as_bytes()
+    }
+}
+
+impl Eq for BufView {}
+
+impl PartialOrd for BufView {
+    fn partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering> {
+        Some(Ord::cmp(self, other))
+    }
+}
+
+impl Ord for BufView {
+    fn cmp(&self, other: &Self) -> std::cmp::Ordering {
+        Ord::cmp(self.as_bytes(), other.as_bytes())
+    }
+}
+
+impl std::hash::Hash for BufView {
+    fn hash<H>(&self, state: &mut H)
+    where
+        H: std::hash::Hasher,
+    {
+        self.as_bytes().hash(state);
+    }
+}
+
+impl Drop for BufView {
+    fn drop(&mut self) {
+        let buf = std::mem::replace(&mut self.buf, AVec::new(ALIGN));
+        self.pool.checkin(buf);
+    }
+}
+
+impl From<Buf> for BufView {
+    fn from(buf: Buf) -> Self {
+        let buf = ManuallyDrop::new(buf);
+        // SAFETY: `buf` is wrapped in `ManuallyDrop`, so neither field is
+        //         dropped through it. Each is read once and moves into the
+        //         view, which checks the buffer back in when it drops.
+        let pool = unsafe { std::ptr::read(&buf.pool) };
+        // SAFETY: As above, for the other field.
+        let buf = unsafe { std::ptr::read(&buf.buf) };
+
+        let view = NonNull::from_ref(buf.as_slice());
+        BufView { buf, pool, view }
     }
 }

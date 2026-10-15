@@ -1,6 +1,6 @@
 bitflags::bitflags! {
     #[repr(C)]
-    #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Default)]
+    #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Default, bytemuck::AnyBitPattern, bytemuck::NoUninit)]
     pub struct IoctlFlags: u32 {
         const ABI_32BIT_ON_64BIT = 1 << 0;
         const UNRESTRICTED = 1 << 1;

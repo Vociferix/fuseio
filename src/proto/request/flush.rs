@@ -1,4 +1,4 @@
-use super::{Cfg, HDR_LEN, Ino};
+use super::{Cfg, Ino, RawHeader};
 use crate::types::{FileHandle, LockOwner};
 use crate::{Error, Result, buf::Buf};
 
@@ -9,8 +9,10 @@ pub struct Flush {
     lock_owner: Option<LockOwner>,
 }
 
+#[derive(Clone, Copy, bytemuck::AnyBitPattern)]
 #[repr(C)]
 struct Raw {
+    hdr: RawHeader,
     fh: u64,
     _unused0: u32,
     _unused1: u32,
@@ -18,8 +20,10 @@ struct Raw {
 }
 
 /// The body before 7.7, which carries no lock owner.
+#[derive(Clone, Copy, bytemuck::AnyBitPattern)]
 #[repr(C)]
 struct RawCompat {
+    hdr: RawHeader,
     fh: u64,
     _unused0: u32,
     _unused1: u32,
@@ -42,15 +46,13 @@ impl Flush {
 impl Flush {
     pub(super) fn decode(buf: Buf, ino: Option<Ino>, cfg: Cfg) -> Result<Self> {
         if cfg.minor_ver < 7 {
-            if buf.len() < const { HDR_LEN + std::mem::size_of::<RawCompat>() } {
+            let Some((raw, _)) = buf.as_slice().split_first::<RawCompat>() else {
                 return Err(Error::EPROTO);
-            }
+            };
 
             let Some(ino) = ino else {
                 return Err(Error::EINVAL);
             };
-
-            let raw = unsafe { &*(buf.as_ptr().add(HDR_LEN) as *const RawCompat) };
 
             return Ok(Self {
                 ino,
@@ -59,15 +61,13 @@ impl Flush {
             });
         }
 
-        if buf.len() < const { HDR_LEN + std::mem::size_of::<Raw>() } {
+        let Some((raw, _)) = buf.as_slice().split_first::<Raw>() else {
             return Err(Error::EPROTO);
-        }
+        };
 
         let Some(ino) = ino else {
             return Err(Error::EINVAL);
         };
-
-        let raw = unsafe { &*(buf.as_ptr().add(HDR_LEN) as *const Raw) };
 
         Ok(Self {
             ino,
@@ -93,7 +93,7 @@ mod tests {
     fn request(lock_owner: Option<u64>) -> Buf {
         let mut buf = BufPool::new().checkout_with_capacity(64);
 
-        buf.extend_from_slice(&[0u8; HDR_LEN]);
+        buf.extend_from_slice(&[0u8; std::mem::size_of::<RawHeader>()]);
         buf.extend_from_slice(&9u64.to_ne_bytes()); // fh
         buf.extend_from_slice(&0u32.to_ne_bytes()); // unused
         buf.extend_from_slice(&0u32.to_ne_bytes()); // padding

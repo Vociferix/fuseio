@@ -1,4 +1,4 @@
-use super::{Cfg, HDR_LEN, Ino};
+use super::{Cfg, Ino, RawHeader};
 use crate::buf::Buf;
 use crate::types::AccessFlags;
 use crate::{Error, Result};
@@ -9,8 +9,10 @@ pub struct Access {
     flags: AccessFlags,
 }
 
+#[derive(Clone, Copy, bytemuck::AnyBitPattern)]
 #[repr(C)]
 struct Raw {
+    hdr: RawHeader,
     mask: u32,
     _unused: u32,
 }
@@ -27,15 +29,13 @@ impl Access {
 
 impl Access {
     pub(super) fn decode(buf: Buf, ino: Option<Ino>, _: Cfg) -> Result<Self> {
-        if buf.len() < const { HDR_LEN + std::mem::size_of::<Raw>() } {
+        let Some((raw, _)) = buf.as_slice().split_first::<Raw>() else {
             return Err(Error::EPROTO);
-        }
+        };
 
         let Some(ino) = ino else {
             return Err(Error::EINVAL);
         };
-
-        let raw = unsafe { &*(buf.as_ptr().add(HDR_LEN) as *const Raw) };
 
         Ok(Self {
             ino,

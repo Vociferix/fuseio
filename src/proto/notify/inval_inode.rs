@@ -1,7 +1,6 @@
 use super::{Cfg, EncodeNotify, IntoIoBuf, NotifyCode, RawHeader};
+use crate::buf::Pod;
 use crate::types::{FileRange, Ino};
-
-use compio::buf::IoBuf;
 
 /// An offset no data reaches, which every kernel reads as "the attributes only".
 const ATTRS_ONLY: i64 = -1;
@@ -10,7 +9,7 @@ const ATTRS_ONLY: i64 = -1;
 const TO_THE_END: i64 = 0;
 
 #[repr(C)]
-#[derive(Debug)]
+#[derive(Debug, Clone, Copy, bytemuck::NoUninit)]
 pub struct InvalInode {
     ino: u64,
     offset: i64,
@@ -59,34 +58,21 @@ impl EncodeNotify for InvalInode {
     type Error = std::convert::Infallible;
 
     fn encode(self, _: Cfg) -> Result<impl IntoIoBuf, Self::Error> {
+        #[derive(Clone, Copy, bytemuck::NoUninit)]
         #[repr(C)]
         struct Out {
             hdr: RawHeader,
             notify: InvalInode,
         }
 
-        impl IoBuf for Out {
-            fn as_init(&self) -> &[u8] {
-                unsafe { std::slice::from_raw_parts(self.buf_ptr(), self.buf_len()) }
-            }
-
-            fn buf_ptr(&self) -> *const u8 {
-                self as *const Self as *const u8
-            }
-
-            fn buf_len(&self) -> usize {
-                const { std::mem::size_of::<Out>() }
-            }
-        }
-
-        Ok(Out {
+        Ok(Pod(Out {
             hdr: RawHeader {
                 len: const { std::mem::size_of::<Out>() as u32 },
                 code: NotifyCode::INVAL_INODE,
                 _zero: 0,
             },
             notify: self,
-        })
+        }))
     }
 }
 

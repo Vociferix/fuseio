@@ -1,14 +1,16 @@
-use super::{Cfg, HDR_LEN, Ino};
+use super::{Cfg, Ino, RawHeader};
 use crate::types::{FileHandle, LockOwner, OFlag};
-use crate::{Error, Result, buf::Buf};
+use crate::{
+    Error, Result,
+    buf::{Buf, BufView},
+};
 
 #[derive(Debug)]
 pub struct Write {
     ino: Ino,
     fh: FileHandle,
     offset: u64,
-    buf: Buf,
-    start: usize,
+    buf: BufView,
     lock_owner: Option<LockOwner>,
     flags: OFlag,
     cache_writeback: bool,
@@ -17,7 +19,7 @@ pub struct Write {
 
 bitflags::bitflags! {
     #[repr(C)]
-    #[derive(Clone, Copy)]
+    #[derive(Clone, Copy, bytemuck::AnyBitPattern)]
     struct RawFlags: u32 {
         const CACHE = 1 << 0;
         const HAVE_LOCKOWNER = 1 << 1;
@@ -25,8 +27,10 @@ bitflags::bitflags! {
     }
 }
 
+#[derive(Clone, Copy, bytemuck::AnyBitPattern)]
 #[repr(C)]
 struct Raw {
+    hdr: RawHeader,
     fh: u64,
     offset: u64,
     size: u32,
@@ -36,8 +40,10 @@ struct Raw {
     _unused: u32,
 }
 
+#[derive(Clone, Copy, bytemuck::AnyBitPattern)]
 #[repr(C)]
 struct RawCompat {
+    hdr: RawHeader,
     fh: u64,
     offset: u64,
     size: u32,
@@ -58,7 +64,7 @@ impl Write {
     }
 
     pub fn data(&self) -> &[u8] {
-        &self.buf[self.start..]
+        &self.buf
     }
 
     pub fn lock_owner(&self) -> Option<LockOwner> {
@@ -79,11 +85,18 @@ impl Write {
 }
 
 impl Write {
-    pub(super) fn decode(mut buf: Buf, ino: Option<Ino>, cfg: Cfg) -> Result<Self> {
+    pub(super) fn decode(buf: Buf, ino: Option<Ino>, cfg: Cfg) -> Result<Self> {
         if cfg.minor_ver < 9 {
-            const DATA_OFFSET: usize = const { HDR_LEN + std::mem::size_of::<RawCompat>() };
+            let Some((raw, data)) = buf.as_slice().split_first::<RawCompat>() else {
+                return Err(Error::EPROTO);
+            };
 
-            if buf.len() < DATA_OFFSET {
+            let size = raw.size as usize;
+            let fh = raw.fh;
+            let offset = raw.offset;
+            let write_flags = raw.write_flags;
+
+            if data.len() < size {
                 return Err(Error::EPROTO);
             }
 
@@ -91,33 +104,35 @@ impl Write {
                 return Err(Error::EINVAL);
             };
 
-            let raw = unsafe { std::ptr::read(buf.as_ptr().add(HDR_LEN) as *const RawCompat) };
-
-            let Some(end) = DATA_OFFSET.checked_add(raw.size as usize) else {
+            let Some(buf) = buf.try_into_view(
+                std::mem::size_of::<RawCompat>()..(std::mem::size_of::<RawCompat>() + size),
+            ) else {
                 return Err(Error::EPROTO);
             };
-
-            if buf.len() < end {
-                return Err(Error::EPROTO);
-            }
-
-            buf.truncate(end);
 
             Ok(Self {
                 ino,
-                fh: FileHandle(raw.fh),
-                offset: raw.offset,
+                fh: FileHandle(fh),
+                offset,
                 buf,
-                start: DATA_OFFSET,
                 lock_owner: None,
                 flags: OFlag::empty(),
-                cache_writeback: raw.write_flags.contains(RawFlags::CACHE),
-                remove_suid_sgid: raw.write_flags.contains(RawFlags::KILL_SUIDGID),
+                cache_writeback: write_flags.contains(RawFlags::CACHE),
+                remove_suid_sgid: write_flags.contains(RawFlags::KILL_SUIDGID),
             })
         } else {
-            const DATA_OFFSET: usize = const { HDR_LEN + std::mem::size_of::<Raw>() };
+            let Some((raw, data)) = buf.as_slice().split_first::<Raw>() else {
+                return Err(Error::EPROTO);
+            };
 
-            if buf.len() < DATA_OFFSET {
+            let size = raw.size as usize;
+            let fh = raw.fh;
+            let offset = raw.offset;
+            let write_flags = raw.write_flags;
+            let lock_owner = raw.lock_owner;
+            let flags = raw.flags;
+
+            if data.len() < size {
                 return Err(Error::EPROTO);
             }
 
@@ -125,36 +140,29 @@ impl Write {
                 return Err(Error::EINVAL);
             };
 
-            let raw = unsafe { std::ptr::read(buf.as_ptr().add(HDR_LEN) as *const Raw) };
-
-            let Some(end) = DATA_OFFSET.checked_add(raw.size as usize) else {
+            let Some(buf) =
+                buf.try_into_view(std::mem::size_of::<Raw>()..(std::mem::size_of::<Raw>() + size))
+            else {
                 return Err(Error::EPROTO);
             };
 
-            if buf.len() < end {
-                return Err(Error::EPROTO);
-            }
-
-            buf.truncate(end);
-
-            let lock_owner = if raw.write_flags.contains(RawFlags::HAVE_LOCKOWNER) {
-                LockOwner::try_from(raw.lock_owner).ok()
+            let lock_owner = if write_flags.contains(RawFlags::HAVE_LOCKOWNER) {
+                LockOwner::try_from(lock_owner).ok()
             } else {
                 None
             };
 
             Ok(Self {
                 ino,
-                fh: FileHandle(raw.fh),
-                offset: raw.offset,
+                fh: FileHandle(fh),
+                offset,
                 buf,
-                start: DATA_OFFSET,
                 lock_owner,
                 // TODO(e2e): assumes host-native open flag values; verify once end-to-end
                 // tests can be done.
-                flags: OFlag::from_bits_retain(raw.flags.cast_signed()),
-                cache_writeback: raw.write_flags.contains(RawFlags::CACHE),
-                remove_suid_sgid: raw.write_flags.contains(RawFlags::KILL_SUIDGID),
+                flags: OFlag::from_bits_retain(flags.cast_signed()),
+                cache_writeback: write_flags.contains(RawFlags::CACHE),
+                remove_suid_sgid: write_flags.contains(RawFlags::KILL_SUIDGID),
             })
         }
     }
@@ -176,7 +184,7 @@ mod tests {
     fn request(size: u32, data: &[u8], compat: bool) -> Buf {
         let mut buf = BufPool::new().checkout_with_capacity(128);
 
-        buf.extend_from_slice(&[0u8; HDR_LEN]);
+        buf.extend_from_slice(&[0u8; std::mem::size_of::<RawHeader>()]);
         buf.extend_from_slice(&9u64.to_ne_bytes()); // fh
         buf.extend_from_slice(&4096u64.to_ne_bytes()); // offset
         buf.extend_from_slice(&size.to_ne_bytes());

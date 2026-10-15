@@ -1,4 +1,5 @@
 use super::{Cfg, EncodeNotify, IntoIoBuf, NotifyCode, RawHeader};
+use crate::buf::Pod;
 
 #[derive(Debug)]
 pub struct IncrementEpoch {
@@ -15,10 +16,10 @@ impl EncodeNotify for IncrementEpoch {
     type Error = std::convert::Infallible;
 
     fn encode(self, _: Cfg) -> Result<impl IntoIoBuf, Self::Error> {
-        Ok(RawHeader {
+        Ok(Pod(RawHeader {
             len: const { std::mem::size_of::<RawHeader>() as u32 },
             code: NotifyCode::INC_EPOCH,
             _zero: 0,
-        })
+        }))
     }
 }

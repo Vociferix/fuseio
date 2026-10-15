@@ -1,4 +1,4 @@
-use super::{Cfg, HDR_LEN, Ino};
+use super::{Cfg, Ino, RawHeader};
 use crate::types::{FileHandle, FileRange, LockFlags, LockKind, LockOwner, Tgid};
 use crate::{Error, Result, buf::Buf};
 
@@ -13,8 +13,10 @@ pub struct GetLk {
     is_flock: bool,
 }
 
+#[derive(Clone, Copy, bytemuck::AnyBitPattern)]
 #[repr(C)]
 pub(super) struct Raw {
+    _hdr: RawHeader,
     pub(super) fh: u64,
     pub(super) owner: u64,
     pub(super) start: u64,
@@ -26,8 +28,10 @@ pub(super) struct Raw {
 }
 
 /// The body before 7.9, which has no lock flags and so is never a `flock`.
+#[derive(Clone, Copy, bytemuck::AnyBitPattern)]
 #[repr(C)]
 struct RawCompat {
+    hdr: RawHeader,
     fh: u64,
     owner: u64,
     start: u64,
@@ -68,75 +72,73 @@ impl GetLk {
     }
 }
 
+#[allow(clippy::unnecessary_cast)]
+fn lock_kind(kind: u32) -> Result<LockKind> {
+    // TODO(e2e): assumes host-native F_*LCK values; verify once end-to-end
+    // tests can be done.
+    // `F_*LCK` are `c_short` on macOS and FreeBSD.
+    const RDLCK: i32 = nix::libc::F_RDLCK as i32;
+    const WRLCK: i32 = nix::libc::F_WRLCK as i32;
+    const UNLCK: i32 = nix::libc::F_UNLCK as i32;
+
+    match kind.cast_signed() {
+        RDLCK => Ok(LockKind::Read),
+        WRLCK => Ok(LockKind::Write),
+        UNLCK => Ok(LockKind::Unlock),
+        _ => Err(Error::EINVAL),
+    }
+}
+
 impl GetLk {
     // `F_*LCK` are `c_int` on Linux and `c_short` elsewhere.
     #[allow(clippy::unnecessary_cast)]
     pub(super) fn decode(buf: Buf, ino: Option<Ino>, cfg: Cfg) -> Result<Self> {
-        let body_len = if cfg.minor_ver < 9 {
-            const { std::mem::size_of::<RawCompat>() }
-        } else {
-            const { std::mem::size_of::<Raw>() }
-        };
+        if cfg.minor_ver < 9 {
+            let Some((raw, _)) = buf.as_slice().split_first::<RawCompat>() else {
+                return Err(Error::EPROTO);
+            };
 
-        if buf.len() < HDR_LEN + body_len {
-            return Err(Error::EPROTO);
+            let Some(ino) = ino else {
+                return Err(Error::EINVAL);
+            };
+
+            return Ok(Self {
+                ino,
+                fh: FileHandle(raw.fh),
+                owner: LockOwner::try_from(raw.owner).ok(),
+                range: FileRange::new(raw.start, raw.end),
+                kind: lock_kind(raw.kind)?,
+                tgid: Tgid::from_raw(raw.pid.cast_signed()),
+                is_flock: false,
+            });
         }
+
+        let Some((raw, _)) = buf.as_slice().split_first::<Raw>() else {
+            return Err(Error::EPROTO);
+        };
 
         let Some(ino) = ino else {
             return Err(Error::EINVAL);
         };
 
-        // The older body is a prefix of the current one, so only the flags need
-        // reading from the layout the kernel actually sent.
-        let body = unsafe { &*(buf.as_ptr().add(HDR_LEN) as *const RawCompat) };
-        let lk_flags = if cfg.minor_ver < 9 {
-            LockFlags::empty()
-        } else {
-            unsafe { (*(buf.as_ptr().add(HDR_LEN) as *const Raw)).lk_flags }
-        };
-
-        // TODO(e2e): assumes host-native F_*LCK values; verify once end-to-end
-        // tests can be done.
-        // `F_*LCK` are `c_short` on macOS and FreeBSD.
-        const RDLCK: i32 = nix::libc::F_RDLCK as i32;
-        const WRLCK: i32 = nix::libc::F_WRLCK as i32;
-        const UNLCK: i32 = nix::libc::F_UNLCK as i32;
-
-        let kind = match body.kind.cast_signed() {
-            RDLCK => LockKind::Read,
-            WRLCK => LockKind::Write,
-            UNLCK => LockKind::Unlock,
-            _ => return Err(Error::EINVAL),
-        };
-
-        // TODO: libfuse passes `owner` to flock handlers too (it's what a later
-        // RELEASE with FLOCK_UNLOCK carries); it's dropped here and `FlockReq`
-        // has no `lock_owner()`.
-        let is_flock = lk_flags.contains(LockFlags::FLOCK);
-
-        // A flock's owner identifies the open file, which is what a later
-        // RELEASE carries, and its range always covers the whole file.
-        let owner = LockOwner::try_from(body.owner).ok();
-        let tgid = Tgid::from_raw(body.pid.cast_signed());
-
-        Ok(if is_flock {
+        Ok(if raw.lk_flags.contains(LockFlags::FLOCK) {
             Self {
                 ino,
-                fh: FileHandle(body.fh),
-                owner,
+                fh: FileHandle(raw.fh),
+                owner: LockOwner::try_from(raw.owner).ok(),
                 range: FileRange::Open { offset: 0 },
-                kind,
-                tgid,
+                kind: lock_kind(raw.kind)?,
+                tgid: Tgid::from_raw(raw.pid.cast_signed()),
                 is_flock: true,
             }
         } else {
             Self {
                 ino,
-                fh: FileHandle(body.fh),
-                owner,
-                range: FileRange::new(body.start, body.end),
-                kind,
-                tgid,
+                fh: FileHandle(raw.fh),
+                owner: LockOwner::try_from(raw.owner).ok(),
+                range: FileRange::new(raw.start, raw.end),
+                kind: lock_kind(raw.kind)?,
+                tgid: Tgid::from_raw(raw.pid.cast_signed()),
                 is_flock: false,
             }
         })
@@ -162,7 +164,7 @@ mod tests {
     fn request(lk_flags: Option<u32>) -> Buf {
         let mut buf = BufPool::new().checkout_with_capacity(64);
 
-        buf.extend_from_slice(&[0u8; HDR_LEN]);
+        buf.extend_from_slice(&[0u8; std::mem::size_of::<RawHeader>()]);
         buf.extend_from_slice(&9u64.to_ne_bytes()); // fh
         buf.extend_from_slice(&42u64.to_ne_bytes()); // owner
         buf.extend_from_slice(&1024u64.to_ne_bytes()); // start
@@ -206,7 +208,7 @@ mod tests {
     #[test]
     fn a_release_carries_no_thread_group() {
         let mut buf = request(Some(FLOCK));
-        let pid = HDR_LEN + 8 + 8 + 8 + 8 + 4;
+        let pid = std::mem::size_of::<RawHeader>() + 8 + 8 + 8 + 8 + 4;
         buf[pid..pid + 4].copy_from_slice(&0u32.to_ne_bytes());
 
         let req = GetLk::decode(buf, Ino::from_raw(1), cfg(45)).unwrap();
@@ -236,7 +238,7 @@ mod tests {
     #[test]
     fn an_unknown_lock_kind_is_rejected() {
         let mut buf = request(Some(0));
-        let kind = HDR_LEN + 8 + 8 + 8 + 8;
+        let kind = std::mem::size_of::<RawHeader>() + 8 + 8 + 8 + 8;
         buf[kind..kind + 4].copy_from_slice(&99u32.to_ne_bytes());
 
         assert_eq!(

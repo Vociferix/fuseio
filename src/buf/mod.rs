@@ -5,6 +5,8 @@ mod pool;
 pub use buf::Buf;
 pub use pool::BufPool;
 
+pub(crate) use buf::BufView;
+
 pub(crate) const ALIGN: usize = std::mem::align_of::<u64>();
 
 mod sealed {
@@ -134,7 +136,7 @@ pub trait IntoIoBuf: sealed::Sealed + Sized {
 
 impl compio::buf::IoBuf for NoData {
     fn as_init(&self) -> &[u8] {
-        unsafe { std::hint::unreachable_unchecked() }
+        b""
     }
 }
 
@@ -148,12 +150,12 @@ impl compio::buf::IoVectoredBuf for NoData {
             type Item = &'a [u8];
 
             fn next(&mut self) -> Option<Self::Item> {
-                unsafe { std::hint::unreachable_unchecked() }
+                None
             }
         }
 
         fn iter<'a>() -> Iter<'a> {
-            unsafe { std::hint::unreachable_unchecked() }
+            unreachable!()
         }
 
         iter()

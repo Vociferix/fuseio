@@ -11,7 +11,9 @@
 // once end-to-end tests can be done, especially on macOS, whose FUSE kernel
 // extension is no longer open source.
 #[repr(transparent)]
-#[derive(Clone, Copy, PartialEq, Eq, Hash, Default)]
+#[derive(
+    Clone, Copy, PartialEq, Eq, Hash, Default, bytemuck::NoUninit, bytemuck::AnyBitPattern,
+)]
 pub struct DeviceNumber(u32);
 
 const _: () = assert!(std::mem::size_of::<DeviceNumber>() == std::mem::size_of::<u32>());

@@ -1,4 +1,4 @@
-use super::{Cfg, HDR_LEN, Ino};
+use super::{Cfg, Ino, RawHeader};
 use crate::types::{CopyFileRangePos, FileHandle};
 use crate::{Error, Result, buf::Buf};
 
@@ -9,8 +9,10 @@ pub struct CopyFileRange {
     len: u64,
 }
 
+#[derive(Clone, Copy, bytemuck::AnyBitPattern)]
 #[repr(C)]
 struct Raw {
+    hdr: RawHeader,
     fh_in: u64,
     off_in: u64,
     ino_out: u64,
@@ -52,15 +54,13 @@ impl CopyFileRange {
 
     /// Decodes `FUSE_COPY_FILE_RANGE_64`, whose reply can report the full range.
     pub(super) fn decode_64(buf: Buf, ino: Option<Ino>, _: Cfg) -> Result<Self> {
-        if buf.len() < const { HDR_LEN + std::mem::size_of::<Raw>() } {
+        let Some((raw, _)) = buf.as_slice().split_first::<Raw>() else {
             return Err(Error::EPROTO);
-        }
+        };
 
         let Some(ino) = ino else {
             return Err(Error::EINVAL);
         };
-
-        let raw = unsafe { &*(buf.as_ptr().add(HDR_LEN) as *const Raw) };
 
         let Some(ino_out) = Ino::from_raw(raw.ino_out) else {
             return Err(Error::EINVAL);
@@ -97,7 +97,7 @@ mod tests {
     fn request(len: u64) -> Buf {
         let mut buf = BufPool::new().checkout_with_capacity(128);
 
-        buf.extend_from_slice(&[0u8; HDR_LEN]);
+        buf.extend_from_slice(&[0u8; std::mem::size_of::<RawHeader>()]);
         buf.extend_from_slice(&1u64.to_ne_bytes()); // fh_in
         buf.extend_from_slice(&2u64.to_ne_bytes()); // off_in
         buf.extend_from_slice(&3u64.to_ne_bytes()); // ino_out
