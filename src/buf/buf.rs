@@ -542,7 +542,7 @@ impl BufSlice {
     where
         T: bytemuck::AnyBitPattern,
     {
-        if std::mem::align_of::<T>() > ALIGN {
+        if std::mem::align_of::<T>() > ALIGN || std::mem::size_of::<T>() % ALIGN != 0 {
             return None;
         }
 
@@ -559,7 +559,7 @@ impl BufSlice {
     where
         T: bytemuck::AnyBitPattern + bytemuck::NoUninit,
     {
-        if std::mem::align_of::<T>() > ALIGN {
+        if std::mem::align_of::<T>() > ALIGN || std::mem::size_of::<T>() % ALIGN != 0 {
             return None;
         }
 
@@ -576,7 +576,7 @@ impl BufSlice {
     where
         T: bytemuck::AnyBitPattern,
     {
-        if std::mem::align_of::<T>() > ALIGN {
+        if std::mem::align_of::<T>() > ALIGN || std::mem::size_of::<T>() % ALIGN != 0 {
             return None;
         }
 
@@ -594,7 +594,7 @@ impl BufSlice {
     where
         T: bytemuck::AnyBitPattern + bytemuck::NoUninit,
     {
-        if std::mem::align_of::<T>() > ALIGN {
+        if std::mem::align_of::<T>() > ALIGN || std::mem::size_of::<T>() % ALIGN != 0 {
             return None;
         }
 
