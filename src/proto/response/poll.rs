@@ -42,3 +42,32 @@ impl EncodeResp for Poll {
         }))
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    use crate::proto::response::test_support::{HDR, assert_reply_header, encode, u32_at};
+
+    // `fuse_poll_out { revents, padding }`. The padding is part of the reply's
+    // length, so it has to be sent even though it carries nothing.
+    #[test]
+    fn the_ready_events_follow_the_header_with_their_padding() {
+        let bytes = encode(Poll::new(PollFlags::POLLIN | PollFlags::POLLOUT), 3);
+
+        assert_reply_header(&bytes, 3);
+        assert_eq!(bytes.len(), HDR + 8);
+        assert_eq!(
+            u32_at(&bytes, HDR),
+            (PollFlags::POLLIN | PollFlags::POLLOUT).bits() as u32
+        );
+        assert_eq!(u32_at(&bytes, HDR + 4), 0, "the padding must be zero");
+    }
+
+    #[test]
+    fn nothing_ready_is_a_reply_of_no_events() {
+        let bytes = encode(Poll::new(PollFlags::empty()), 3);
+
+        assert_eq!(u32_at(&bytes, HDR), 0);
+    }
+}

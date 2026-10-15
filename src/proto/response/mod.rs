@@ -1,6 +1,9 @@
 use super::Cfg;
 use crate::{Result, buf::IntoIoBuf};
 
+#[cfg(test)]
+mod test_support;
+
 use compio::buf::IoBuf;
 
 mod attr;

@@ -14,3 +14,18 @@ impl EncodeResp for Empty {
         }))
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use crate::proto::response::test_support::{HDR, assert_reply_header, encode};
+
+    // Operations with nothing to report still answer, so the kernel can
+    // release the request. The whole reply is the header.
+    #[test]
+    fn an_empty_reply_is_only_a_header() {
+        let bytes = encode((), 42);
+
+        assert_eq!(bytes.len(), HDR);
+        assert_reply_header(&bytes, 42);
+    }
+}

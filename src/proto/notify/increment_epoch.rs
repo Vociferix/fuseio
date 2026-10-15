@@ -23,3 +23,19 @@ impl EncodeNotify for IncrementEpoch {
         }))
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    use crate::proto::notify::test_support::{HDR, assert_notify_header, encode};
+
+    // Code 8, and nothing to say beyond the code itself.
+    #[test]
+    fn the_notification_is_only_a_header() {
+        let bytes = encode(IncrementEpoch::new());
+
+        assert_eq!(bytes.len(), HDR);
+        assert_notify_header(&bytes, 8);
+    }
+}

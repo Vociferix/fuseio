@@ -54,3 +54,44 @@ impl EncodeNotify for Retrieve {
         }))
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    use crate::proto::notify::test_support::{HDR, assert_notify_header, encode, u32_at, u64_at};
+
+    const UNIQUE: usize = HDR;
+    const NODEID: usize = HDR + 8;
+    const OFFSET: usize = HDR + 16;
+    const SIZE: usize = HDR + 24;
+
+    // `fuse_notify_retrieve_out { notify_unique, nodeid, offset, size,
+    // padding }`, code 5. The reply comes back as `FUSE_NOTIFY_REPLY` carrying
+    // the same unique, which is why it travels in the body rather than the
+    // header.
+    #[test]
+    fn the_request_describes_what_to_send_back() {
+        let ino = Ino::from_raw(12).unwrap();
+        let bytes = encode(Retrieve::new(77, ino, 8192, 4096));
+
+        assert_notify_header(&bytes, 5);
+        assert_eq!(u64_at(&bytes, UNIQUE), 77);
+        assert_eq!(u64_at(&bytes, NODEID), 12);
+        assert_eq!(u64_at(&bytes, OFFSET), 8192);
+        assert_eq!(u32_at(&bytes, SIZE), 4096);
+        assert_eq!(u32_at(&bytes, SIZE + 4), 0, "the padding must be zero");
+        assert_eq!(bytes.len(), HDR + 32);
+    }
+
+    // The notification's own `unique` stays zero: the one in the body is what
+    // the reply will quote.
+    #[test]
+    fn the_header_unique_stays_zero() {
+        let ino = Ino::from_raw(1).unwrap();
+        let bytes = encode(Retrieve::new(99, ino, 0, 1));
+
+        assert_eq!(u64_at(&bytes, 8), 0);
+        assert_eq!(u64_at(&bytes, UNIQUE), 99);
+    }
+}
