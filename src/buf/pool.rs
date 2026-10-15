@@ -18,12 +18,16 @@ impl BufPool {
     }
 
     pub(super) fn checkout_owned(self) -> Buf {
+        // SAFETY: The pool is behind an `Rc`, so every handle is on one
+        //         thread, and this borrow of the `Vec` ends before the call
+        //         returns. Nothing it calls can re-enter the pool.
         let buf_opt = unsafe { (*self.pool.get()).pop() };
         let buf = buf_opt.unwrap_or_else(|| AVec::new(ALIGN));
         Buf { buf, pool: self }
     }
 
     pub(super) fn checkout_with_capacity_owned(self, capacity: usize) -> Buf {
+        // SAFETY: As in `checkout_owned`.
         let buf_opt = unsafe { (*self.pool.get()).pop() };
         let buf = match buf_opt {
             Some(mut buf) => {
@@ -47,6 +51,8 @@ impl BufPool {
     pub(super) fn checkin(&self, mut buf: AVec<u8, ConstAlign<ALIGN>>) {
         if buf.capacity() > 0 {
             buf.clear();
+            // SAFETY: As in `checkout_owned`; `buf` is owned, so pushing it
+            //         cannot reach back into the pool either.
             unsafe {
                 (*self.pool.get()).push(buf);
             }

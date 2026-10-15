@@ -34,6 +34,12 @@ const _: () = {
 impl BatchForget {
     pub fn inos(&self) -> &[ForgetIno] {
         let len = self.buf.len() / std::mem::size_of::<ForgetIno>();
+        // SAFETY: The view starts `size_of::<Raw>()` bytes into a buffer that
+        //         is `ALIGN`-aligned, and the assertion above pins that size to
+        //         a multiple of `ALIGN`, so the pointer is aligned for
+        //         `ForgetIno`. `len` is rounded down, so the slice stays inside
+        //         the view, and `decode` rejected any entry with a zero
+        //         `nodeid`, which is what `ForgetIno::ino` relies on.
         unsafe { std::slice::from_raw_parts(self.buf.as_ptr().cast(), len) }
     }
 }

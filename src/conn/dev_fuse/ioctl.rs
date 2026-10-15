@@ -70,6 +70,9 @@ mod tests {
             flags: 0,
             padding: 0,
         };
+        // SAFETY: `BackingMap` is `repr(C)` and made only of integers with
+        //         no padding, so every byte of it is initialized, and `map`
+        //         outlives the slice.
         let bytes = unsafe {
             std::slice::from_raw_parts(
                 (&map as *const BackingMap).cast::<u8>(),

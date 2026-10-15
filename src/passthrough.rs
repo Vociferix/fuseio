@@ -33,7 +33,11 @@ impl<T: AsFd, C: Connection> PassthroughFd<T, C> {
     pub fn close(this: Self) -> crate::Result<T> {
         let this = ManuallyDrop::new(this);
         let backing_id = this.backing_id;
+        // SAFETY: `this` is wrapped in `ManuallyDrop`, so neither field is
+        //         dropped through it -- `Drop` would close the passthrough a
+        //         second time. Each is read once and owned by a local after.
         let fd = unsafe { std::ptr::read(&this.fd) };
+        // SAFETY: As above, for the other field.
         let ctx = unsafe { std::ptr::read(&this.ctx) };
 
         ctx.server

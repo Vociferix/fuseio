@@ -231,6 +231,9 @@ where
         {
             either::Left(()) => ControlFlow::Break(false),
             either::Right(BufResult(Ok((len, token)), mut buf)) => {
+                // SAFETY: `len` is what the connection reported reading, so
+                //         it is within the capacity handed to `recv_request`
+                //         and every byte below it was written by the read.
                 unsafe {
                     buf.set_len(len);
                 }

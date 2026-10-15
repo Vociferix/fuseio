@@ -140,6 +140,9 @@ impl Connection for DevFuseConn {
             padding: 0,
         };
 
+        // SAFETY: The request is the one `passthrough_open` was declared
+        //         for, `self` is an open FUSE device, and `map` is a valid
+        //         `BackingMap` for the duration of the call.
         let backing_id = unsafe { ioctl::passthrough_open(self.as_raw_fd(), &map)? };
 
         Ok(RawBackingId(backing_id.cast_unsigned()))
@@ -147,6 +150,8 @@ impl Connection for DevFuseConn {
 
     #[cfg(target_os = "linux")]
     fn close_passthrough(&self, backing_id: RawBackingId) -> Result<()> {
+        // SAFETY: As in `open_passthrough`: the declared request, an open
+        //         device, and a valid argument that outlives the call.
         unsafe {
             ioctl::passthrough_close(self.as_raw_fd(), &backing_id.0)?;
         }
@@ -253,6 +258,9 @@ impl DevFuseSharedConn {
 
         // The ioctl goes to the *new* fd, naming this one as the master.
         let mut master = self.as_raw_fd().cast_unsigned();
+        // SAFETY: Both descriptors are open FUSE devices, and `master`
+        //         outlives the call. The ioctl writes back through it, which is
+        //         why it is passed by mutable reference.
         unsafe {
             ioctl::clone_fd(out.as_raw_fd(), &mut master)?;
         }

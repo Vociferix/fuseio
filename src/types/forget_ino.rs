@@ -24,6 +24,10 @@ impl ForgetIno {
     }
 
     pub fn ino(&self) -> Ino {
+        // SAFETY: Both ways a `ForgetIno` comes about keep `nodeid` non-zero:
+        //         `new` takes an `Ino`, which is non-zero by construction, and
+        //         the batch decoder rejects a zero `nodeid` before
+        //         reinterpreting the wire bytes as these.
         unsafe { Ino::from_raw_unchecked(self.inner.nodeid) }
     }
 

@@ -3,6 +3,11 @@ name = "fuseio"
 version = "0.1.0"
 edition = "2024"
 
+[lints.clippy]
+# Every `unsafe` block states why it is sound. `missing_safety_doc` already
+# warns by default for the `unsafe fn` side of the same rule.
+undocumented_unsafe_blocks = "warn"
+
 [dependencies]
 aligned-vec = "0.6"
 arrayvec = { version = "0.7", features = ["std"] }

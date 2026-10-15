@@ -312,6 +312,10 @@ impl<T> TokenGuard<T> {
 
     pub(crate) fn into_inner(self) -> T {
         let guard = std::mem::ManuallyDrop::new(self);
+        // SAFETY: `guard` is wrapped in `ManuallyDrop`, so the token is not
+        //         dropped through it -- which is the point, since `Drop` for
+        //         `TokenGuard` reports an unanswered request. It is read once
+        //         and ownership passes to the caller.
         unsafe { std::ptr::read(&guard.0) }
     }
 }
