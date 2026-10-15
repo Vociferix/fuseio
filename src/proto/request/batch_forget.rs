@@ -28,6 +28,7 @@ struct ForgetOne {
 const _: () = {
     assert!(std::mem::size_of::<ForgetOne>() == std::mem::size_of::<ForgetIno>());
     assert!(std::mem::align_of::<ForgetOne>() == std::mem::align_of::<ForgetIno>());
+    assert!(std::mem::size_of::<Raw>().is_multiple_of(crate::buf::ALIGN));
 };
 
 impl BatchForget {

@@ -64,6 +64,10 @@ impl GetXattr {
 
         let len = raw.size as usize;
 
+        // Copied out before `buf` is moved below: `raw` borrows from it.
+        #[cfg(target_os = "macos")]
+        let offset = raw.position as usize;
+
         let Some(buf) = (if let Some(key_len) = memchr::memchr(0, name) {
             buf.try_into_view(std::mem::size_of::<Raw>()..(std::mem::size_of::<Raw>() + key_len))
         } else {
@@ -77,7 +81,7 @@ impl GetXattr {
             buf,
             len,
             #[cfg(target_os = "macos")]
-            offset: raw.position as usize,
+            offset,
         })
     }
 }

@@ -122,8 +122,16 @@ impl Buf {
         self.buf.clear();
     }
 
-    pub(crate) fn steal(self) -> AVec<u8, ConstAlign<ALIGN>> {
-        unsafe { std::ptr::read(&ManuallyDrop::new(self).buf) }
+    pub fn take(&mut self) -> Self {
+        let pool = self.pool.clone();
+        Self {
+            buf: std::mem::replace(&mut self.buf, AVec::new(ALIGN)),
+            pool,
+        }
+    }
+
+    pub(crate) fn steal(mut self) -> AVec<u8, ConstAlign<ALIGN>> {
+        std::mem::replace(&mut self.buf, AVec::new(ALIGN))
     }
 
     pub(crate) fn as_slice(&self) -> &BufSlice {
@@ -143,8 +151,13 @@ impl Buf {
         let buf = unsafe { std::ptr::read(&this.buf) };
         let pool = unsafe { std::ptr::read(&this.pool) };
 
-        let view =
-            NonNull::from_ref(buf.get((range.start_bound().cloned(), range.end_bound().cloned()))?);
+        let Some(view) = buf.get((range.start_bound().cloned(), range.end_bound().cloned())) else {
+            pool.checkin(buf);
+            return None;
+        };
+
+        let view = NonNull::from_ref(view);
+
         Some(BufView { buf, pool, view })
     }
 }
@@ -266,20 +279,12 @@ impl IntoIterator for Buf {
 }
 
 impl BufIntoIter {
-    fn as_ptr(&self) -> *const u8 {
-        unsafe { self.buf.as_ptr().add(self.start) }
-    }
-
-    fn as_mut_ptr(&mut self) -> *mut u8 {
-        unsafe { self.buf.as_mut_ptr().add(self.start) }
-    }
-
     pub fn as_slice(&self) -> &[u8] {
-        unsafe { std::slice::from_raw_parts(self.as_ptr(), self.len()) }
+        &self.buf[self.start..self.end]
     }
 
     pub fn as_mut_slice(&mut self) -> &mut [u8] {
-        unsafe { std::slice::from_raw_parts_mut(self.as_mut_ptr(), self.len()) }
+        &mut self.buf[self.start..self.end]
     }
 }
 
@@ -294,15 +299,9 @@ impl Iterator for BufIntoIter {
     type Item = u8;
 
     fn next(&mut self) -> Option<u8> {
-        let start = self.start;
-
-        if start == self.end {
-            return None;
-        }
-
+        let &byte = self.as_slice().first()?;
         self.start += 1;
-
-        Some(unsafe { *self.as_ptr().add(start) })
+        Some(byte)
     }
 
     fn size_hint(&self) -> (usize, Option<usize>) {
@@ -311,21 +310,12 @@ impl Iterator for BufIntoIter {
     }
 
     fn nth(&mut self, n: usize) -> Option<u8> {
-        let start = self.start;
-
-        let Some(pos) = start.checked_add(n) else {
+        let Some(&byte) = self.as_slice().get(n) else {
             self.start = self.end;
             return None;
         };
-
-        if pos >= self.end {
-            self.start = self.end;
-            return None;
-        }
-
-        self.start = pos + 1;
-
-        Some(unsafe { *self.as_ptr().add(start) })
+        self.start += n + 1;
+        Some(byte)
     }
 
     fn last(mut self) -> Option<u8> {
@@ -348,29 +338,23 @@ impl Iterator for BufIntoIter {
 
 impl DoubleEndedIterator for BufIntoIter {
     fn next_back(&mut self) -> Option<u8> {
-        let end = self.end;
-
-        let Some(pos) = end.checked_sub(1) else {
-            self.end = self.start;
-            return None;
-        };
-
-        self.end = pos;
-
-        Some(unsafe { *self.as_ptr().add(pos) })
+        let &byte = self.as_slice().last()?;
+        self.end -= 1;
+        Some(byte)
     }
 
     fn nth_back(&mut self, n: usize) -> Option<u8> {
-        let end = self.end;
-
-        let Some(pos) = end.checked_sub(n).and_then(|pos| pos.checked_sub(1)) else {
+        let Some(&byte) = self
+            .len()
+            .checked_sub(n)
+            .and_then(|i| i.checked_sub(1))
+            .and_then(|i| self.as_slice().get(i))
+        else {
             self.end = self.start;
             return None;
         };
-
-        self.end = pos;
-
-        Some(unsafe { *self.as_ptr().add(pos) })
+        self.end -= n + 1;
+        Some(byte)
     }
 
     fn rfold<B, F>(self, init: B, mut f: F) -> B
@@ -542,7 +526,7 @@ impl BufSlice {
     where
         T: bytemuck::AnyBitPattern,
     {
-        if std::mem::align_of::<T>() > ALIGN || std::mem::size_of::<T>().is_multiple_of(ALIGN) {
+        if std::mem::align_of::<T>() > ALIGN || !std::mem::size_of::<T>().is_multiple_of(ALIGN) {
             return None;
         }
 
@@ -559,7 +543,7 @@ impl BufSlice {
     where
         T: bytemuck::AnyBitPattern + bytemuck::NoUninit,
     {
-        if std::mem::align_of::<T>() > ALIGN || std::mem::size_of::<T>().is_multiple_of(ALIGN) {
+        if std::mem::align_of::<T>() > ALIGN || !std::mem::size_of::<T>().is_multiple_of(ALIGN) {
             return None;
         }
 
@@ -576,12 +560,12 @@ impl BufSlice {
     where
         T: bytemuck::AnyBitPattern,
     {
-        if std::mem::align_of::<T>() > ALIGN || std::mem::size_of::<T>().is_multiple_of(ALIGN) {
+        if std::mem::align_of::<T>() > ALIGN || !std::mem::size_of::<T>().is_multiple_of(ALIGN) {
             return None;
         }
 
         self.0
-            .split_at_checked(len * std::mem::size_of::<T>())
+            .split_at_checked(len.checked_mul(std::mem::size_of::<T>())?)
             .map(|(first, last)| {
                 (
                     unsafe { std::slice::from_raw_parts(first.as_ptr().cast(), len) },
@@ -594,12 +578,12 @@ impl BufSlice {
     where
         T: bytemuck::AnyBitPattern + bytemuck::NoUninit,
     {
-        if std::mem::align_of::<T>() > ALIGN || std::mem::size_of::<T>().is_multiple_of(ALIGN) {
+        if std::mem::align_of::<T>() > ALIGN || !std::mem::size_of::<T>().is_multiple_of(ALIGN) {
             return None;
         }
 
         self.0
-            .split_at_mut_checked(len * std::mem::size_of::<T>())
+            .split_at_mut_checked(len.checked_mul(std::mem::size_of::<T>())?)
             .map(|(first, last)| {
                 (
                     unsafe { std::slice::from_raw_parts_mut(first.as_mut_ptr().cast(), len) },
