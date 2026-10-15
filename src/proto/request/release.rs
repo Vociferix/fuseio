@@ -1,4 +1,4 @@
-use super::{Cfg, HDR_LEN, Ino};
+use super::{Cfg, Ino, RawHeader};
 use crate::types::{FileHandle, LockOwner, OFlag};
 use crate::{Error, Result, buf::Buf};
 
@@ -14,15 +14,17 @@ pub struct Release {
 
 bitflags::bitflags! {
     #[repr(C)]
-    #[derive(Clone, Copy)]
+    #[derive(Clone, Copy, bytemuck::AnyBitPattern)]
     struct RawFlags: u32 {
         const FLUSH = 1 << 0;
         const FLOCK_UNLOCK = 1 << 1;
     }
 }
 
+#[derive(Clone, Copy, bytemuck::AnyBitPattern)]
 #[repr(C)]
 struct Raw {
+    hdr: RawHeader,
     fh: u64,
     flags: u32,
     release_flags: RawFlags,
@@ -30,8 +32,10 @@ struct Raw {
 }
 
 /// The body before 7.8, which carries neither release flags nor a lock owner.
+#[derive(Clone, Copy, bytemuck::AnyBitPattern)]
 #[repr(C)]
 struct RawCompat {
+    hdr: RawHeader,
     fh: u64,
     flags: u32,
     _unused: u32,
@@ -71,15 +75,13 @@ impl Release {
         // TODO(e2e): assumes host-native open flag values; verify once end-to-end
         // tests can be done.
         if cfg.minor_ver < 8 {
-            if buf.len() < const { HDR_LEN + std::mem::size_of::<RawCompat>() } {
+            let Some((raw, _)) = buf.as_slice().split_first::<RawCompat>() else {
                 return Err(Error::EPROTO);
-            }
+            };
 
             let Some(ino) = ino else {
                 return Err(Error::EINVAL);
             };
-
-            let raw = unsafe { &*(buf.as_ptr().add(HDR_LEN) as *const RawCompat) };
 
             return Ok(Self {
                 ino,
@@ -91,15 +93,14 @@ impl Release {
             });
         }
 
-        if buf.len() < const { HDR_LEN + std::mem::size_of::<Raw>() } {
+        let Some((raw, _)) = buf.as_slice().split_first::<Raw>() else {
             return Err(Error::EPROTO);
-        }
+        };
 
         let Some(ino) = ino else {
             return Err(Error::EINVAL);
         };
 
-        let raw = unsafe { &*(buf.as_ptr().add(HDR_LEN) as *const Raw) };
         let flush = raw.release_flags.contains(RawFlags::FLUSH);
         let flock_unlock = raw.release_flags.contains(RawFlags::FLOCK_UNLOCK);
         let lock_owner = LockOwner::try_from(raw.lock_owner).ok();
@@ -134,7 +135,7 @@ mod tests {
     fn request(release_flags: Option<u32>, lock_owner: u64) -> Buf {
         let mut buf = BufPool::new().checkout_with_capacity(64);
 
-        buf.extend_from_slice(&[0u8; HDR_LEN]);
+        buf.extend_from_slice(&[0u8; std::mem::size_of::<RawHeader>()]);
         buf.extend_from_slice(&9u64.to_ne_bytes()); // fh
         buf.extend_from_slice(&(nix::libc::O_RDONLY as u32).to_ne_bytes());
 

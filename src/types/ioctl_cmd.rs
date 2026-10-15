@@ -1,6 +1,6 @@
 use nix::{request_code_none, request_code_read, request_code_readwrite, request_code_write};
 
-#[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
+#[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, bytemuck::AnyBitPattern)]
 #[repr(transparent)]
 pub struct IoctlCmd(u32);
 

@@ -1,10 +1,12 @@
 use std::num::NonZeroU64;
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, bytemuck::NoUninit)]
 #[repr(transparent)]
 pub struct Ino(NonZeroU64);
 
 impl Ino {
+    pub const ROOT: Self = Self(NonZeroU64::new(1).unwrap());
+
     pub const fn from_raw(ino: u64) -> Option<Self> {
         if let Some(ino) = NonZeroU64::new(ino) {
             Some(Self(ino))

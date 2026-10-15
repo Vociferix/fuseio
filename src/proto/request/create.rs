@@ -1,9 +1,11 @@
-use super::{Cfg, HDR_LEN, Ino};
+use super::{Cfg, Ino, RawHeader};
 use crate::types::{Mode, OFlag, SFlag};
-use crate::{Error, Result, buf::Buf};
+use crate::{
+    Error, Result,
+    buf::{Buf, BufView},
+};
 
 use std::ffi::OsStr;
-use std::os::unix::ffi::OsStrExt;
 
 #[derive(Debug)]
 pub struct Create {
@@ -12,12 +14,13 @@ pub struct Create {
     umask: Mode,
     flags: OFlag,
     remove_suid_sgid: bool,
-    buf: Buf,
-    name_start: usize,
+    buf: BufView,
 }
 
+#[derive(Clone, Copy, bytemuck::AnyBitPattern)]
 #[repr(C)]
 struct Raw {
+    hdr: RawHeader,
     flags: u32,
     mode: u32,
     umask: u32,
@@ -26,14 +29,13 @@ struct Raw {
 
 /// The body before 7.12, which is a `fuse_open_in` carrying the mode in place of
 /// its second field, and no umask.
+#[derive(Clone, Copy, bytemuck::AnyBitPattern)]
 #[repr(C)]
 struct RawCompat {
+    hdr: RawHeader,
     flags: u32,
     mode: u32,
 }
-
-const NAME_OFFSET: usize = HDR_LEN + std::mem::size_of::<Raw>();
-const COMPAT_NAME_OFFSET: usize = HDR_LEN + std::mem::size_of::<RawCompat>();
 
 impl Create {
     pub fn parent(&self) -> Ino {
@@ -61,56 +63,67 @@ impl Create {
     }
 
     pub fn name(&self) -> &OsStr {
-        OsStr::from_bytes(&self.buf[self.name_start..])
+        self.buf.as_os_str()
     }
 }
 
 impl Create {
-    pub(super) fn decode(mut buf: Buf, ino: Option<Ino>, cfg: Cfg) -> Result<Self> {
+    pub(super) fn decode(buf: Buf, ino: Option<Ino>, cfg: Cfg) -> Result<Self> {
         let compat = cfg.minor_ver < 12;
-        let name_start = if compat {
-            COMPAT_NAME_OFFSET
-        } else {
-            NAME_OFFSET
-        };
 
-        if buf.len() < name_start {
-            return Err(Error::EPROTO);
-        }
+        let (name_start, flags, mode, umask, open_flags, name) = if compat {
+            let Some((raw, name)) = buf.as_slice().split_first::<RawCompat>() else {
+                return Err(Error::EPROTO);
+            };
+
+            (
+                std::mem::size_of::<RawCompat>(),
+                raw.flags,
+                raw.mode,
+                0,
+                0,
+                name,
+            )
+        } else {
+            let Some((raw, name)) = buf.as_slice().split_first::<Raw>() else {
+                return Err(Error::EPROTO);
+            };
+
+            (
+                std::mem::size_of::<Raw>(),
+                raw.flags,
+                raw.mode,
+                raw.umask,
+                raw.open_flags,
+                name,
+            )
+        };
 
         let Some(ino) = ino else {
             return Err(Error::EINVAL);
         };
 
-        // The older body is a prefix of the current one, so the fields they share
-        // are read the same way.
-        let raw = unsafe { std::ptr::read(buf.as_ptr().add(HDR_LEN) as *const RawCompat) };
-        let (umask, open_flags) = if compat {
-            (0, 0)
-        } else {
-            let raw = unsafe { std::ptr::read(buf.as_ptr().add(HDR_LEN) as *const Raw) };
-
-            (raw.umask, raw.open_flags)
-        };
-
         // TODO(e2e): assumes host-native mode and open flag values; verify once
         // end-to-end tests can be done.
-        if SFlag::from_bits_truncate(raw.mode as nix::libc::mode_t) != SFlag::S_IFREG {
+        if SFlag::from_bits_truncate(mode as nix::libc::mode_t) != SFlag::S_IFREG {
             return Err(Error::EINVAL);
         }
 
-        if let Some(name_len) = memchr::memchr(0, &buf[name_start..]) {
-            buf.truncate(name_start + name_len);
-        }
+        let Some(buf) = (if let Some(name_len) = memchr::memchr(0, name) {
+            buf.try_into_view(name_start..(name_start + name_len))
+        } else {
+            buf.try_into_view(name_start..)
+        }) else {
+            return Err(Error::EPROTO);
+        };
 
         Ok(Self {
             parent: ino,
-            mode: Mode::from_bits_retain(raw.mode as nix::libc::mode_t),
+            mode: Mode::from_bits_retain(mode as nix::libc::mode_t),
             umask: Mode::from_bits_retain(umask as nix::libc::mode_t),
-            flags: OFlag::from_bits_retain(raw.flags.cast_signed()),
+            flags: OFlag::from_bits_retain(flags.cast_signed()),
             remove_suid_sgid: open_flags & super::open::KILL_SUIDGID != 0,
             buf,
-            name_start,
         })
     }
 }
@@ -118,6 +131,8 @@ impl Create {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    use std::os::unix::ffi::OsStrExt;
 
     use crate::buf::BufPool;
 
@@ -135,7 +150,7 @@ mod tests {
     fn request(umask: Option<u32>) -> Buf {
         let mut buf = BufPool::new().checkout_with_capacity(128);
 
-        buf.extend_from_slice(&[0u8; HDR_LEN]);
+        buf.extend_from_slice(&[0u8; std::mem::size_of::<RawHeader>()]);
         buf.extend_from_slice(&(nix::libc::O_RDWR as u32).to_ne_bytes());
         buf.extend_from_slice(&MODE.to_ne_bytes());
 
@@ -176,7 +191,7 @@ mod tests {
     #[test]
     fn a_short_body_is_rejected() {
         let mut buf = BufPool::new().checkout_with_capacity(64);
-        buf.extend_from_slice(&[0u8; HDR_LEN]);
+        buf.extend_from_slice(&[0u8; std::mem::size_of::<RawHeader>()]);
         buf.extend_from_slice(&0u32.to_ne_bytes());
 
         assert_eq!(
@@ -188,7 +203,7 @@ mod tests {
     #[test]
     fn a_directory_is_rejected() {
         let mut buf = BufPool::new().checkout_with_capacity(128);
-        buf.extend_from_slice(&[0u8; HDR_LEN]);
+        buf.extend_from_slice(&[0u8; std::mem::size_of::<RawHeader>()]);
         buf.extend_from_slice(&0u32.to_ne_bytes());
         buf.extend_from_slice(&0o040_755u32.to_ne_bytes());
         buf.extend_from_slice(&0u32.to_ne_bytes());

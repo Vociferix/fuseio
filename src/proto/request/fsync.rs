@@ -1,4 +1,4 @@
-use super::{Cfg, HDR_LEN, Ino};
+use super::{Cfg, Ino, RawHeader};
 use crate::types::FileHandle;
 use crate::{Error, Result, buf::Buf};
 
@@ -9,8 +9,10 @@ pub struct Fsync {
     datasync: bool,
 }
 
+#[derive(Clone, Copy, bytemuck::AnyBitPattern)]
 #[repr(C)]
 struct Raw {
+    hdr: RawHeader,
     fh: u64,
     fsync_flags: RawFlags,
     _unused: u32,
@@ -18,7 +20,7 @@ struct Raw {
 
 bitflags::bitflags! {
     #[repr(C)]
-    #[derive(Clone, Copy)]
+    #[derive(Clone, Copy, bytemuck::AnyBitPattern)]
     struct RawFlags: u32 {
         const DATASYNC = 1 << 0;
     }
@@ -40,15 +42,13 @@ impl Fsync {
 
 impl Fsync {
     pub(super) fn decode(buf: Buf, ino: Option<Ino>, _: Cfg) -> Result<Self> {
-        if buf.len() < const { HDR_LEN + std::mem::size_of::<Raw>() } {
+        let Some((raw, _)) = buf.as_slice().split_first::<Raw>() else {
             return Err(Error::EPROTO);
-        }
+        };
 
         let Some(ino) = ino else {
             return Err(Error::EINVAL);
         };
-
-        let raw = unsafe { &*(buf.as_ptr().add(HDR_LEN) as *const Raw) };
 
         Ok(Self {
             ino,

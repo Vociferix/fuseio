@@ -7,8 +7,8 @@ edition = "2024"
 aligned-vec = "0.6"
 arrayvec = { version = "0.7", features = ["std"] }
 atomic-waker = "1"
-bitflags = "2"
-bytemuck = "1"
+bitflags = { version = "2", features = ["bytemuck"] }
+bytemuck = { version = "1", features = ["derive"] }
 compio = { version = "0.19", features = ["async-fd", "io", "process"] }
 crossbeam-utils = { version = "0.8", default-features = false }
 crossfire = "3"
@@ -18,8 +18,13 @@ log = "0.4"
 memchr = "2"
 nix = { version = "0.31", features = ["user", "process", "fs", "ioctl", "mount", "poll", "socket", "uio"] }
 page_size = "0.6"
+pin-project-lite = "0.2.17"
 slab = "0.4"
 unsync = "0.2"
+
+[features]
+default = []
+mock = []
 
 [dev-dependencies]
 compio = { version = "0.19", features = ["macros"] }

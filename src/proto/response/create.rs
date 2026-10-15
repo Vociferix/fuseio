@@ -1,6 +1,6 @@
 use super::entry::EntryCompat;
 use super::{Cfg, EncodeResp, Entry, InodeAttrs, IntoIoBuf, IoBuf, Opened, RawHeader};
-use crate::buf::Vectored;
+use crate::buf::{Pod, Vectored};
 use crate::conn::Connection;
 use crate::fs::types::PassthroughFd;
 use crate::types::{FileHandle, Ino, OpenedFlags};
@@ -88,9 +88,7 @@ impl EncodeResp for Created {
     fn encode(self, id: u64, cfg: Cfg) -> Result<impl IntoIoBuf, Self::Error> {
         let Self { entry, open } = self;
 
-        #[repr(transparent)]
-        struct OpenedOut(Opened);
-
+        #[derive(Clone, Copy, bytemuck::NoUninit)]
         #[repr(C)]
         struct EntryOut {
             hdr: RawHeader,
@@ -103,23 +101,9 @@ impl EncodeResp for Created {
             entry: EntryCompat,
         }
 
-        impl IoBuf for OpenedOut {
-            fn as_init(&self) -> &[u8] {
-                unsafe { std::slice::from_raw_parts(self.buf_ptr(), self.buf_len()) }
-            }
-
-            fn buf_ptr(&self) -> *const u8 {
-                self as *const Self as *const u8
-            }
-
-            fn buf_len(&self) -> usize {
-                const { std::mem::size_of::<OpenedOut>() }
-            }
-        }
-
         impl IoBuf for EntryOut {
             fn as_init(&self) -> &[u8] {
-                unsafe { std::slice::from_raw_parts(self.buf_ptr(), self.buf_len()) }
+                &bytemuck::bytes_of(self)[..self.buf_len()]
             }
 
             fn buf_ptr(&self) -> *const u8 {
@@ -127,14 +111,14 @@ impl EncodeResp for Created {
             }
 
             fn buf_len(&self) -> usize {
-                self.hdr.len as usize - std::mem::size_of::<OpenedOut>()
+                self.hdr.len as usize - std::mem::size_of::<Opened>()
             }
         }
 
         let len = if cfg.minor_ver < 9 {
-            const { (std::mem::size_of::<EntryOutCompat>() + std::mem::size_of::<OpenedOut>()) as u32 }
+            const { (std::mem::size_of::<EntryOutCompat>() + std::mem::size_of::<Opened>()) as u32 }
         } else {
-            const { (std::mem::size_of::<EntryOut>() + std::mem::size_of::<OpenedOut>()) as u32 }
+            const { (std::mem::size_of::<EntryOut>() + std::mem::size_of::<Opened>()) as u32 }
         };
 
         Ok(Vectored((
@@ -142,7 +126,7 @@ impl EncodeResp for Created {
                 hdr: RawHeader { len, err: 0, id },
                 entry,
             },
-            (OpenedOut(open),),
+            (Pod(open),),
         )))
     }
 }

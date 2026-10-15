@@ -369,6 +369,12 @@ impl<C> NotifyPruneCache<C> {
             .push(ino);
     }
 
+    pub fn extend_from_slice(&mut self, inos: &[Ino]) {
+        self.prune
+            .get_or_insert_with(|| Prune::with_capacity(self.ctx.buffer_pool(), inos.len()))
+            .extend_from_slice(inos);
+    }
+
     pub fn extend<I>(&mut self, iter: I)
     where
         I: IntoIterator<Item = Ino>,

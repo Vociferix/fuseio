@@ -1,4 +1,5 @@
-use super::{Cfg, EncodeResp, IntoIoBuf, IoBuf, RawHeader};
+use super::{Cfg, EncodeResp, IntoIoBuf, RawHeader};
+use crate::buf::Pod;
 
 #[derive(Debug)]
 pub struct Write {
@@ -21,6 +22,7 @@ impl EncodeResp for Write {
     type Error = crate::Error;
 
     fn encode(self, id: u64, _: Cfg) -> Result<impl IntoIoBuf, Self::Error> {
+        #[derive(Clone, Copy, bytemuck::NoUninit)]
         #[repr(C)]
         struct Out {
             hdr: RawHeader,
@@ -28,26 +30,12 @@ impl EncodeResp for Write {
             _unused: u32,
         }
 
-        impl IoBuf for Out {
-            fn as_init(&self) -> &[u8] {
-                unsafe { std::slice::from_raw_parts(self.buf_ptr(), self.buf_len()) }
-            }
-
-            fn buf_ptr(&self) -> *const u8 {
-                self as *const Self as *const u8
-            }
-
-            fn buf_len(&self) -> usize {
-                const { std::mem::size_of::<Out>() }
-            }
-        }
-
         let Ok(size) = u32::try_from(self.size) else {
             log::error!("bytes written ({}) does not fit in a reply", self.size);
             return Err(crate::Error::EIO);
         };
 
-        Ok(Out {
+        Ok(Pod(Out {
             hdr: RawHeader {
                 len: const { std::mem::size_of::<Out>() as u32 },
                 err: 0,
@@ -55,7 +43,7 @@ impl EncodeResp for Write {
             },
             size,
             _unused: 0,
-        })
+        }))
     }
 }
 

@@ -1,11 +1,11 @@
-use super::{Cfg, HDR_LEN, Ino};
+use super::{Cfg, Ino, RawHeader};
 use crate::types::{FileFlag, FileHandle, FileTime, Gid, Mode, Uid};
 use crate::{Error, Result, buf::Buf};
 
 use std::time::SystemTime;
 
 bitflags::bitflags! {
-    #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Default)]
+    #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Default, bytemuck::AnyBitPattern)]
     struct ValidFlags: u32 {
         const MODE = 1 << 0;
         const UID = 1 << 1;
@@ -57,8 +57,10 @@ pub struct SetAttr {
     flags: FileFlag,
 }
 
+#[derive(Clone, Copy, bytemuck::AnyBitPattern)]
 #[repr(C)]
 struct Raw {
+    hdr: RawHeader,
     valid: u32,
     _unused0: u32,
     fh: u64,
@@ -193,15 +195,14 @@ impl SetAttr {
 
 impl SetAttr {
     pub(super) fn decode(body: Buf, ino: Option<Ino>, _: Cfg) -> Result<Self> {
-        if body.len() < const { HDR_LEN + std::mem::size_of::<Raw>() } {
+        let Some((raw, _)) = body.as_slice().split_first::<Raw>() else {
             return Err(Error::EPROTO);
-        }
+        };
 
         let Some(ino) = ino else {
             return Err(Error::EINVAL);
         };
 
-        let raw = unsafe { &*(body.as_ptr().add(HDR_LEN) as *const Raw) };
         let valid = ValidFlags::from_bits_truncate(raw.valid);
 
         let atime = if valid.contains(ValidFlags::ATIME_NOW) || !valid.contains(ValidFlags::ATIME) {
@@ -309,7 +310,7 @@ mod tests {
     fn decode_with_times(valid: u32, ctime: u64, chgtime: u64) -> SetAttr {
         let mut buf = BufPool::new().checkout_with_capacity(256);
 
-        buf.extend_from_slice(&[0u8; HDR_LEN]);
+        buf.extend_from_slice(&[0u8; std::mem::size_of::<RawHeader>()]);
         buf.extend_from_slice(&valid.to_ne_bytes());
         buf.extend_from_slice(&0u32.to_ne_bytes()); // padding
         buf.extend_from_slice(&0u64.to_ne_bytes()); // fh

@@ -1,18 +1,21 @@
-use super::{Cfg, HDR_LEN, Ino};
-use crate::{Error, Result, buf::Buf};
+use super::{Cfg, Ino};
+use crate::{
+    Error, Result,
+    buf::{Buf, BufView},
+};
 
 use std::ffi::OsStr;
-use std::os::unix::ffi::OsStrExt;
 
 #[derive(Debug)]
 pub struct GetXattr {
     ino: Ino,
-    buf: Buf,
+    buf: BufView,
     len: usize,
     #[cfg(target_os = "macos")]
     offset: usize,
 }
 
+#[derive(Clone, Copy, bytemuck::AnyBitPattern)]
 #[repr(C)]
 pub(super) struct Raw {
     pub(super) size: u32,
@@ -23,15 +26,13 @@ pub(super) struct Raw {
     _unused1: u32,
 }
 
-const KEY_OFFSET: usize = HDR_LEN + std::mem::size_of::<Raw>();
-
 impl GetXattr {
     pub fn ino(&self) -> Ino {
         self.ino
     }
 
     pub fn key(&self) -> &OsStr {
-        OsStr::from_bytes(&self.buf[KEY_OFFSET..])
+        self.buf.as_os_str()
     }
 
     pub fn len(&self) -> usize {
@@ -52,25 +53,29 @@ impl GetXattr {
 }
 
 impl GetXattr {
-    pub(super) fn decode(mut buf: Buf, ino: Option<Ino>, _: Cfg) -> Result<Self> {
-        if buf.len() < KEY_OFFSET {
+    pub(super) fn decode(buf: Buf, ino: Option<Ino>, _: Cfg) -> Result<Self> {
+        let Some((raw, name)) = buf.as_slice().split_first::<Raw>() else {
             return Err(Error::EPROTO);
-        }
+        };
 
         let Some(ino) = ino else {
             return Err(Error::EINVAL);
         };
 
-        let raw = unsafe { std::ptr::read(buf.as_ptr().add(HDR_LEN) as *const Raw) };
+        let len = raw.size as usize;
 
-        if let Some(key_len) = memchr::memchr(0, &buf[KEY_OFFSET..]) {
-            buf.truncate(KEY_OFFSET + key_len);
-        }
+        let Some(buf) = (if let Some(key_len) = memchr::memchr(0, name) {
+            buf.try_into_view(std::mem::size_of::<Raw>()..(std::mem::size_of::<Raw>() + key_len))
+        } else {
+            buf.try_into_view(std::mem::size_of::<Raw>()..)
+        }) else {
+            return Err(Error::EPROTO);
+        };
 
         Ok(Self {
             ino,
             buf,
-            len: raw.size as usize,
+            len,
             #[cfg(target_os = "macos")]
             offset: raw.position as usize,
         })

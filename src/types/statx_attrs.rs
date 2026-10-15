@@ -1,6 +1,6 @@
 bitflags::bitflags! {
     #[repr(C)]
-    #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Default)]
+    #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Default, bytemuck::NoUninit, bytemuck::AnyBitPattern)]
     pub struct StatXAttrs: u64 {
         const COMPRESSED = 1 << 2;
         const IMMUTABLE = 1 << 4;

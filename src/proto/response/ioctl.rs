@@ -2,7 +2,7 @@ use super::{Cfg, EncodeResp, RawHeader};
 use crate::types::IoctlFlags;
 use crate::{
     Result,
-    buf::{IntoIoBuf, Vectored},
+    buf::{IntoIoBuf, Pod, Vectored},
 };
 
 #[derive(Debug)]
@@ -11,6 +11,7 @@ pub struct IoctlReply<B> {
     pub(crate) data: B,
 }
 
+#[derive(Clone, Copy, bytemuck::NoUninit)]
 #[repr(C)]
 struct Raw {
     hdr: RawHeader,
@@ -18,20 +19,6 @@ struct Raw {
     flags: IoctlFlags,
     in_iovs: u32,
     out_iovs: u32,
-}
-
-impl compio::buf::IoBuf for Raw {
-    fn as_init(&self) -> &[u8] {
-        unsafe { std::slice::from_raw_parts(self.buf_ptr(), self.buf_len()) }
-    }
-
-    fn buf_ptr(&self) -> *const u8 {
-        self as *const Self as *const u8
-    }
-
-    fn buf_len(&self) -> usize {
-        std::mem::size_of::<Raw>()
-    }
 }
 
 impl IoctlReply<[u8; 0]> {
@@ -94,6 +81,6 @@ impl<B: IntoIoBuf> EncodeResp for IoctlReply<B> {
             out_iovs: 0,
         };
 
-        Ok(Vectored((hdr, data.into_vectored())))
+        Ok(Vectored((Pod(hdr), data.into_vectored())))
     }
 }

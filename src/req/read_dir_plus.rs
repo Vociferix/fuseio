@@ -33,6 +33,7 @@ pub struct DirEntryPlus<T> {
     pub dirent: DirEntry<T>,
 }
 
+#[derive(Clone, Copy, bytemuck::NoUninit)]
 #[repr(C)]
 pub struct RawDirEntryPlus {
     entry: Entry,
@@ -169,14 +170,8 @@ impl DirEntryPlusBuf {
             entry: entry.entry,
             dirent,
         };
-        let raw = unsafe {
-            std::slice::from_raw_parts(
-                &raw as *const RawDirEntryPlus as *const u8,
-                std::mem::size_of::<RawDirEntryPlus>(),
-            )
-        };
 
-        self.buf.extend_from_slice(raw);
+        self.buf.extend_from_slice(bytemuck::bytes_of(&raw));
         self.buf.extend_from_slice(name);
         self.buf.extend_from_slice(&DIRENT_PADDING[..padding_len]);
 

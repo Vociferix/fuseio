@@ -1,6 +1,6 @@
 bitflags::bitflags! {
     #[repr(C)]
-    #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Default)]
+    #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Default, bytemuck::AnyBitPattern, bytemuck::NoUninit)]
     pub struct StatXMask: u32 {
         const TYPE = 1 << 0;
         const MODE = 1 << 1;

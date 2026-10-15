@@ -1,10 +1,11 @@
-use super::{Cfg, EncodeResp, IntoIoBuf, IoBuf, RawHeader};
+use super::{Cfg, EncodeResp, IntoIoBuf, RawHeader};
+use crate::buf::Pod;
 use crate::types::{DeviceNumber, Gid, Ino, InodeKind, Mode, SFlag, StatXAttrs, StatXMask, Uid};
 
 use std::time::{Duration, SystemTime};
 
 #[repr(C)]
-#[derive(Debug)]
+#[derive(Debug, Clone, Copy, bytemuck::NoUninit)]
 pub struct StatX {
     attr_valid: u64,
     attr_valid_nsec: u32,
@@ -41,7 +42,7 @@ const _: () = {
 };
 
 #[repr(C)]
-#[derive(Debug, Default)]
+#[derive(Debug, Default, Clone, Copy, bytemuck::NoUninit)]
 struct StatXTime {
     secs: i64,
     nsecs: u32,
@@ -214,6 +215,7 @@ impl EncodeResp for StatX {
     type Error = std::convert::Infallible;
 
     fn encode(self, id: u64, _: Cfg) -> Result<impl IntoIoBuf, Self::Error> {
+        #[derive(Clone, Copy, bytemuck::NoUninit)]
         #[repr(C)]
         struct Out {
             hdr: RawHeader,
@@ -221,25 +223,11 @@ impl EncodeResp for StatX {
             _padding: [u64; 14],
         }
 
-        impl IoBuf for Out {
-            fn as_init(&self) -> &[u8] {
-                unsafe { std::slice::from_raw_parts(self.buf_ptr(), self.buf_len()) }
-            }
-
-            fn buf_ptr(&self) -> *const u8 {
-                self as *const Self as *const u8
-            }
-
-            fn buf_len(&self) -> usize {
-                const { std::mem::size_of::<Out>() }
-            }
-        }
-
         // `fuse_out_header` plus `fuse_statx_out`; the kernel rejects any other
         // size.
         const _: () = assert!(std::mem::size_of::<Out>() == 16 + 288);
 
-        Ok(Out {
+        Ok(Pod(Out {
             hdr: RawHeader {
                 len: const { std::mem::size_of::<Out>() as u32 },
                 err: 0,
@@ -247,7 +235,7 @@ impl EncodeResp for StatX {
             },
             statx: self,
             _padding: [0; 14],
-        })
+        }))
     }
 }
 

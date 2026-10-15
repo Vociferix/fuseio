@@ -7,6 +7,7 @@ pub struct Prune {
     inos: Buf,
 }
 
+#[derive(Clone, Copy, bytemuck::NoUninit, bytemuck::AnyBitPattern)]
 #[repr(C)]
 struct Out {
     hdr: RawHeader,
@@ -26,10 +27,11 @@ impl Prune {
     }
 
     pub fn push(&mut self, ino: Ino) {
-        let bytes = unsafe {
-            std::slice::from_raw_parts(&ino as *const Ino as *const u8, std::mem::size_of::<Ino>())
-        };
-        self.inos.extend_from_slice(bytes);
+        self.inos.extend_from_slice(bytemuck::bytes_of(&ino));
+    }
+
+    pub fn extend_from_slice(&mut self, inos: &[Ino]) {
+        self.inos.extend_from_slice(bytemuck::cast_slice(inos));
     }
 
     pub fn reserve(&mut self, additional: usize) {
@@ -37,9 +39,16 @@ impl Prune {
     }
 
     pub fn as_slice(&self) -> &[Ino] {
-        let ptr = unsafe { self.inos.as_ptr().add(OUT_LEN).cast() };
-        let len = self.len();
-        unsafe { std::slice::from_raw_parts(ptr, len) }
+        // SAFETY: `Prune` guarantees `self.inos[OUT_LEN..]` contains a valid `Ino` slice.
+        // The first `OUT_LEN` bytes are always reserved on construction (see `with_capacity`)
+        // and the `push` and `extend_from_slice` methods are the only ways to append data and
+        // only support appending `Ino`s. Also note that `Ino` transparently wraps `NonZeroU64`.
+        //
+        // Unfortunately, because `Ino` has invalid bit patterns, we can't use `bytemuck` to
+        // cast from the bytes to `[Ino]`, so we have to manually perform the cast, which means
+        // `unsafe { }`. But as explained in the first paragraph, we know the bytes do not contain
+        // such invalid bit patterns, so this cast is safe.
+        unsafe { std::slice::from_raw_parts(self.inos.as_ptr().add(OUT_LEN).cast(), self.len()) }
     }
 
     pub fn is_empty(&self) -> bool {
@@ -62,12 +71,12 @@ impl EncodeNotify for Prune {
 
         let count = ((buf.len() - OUT_LEN) / std::mem::size_of::<Ino>()) as u32;
 
-        {
-            let out = unsafe { &mut *(buf.as_mut_ptr() as *mut Out) };
-            out.hdr.len = len;
-            out.hdr.code = NotifyCode::PRUNE;
-            out.count = count;
-        }
+        let Some((out, _)) = buf.as_slice_mut().split_first_mut::<Out>() else {
+            return Err(crate::Error::EIO);
+        };
+        out.hdr.len = len;
+        out.hdr.code = NotifyCode::PRUNE;
+        out.count = count;
 
         Ok(buf)
     }

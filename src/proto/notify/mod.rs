@@ -1,8 +1,6 @@
 use super::Cfg;
 use crate::buf::IntoIoBuf;
 
-use compio::buf::IoBuf;
-
 mod delete;
 mod entry;
 mod expire_entry;
@@ -33,30 +31,27 @@ where
     fn encode(self, cfg: Cfg) -> Result<impl IntoIoBuf, Self::Error>;
 }
 
+#[derive(Debug, Clone, Copy, bytemuck::NoUninit, bytemuck::AnyBitPattern)]
 #[repr(C)]
-#[derive(Debug)]
 struct RawHeader {
     len: u32,
     code: NotifyCode,
     _zero: u64, //< must always be zero
 }
 
-impl IoBuf for RawHeader {
-    fn as_init(&self) -> &[u8] {
-        unsafe { std::slice::from_raw_parts(self.buf_ptr(), self.buf_len()) }
-    }
-
-    fn buf_ptr(&self) -> *const u8 {
-        self as *const Self as *const u8
-    }
-
-    fn buf_len(&self) -> usize {
-        const { std::mem::size_of::<RawHeader>() }
-    }
-}
-
 #[repr(transparent)]
-#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
+#[derive(
+    Debug,
+    Clone,
+    Copy,
+    PartialEq,
+    Eq,
+    PartialOrd,
+    Ord,
+    Hash,
+    bytemuck::NoUninit,
+    bytemuck::AnyBitPattern,
+)]
 struct NotifyCode(u32);
 
 impl NotifyCode {

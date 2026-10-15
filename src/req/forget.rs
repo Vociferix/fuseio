@@ -8,7 +8,7 @@ pub struct ForgetReq<C> {
 }
 
 enum Inner {
-    Single(ForgetIno),
+    Single([ForgetIno; 1]),
     Batch(BatchForget),
 }
 
@@ -16,7 +16,7 @@ impl<C> ForgetReq<C> {
     pub(crate) fn from_single(req: Req<C>, forget: Forget) -> Self {
         Self {
             req,
-            inner: Inner::Single(ForgetIno::new(forget.ino(), forget.nlookup())),
+            inner: Inner::Single([ForgetIno::new(forget.ino(), forget.nlookup())]),
         }
     }
 
@@ -33,7 +33,7 @@ impl<C> ForgetReq<C> {
 
     pub fn inos(&self) -> &[ForgetIno] {
         match &self.inner {
-            Inner::Single(single) => unsafe { std::slice::from_raw_parts(single, 1) },
+            Inner::Single(single) => single,
             Inner::Batch(batch) => batch.inos(),
         }
     }

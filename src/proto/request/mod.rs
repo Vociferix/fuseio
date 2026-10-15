@@ -164,6 +164,7 @@ pub struct AnyRequest {
     pub body: Body,
 }
 
+#[derive(Clone, Copy, bytemuck::AnyBitPattern)]
 #[repr(C)]
 pub struct RawHeader {
     pub len: u32,
@@ -206,7 +207,7 @@ mod header_tests {
 }
 
 #[repr(C)]
-#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, bytemuck::AnyBitPattern)]
 pub struct Opcode(pub u32);
 
 macro_rules! opcodes {
@@ -300,11 +301,9 @@ impl std::fmt::Display for Opcode {
 
 impl AnyRequest {
     pub fn decode(mut buf: Buf, minor_ver: u32, flags: ReplyInitFlags) -> Result<Self> {
-        if buf.len() < HDR_LEN {
+        let Some((&hdr, _)) = buf.as_slice().split_first::<RawHeader>() else {
             return Err(Error::EPROTO);
-        }
-
-        let hdr = unsafe { std::ptr::read(buf.as_ptr() as *const RawHeader) };
+        };
 
         let len = hdr.len as usize;
         if len < HDR_LEN {

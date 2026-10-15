@@ -1,5 +1,5 @@
 use super::{Cfg, EncodeResp, IntoIoBuf, RawHeader};
-use crate::buf::Vectored;
+use crate::buf::{Pod, Vectored};
 
 pub struct Data<T> {
     data: T,
@@ -33,6 +33,6 @@ impl<T: IntoIoBuf> EncodeResp for Data<T> {
         };
         let hdr = RawHeader { len, err: 0, id };
 
-        Ok(Vectored((hdr, buf.into_vectored())))
+        Ok(Vectored((Pod(hdr), buf.into_vectored())))
     }
 }
