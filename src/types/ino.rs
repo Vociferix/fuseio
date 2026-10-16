@@ -69,3 +69,30 @@ impl std::fmt::Binary for Ino {
         std::fmt::Binary::fmt(&self.0, f)
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    // `FUSE_ROOT_ID` is one, and every mount starts by looking something up in
+    // it.
+    #[test]
+    fn the_root_is_inode_one() {
+        assert_eq!(Ino::ROOT.as_raw(), 1);
+        assert_eq!(Ino::from_raw(1), Some(Ino::ROOT));
+    }
+
+    // Zero is the protocol's way of saying "no inode", so it can never become
+    // one.
+    #[test]
+    fn zero_is_not_an_inode() {
+        assert_eq!(Ino::from_raw(0), None);
+    }
+
+    #[test]
+    fn every_other_number_round_trips() {
+        for raw in [1, 2, 42, u64::MAX] {
+            assert_eq!(Ino::from_raw(raw).map(Ino::as_raw), Some(raw));
+        }
+    }
+}

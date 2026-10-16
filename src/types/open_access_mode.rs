@@ -51,3 +51,50 @@ impl From<OpenAccessMode> for OFlag {
         }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    const ALL: [OpenAccessMode; 3] = [
+        OpenAccessMode::ReadOnly,
+        OpenAccessMode::WriteOnly,
+        OpenAccessMode::ReadWrite,
+    ];
+
+    #[test]
+    fn every_mode_survives_the_round_trip() {
+        for mode in ALL {
+            assert_eq!(OpenAccessMode::try_from(OFlag::from(mode)).ok(), Some(mode));
+        }
+    }
+
+    // The access mode is a small field rather than a set of flags, and
+    // `O_RDONLY` is zero, so everything else an open carries has to be masked
+    // off before reading it.
+    #[test]
+    fn the_other_open_flags_do_not_change_the_mode() {
+        let noise = OFlag::O_APPEND | OFlag::O_NONBLOCK | OFlag::O_CLOEXEC;
+
+        for mode in ALL {
+            assert_eq!(
+                OpenAccessMode::try_from(OFlag::from(mode) | noise).ok(),
+                Some(mode),
+                "{mode:?} was lost among the other flags"
+            );
+        }
+    }
+
+    // What the caller may do follows from the mode, and read-write allows both.
+    #[test]
+    fn the_permissions_follow_the_mode() {
+        assert!(OpenAccessMode::ReadOnly.wants_read());
+        assert!(!OpenAccessMode::ReadOnly.wants_write());
+
+        assert!(OpenAccessMode::WriteOnly.wants_write());
+        assert!(!OpenAccessMode::WriteOnly.wants_read());
+
+        assert!(OpenAccessMode::ReadWrite.wants_read());
+        assert!(OpenAccessMode::ReadWrite.wants_write());
+    }
+}

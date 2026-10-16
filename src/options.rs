@@ -158,3 +158,184 @@ impl std::fmt::Display for ParseMountOptError {
 }
 
 impl std::error::Error for ParseMountOptError {}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    use std::str::FromStr;
+
+    /// Every option, so a new variant without a test here fails to compile.
+    fn every_option() -> Vec<MountOpt> {
+        let all = [
+            MountOpt::Rw,
+            MountOpt::Ro,
+            MountOpt::Suid,
+            MountOpt::NoSuid,
+            MountOpt::Dev,
+            MountOpt::NoDev,
+            MountOpt::Exec,
+            MountOpt::NoExec,
+            MountOpt::Async,
+            MountOpt::Sync,
+            MountOpt::Atime,
+            MountOpt::NoAtime,
+            MountOpt::DirAtime,
+            MountOpt::NoDirAtime,
+            MountOpt::LazyTime,
+            MountOpt::NoLazyTime,
+            MountOpt::RelAtime,
+            MountOpt::NoRelAtime,
+            MountOpt::StrictAtime,
+            MountOpt::NoStrictAtime,
+            MountOpt::DirSync,
+            MountOpt::SymFollow,
+            MountOpt::NoSymFollow,
+            MountOpt::AllowOther,
+            MountOpt::AllowRoot,
+            MountOpt::DefaultPermissions,
+            MountOpt::BlockDev,
+        ];
+
+        // Exhaustive by construction: this fails to build if a variant is added
+        // without being listed above.
+        for opt in &all {
+            match opt {
+                MountOpt::Rw
+                | MountOpt::Ro
+                | MountOpt::Suid
+                | MountOpt::NoSuid
+                | MountOpt::Dev
+                | MountOpt::NoDev
+                | MountOpt::Exec
+                | MountOpt::NoExec
+                | MountOpt::Async
+                | MountOpt::Sync
+                | MountOpt::Atime
+                | MountOpt::NoAtime
+                | MountOpt::DirAtime
+                | MountOpt::NoDirAtime
+                | MountOpt::LazyTime
+                | MountOpt::NoLazyTime
+                | MountOpt::RelAtime
+                | MountOpt::NoRelAtime
+                | MountOpt::StrictAtime
+                | MountOpt::NoStrictAtime
+                | MountOpt::DirSync
+                | MountOpt::SymFollow
+                | MountOpt::NoSymFollow
+                | MountOpt::AllowOther
+                | MountOpt::AllowRoot
+                | MountOpt::DefaultPermissions
+                | MountOpt::BlockDev => {}
+                MountOpt::FsName(_)
+                | MountOpt::SubType(_)
+                | MountOpt::MaxRead(_)
+                | MountOpt::BlockSize(_) => unreachable!("value options are tested separately"),
+            }
+        }
+
+        all.to_vec()
+    }
+
+    // These names go to `fusermount` and into `mount(2)`'s option string, so
+    // they are an interface rather than a label: a typo would ask for the wrong
+    // thing, or nothing.
+    #[test]
+    fn the_names_are_the_ones_mount_understands() {
+        let expected = [
+            (MountOpt::Rw, "rw"),
+            (MountOpt::Ro, "ro"),
+            (MountOpt::Suid, "suid"),
+            (MountOpt::NoSuid, "nosuid"),
+            (MountOpt::Dev, "dev"),
+            (MountOpt::NoDev, "nodev"),
+            (MountOpt::Exec, "exec"),
+            (MountOpt::NoExec, "noexec"),
+            (MountOpt::Async, "async"),
+            (MountOpt::Sync, "sync"),
+            (MountOpt::Atime, "atime"),
+            (MountOpt::NoAtime, "noatime"),
+            (MountOpt::DirAtime, "diratime"),
+            (MountOpt::NoDirAtime, "nodiratime"),
+            (MountOpt::LazyTime, "lazytime"),
+            (MountOpt::NoLazyTime, "nolazytime"),
+            (MountOpt::RelAtime, "relatime"),
+            (MountOpt::NoRelAtime, "norelatime"),
+            (MountOpt::StrictAtime, "strictatime"),
+            (MountOpt::NoStrictAtime, "nostrictatime"),
+            (MountOpt::DirSync, "dirsync"),
+            (MountOpt::SymFollow, "symfollow"),
+            (MountOpt::NoSymFollow, "nosymfollow"),
+            (MountOpt::AllowOther, "allow_other"),
+            (MountOpt::AllowRoot, "allow_root"),
+            (MountOpt::DefaultPermissions, "default_permissions"),
+            (MountOpt::BlockDev, "blkdev"),
+        ];
+
+        for (opt, name) in expected {
+            assert_eq!(opt.to_string(), name, "{opt:?}");
+        }
+    }
+
+    #[test]
+    fn every_flag_survives_a_round_trip() {
+        for opt in every_option() {
+            let rendered = opt.to_string();
+
+            assert_eq!(
+                MountOpt::from_str(&rendered).ok(),
+                Some(opt.clone()),
+                "{rendered} did not parse back"
+            );
+        }
+    }
+
+    #[test]
+    fn the_options_carrying_a_value_survive_a_round_trip() {
+        let values = [
+            MountOpt::FsName("myfs".into()),
+            MountOpt::SubType("demo".into()),
+            MountOpt::MaxRead(65536),
+            MountOpt::BlockSize(512),
+        ];
+
+        for opt in values {
+            let rendered = opt.to_string();
+
+            assert_eq!(
+                MountOpt::from_str(&rendered).ok(),
+                Some(opt.clone()),
+                "{rendered}"
+            );
+        }
+    }
+
+    #[test]
+    fn the_value_options_render_as_key_equals_value() {
+        assert_eq!(MountOpt::FsName("myfs".into()).to_string(), "fsname=myfs");
+        assert_eq!(MountOpt::SubType("demo".into()).to_string(), "subtype=demo");
+        assert_eq!(MountOpt::MaxRead(4096).to_string(), "max_read=4096");
+        assert_eq!(MountOpt::BlockSize(512).to_string(), "blksize=512");
+    }
+
+    // No two options may render alike, or parsing one would hand back the
+    // other.
+    #[test]
+    fn no_two_options_share_a_name() {
+        let mut names: Vec<String> = every_option().iter().map(ToString::to_string).collect();
+        let before = names.len();
+
+        names.sort();
+        names.dedup();
+
+        assert_eq!(names.len(), before, "two options render the same way");
+    }
+
+    #[test]
+    fn something_that_is_not_an_option_is_refused() {
+        for text in ["", "nonsense", "rw,ro", "max_read", "max_read=x", "fsname"] {
+            assert!(MountOpt::from_str(text).is_err(), "{text:?} parsed");
+        }
+    }
+}
