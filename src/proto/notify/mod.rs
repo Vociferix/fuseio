@@ -1,6 +1,9 @@
 use super::Cfg;
 use crate::buf::IntoIoBuf;
 
+#[cfg(test)]
+mod test_support;
+
 mod delete;
 mod entry;
 mod expire_entry;

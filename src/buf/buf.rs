@@ -847,3 +847,441 @@ impl From<Buf> for BufView {
         BufView { buf, pool, view }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Eight bytes, so a prefix of it leaves the remainder aligned.
+    #[repr(C)]
+    #[derive(Clone, Copy, Debug, PartialEq, bytemuck::AnyBitPattern, bytemuck::NoUninit)]
+    struct Eight {
+        a: u32,
+        b: u32,
+    }
+
+    /// Four bytes, so consuming one would leave the remainder unaligned.
+    #[repr(C)]
+    #[derive(Clone, Copy, Debug, bytemuck::AnyBitPattern, bytemuck::NoUninit)]
+    struct Four(u32);
+
+    /// Wants more alignment than the buffer offers.
+    #[repr(C, align(16))]
+    #[derive(Clone, Copy, Debug, bytemuck::AnyBitPattern, bytemuck::NoUninit)]
+    struct OverAligned([u8; 16]);
+
+    fn buf_of(bytes: &[u8]) -> Buf {
+        let mut buf = Buf::with_capacity(bytes.len().max(1), BufPool::new());
+        buf.extend_from_slice(bytes);
+        buf
+    }
+
+    fn counted(n: usize) -> Buf {
+        buf_of(&(0..n).map(|i| i as u8).collect::<Vec<_>>())
+    }
+
+    // The reason `Buf` exists rather than `Vec<u8>`: everything downstream
+    // reinterprets prefixes of it as protocol structs.
+    #[test]
+    fn a_buffer_always_starts_aligned() {
+        for capacity in [1, 7, 8, 9, 64, 4096, 128 * 1024] {
+            let buf = Buf::with_capacity(capacity, BufPool::new());
+
+            assert_eq!(
+                buf.as_ptr() as usize % ALIGN,
+                0,
+                "capacity {capacity} started unaligned"
+            );
+        }
+    }
+
+    // A buffer that came back from the pool is as aligned as a fresh one.
+    #[test]
+    fn a_recycled_buffer_is_still_aligned() {
+        let pool = BufPool::new();
+        drop(pool.checkout_with_capacity(4096));
+
+        let buf = pool.checkout_with_capacity(64);
+
+        assert_eq!(buf.as_ptr() as usize % ALIGN, 0);
+    }
+
+    #[test]
+    fn the_pool_hands_back_the_allocation_it_was_given() {
+        let pool = BufPool::new();
+
+        let first = pool.checkout_with_capacity(4096);
+        let capacity = first.capacity();
+        let addr = first.as_ptr() as usize;
+        drop(first);
+
+        let second = pool.checkout_with_capacity(8);
+
+        assert_eq!(second.capacity(), capacity, "capacity was not reused");
+        assert_eq!(second.as_ptr() as usize, addr, "a new allocation was made");
+    }
+
+    // An empty buffer has nothing worth keeping, and pooling it would grow the
+    // pool without bound for callers that never write anything.
+    #[test]
+    fn an_empty_buffer_is_not_pooled() {
+        let pool = BufPool::new();
+        drop(pool.checkout_with_capacity(0));
+
+        let buf = pool.checkout_with_capacity(4096);
+
+        assert!(buf.capacity() >= 4096);
+    }
+
+    #[test]
+    fn a_recycled_buffer_has_no_leftover_contents() {
+        let pool = BufPool::new();
+        let mut first = pool.checkout_with_capacity(64);
+        first.extend_from_slice(b"stale");
+        drop(first);
+
+        let second = pool.checkout_with_capacity(64);
+
+        assert!(second.is_empty(), "{:?}", second.as_bytes());
+    }
+
+    // `steal` takes the allocation out of the pool's cycle deliberately, for
+    // callers that keep the bytes past the buffer's lifetime.
+    #[test]
+    fn a_stolen_buffer_does_not_return_to_the_pool() {
+        let pool = BufPool::new();
+        let mut buf = pool.checkout_with_capacity(64);
+        buf.extend_from_slice(b"kept");
+
+        let stolen = buf.steal();
+
+        assert_eq!(stolen.as_slice(), b"kept");
+        assert_eq!(
+            pool.checkout_with_capacity(0).capacity(),
+            0,
+            "the stolen allocation came back"
+        );
+    }
+
+    #[test]
+    fn taking_moves_the_bytes_and_leaves_the_buffer_empty() {
+        let mut buf = buf_of(b"moved");
+
+        let taken = buf.take();
+
+        assert_eq!(taken.as_bytes(), b"moved");
+        assert!(buf.is_empty(), "the original kept its bytes");
+    }
+
+    #[test]
+    fn a_clone_copies_the_bytes_without_sharing_them() {
+        let original = buf_of(b"shared?");
+        let mut clone = original.clone();
+        clone.push(b'!');
+
+        assert_eq!(original.as_bytes(), b"shared?");
+        assert_eq!(clone.as_bytes(), b"shared?!");
+    }
+
+    #[test]
+    fn splitting_off_a_prefix_reads_it_as_the_type() {
+        let buf = counted(16);
+
+        let (eight, rest) = buf.as_slice().split_first::<Eight>().expect("a prefix");
+
+        assert_eq!(
+            *eight,
+            Eight {
+                a: u32::from_ne_bytes([0, 1, 2, 3]),
+                b: u32::from_ne_bytes([4, 5, 6, 7]),
+            }
+        );
+        assert_eq!(rest.as_bytes(), &[8, 9, 10, 11, 12, 13, 14, 15]);
+    }
+
+    // The invariant the type exists to carry: whatever is handed back is still
+    // a legal place to read another struct from.
+    #[test]
+    fn the_remainder_of_a_split_is_still_aligned() {
+        let buf = counted(64);
+        let mut rest = buf.as_slice();
+
+        for _ in 0..4 {
+            let (_, next) = rest.split_first::<Eight>().expect("a prefix");
+
+            assert_eq!(
+                next.as_bytes().as_ptr() as usize % ALIGN,
+                0,
+                "a split left the remainder unaligned"
+            );
+
+            rest = next;
+        }
+    }
+
+    // Consuming four bytes would leave the remainder four-aligned, so the whole
+    // split is refused rather than handing back a `BufSlice` that lies.
+    #[test]
+    fn a_type_that_would_unalign_the_remainder_is_refused() {
+        let buf = counted(64);
+
+        assert!(buf.as_slice().split_first::<Four>().is_none());
+        assert!(buf.as_slice().split_slice::<Four>(1).is_none());
+    }
+
+    // The buffer is only `ALIGN`-aligned, so it cannot promise more.
+    #[test]
+    fn a_type_needing_more_alignment_than_the_buffer_is_refused() {
+        let buf = counted(64);
+
+        assert!(std::mem::align_of::<OverAligned>() > ALIGN, "test premise");
+        assert!(buf.as_slice().split_first::<OverAligned>().is_none());
+        assert!(buf.as_slice().split_slice::<OverAligned>(1).is_none());
+    }
+
+    #[test]
+    fn splitting_more_than_there_is_refuses() {
+        let buf = counted(8);
+
+        assert!(buf.as_slice().split_first::<Eight>().is_some());
+        assert!(buf.as_slice().split_slice::<Eight>(1).is_some());
+        assert!(buf.as_slice().split_slice::<Eight>(2).is_none());
+
+        let short = counted(7);
+
+        assert!(short.as_slice().split_first::<Eight>().is_none());
+    }
+
+    #[test]
+    fn splitting_a_slice_reads_every_element() {
+        let buf = counted(24);
+
+        let (items, rest) = buf.as_slice().split_slice::<Eight>(2).expect("two");
+
+        assert_eq!(items.len(), 2);
+        assert_eq!(items[0].a, u32::from_ne_bytes([0, 1, 2, 3]));
+        assert_eq!(items[1].a, u32::from_ne_bytes([8, 9, 10, 11]));
+        assert_eq!(rest.len(), 8);
+    }
+
+    #[test]
+    fn splitting_zero_elements_consumes_nothing() {
+        let buf = counted(16);
+
+        let (items, rest) = buf.as_slice().split_slice::<Eight>(0).expect("none");
+
+        assert!(items.is_empty());
+        assert_eq!(rest.len(), 16);
+    }
+
+    // A count from the wire times a struct size can overflow `usize`. Wrapping
+    // would make a short buffer look long enough for an enormous slice.
+    #[test]
+    fn a_length_that_overflows_refuses_rather_than_wrapping() {
+        let buf = counted(64);
+        let absurd = usize::MAX / std::mem::size_of::<Eight>() + 1;
+
+        assert!(buf.as_slice().split_slice::<Eight>(absurd).is_none());
+        assert!(buf.as_slice().split_slice::<Eight>(usize::MAX).is_none());
+    }
+
+    #[test]
+    fn writing_through_a_split_reaches_the_buffer() {
+        let mut buf = counted(16);
+
+        {
+            let (first, rest) = buf
+                .as_slice_mut()
+                .split_first_mut::<Eight>()
+                .expect("a prefix");
+
+            first.a = u32::from_ne_bytes([0xaa; 4]);
+            rest.as_bytes_mut()[0] = 0xbb;
+        }
+
+        assert_eq!(&buf.as_bytes()[..4], &[0xaa; 4]);
+        assert_eq!(buf.as_bytes()[8], 0xbb);
+    }
+
+    #[test]
+    fn the_empty_default_slice_is_aligned_and_empty() {
+        let empty = <&BufSlice>::default();
+
+        assert!(empty.is_empty());
+        assert_eq!(empty.as_bytes().as_ptr() as usize % ALIGN, 0);
+    }
+
+    /// The same bytes as [`counted`], as something whose iterator is already
+    /// known to honour the `Iterator` contract. These tests are about whether
+    /// `BufIntoIter` keeps the same promises, not about how arrays behave.
+    fn reference(n: usize) -> std::vec::IntoIter<u8> {
+        (0..n).map(|i| i as u8).collect::<Vec<_>>().into_iter()
+    }
+
+    #[test]
+    fn iterating_yields_every_byte_in_order() {
+        assert_eq!(
+            counted(8).into_iter().collect::<Vec<_>>(),
+            reference(8).collect::<Vec<_>>()
+        );
+    }
+
+    #[test]
+    fn iterating_backwards_yields_every_byte_in_reverse() {
+        assert_eq!(
+            counted(8).into_iter().rev().collect::<Vec<_>>(),
+            reference(8).rev().collect::<Vec<_>>()
+        );
+    }
+
+    // Both ends walk towards each other and stop when they meet, rather than
+    // crossing over and yielding a byte twice.
+    #[test]
+    fn the_two_ends_meet_without_overlapping() {
+        let mut ours = counted(8).into_iter();
+        let mut theirs = reference(8);
+
+        for _ in 0..4 {
+            assert_eq!(ours.next(), theirs.next());
+            assert_eq!(ours.next_back(), theirs.next_back());
+        }
+
+        assert_eq!(ours.next(), None);
+        assert_eq!(ours.next_back(), None);
+    }
+
+    // `nth` skips and consumes; past the end it consumes everything, so the
+    // iterator is finished afterwards.
+    #[test]
+    fn nth_skips_consumes_and_exhausts() {
+        for n in 0..12 {
+            let mut ours = counted(8).into_iter();
+            let mut theirs = reference(8);
+
+            assert_eq!(ours.nth(n), theirs.nth(n), "nth({n})");
+            assert_eq!(ours.next(), theirs.next(), "after nth({n})");
+            assert_eq!(ours.len(), theirs.len(), "remaining after nth({n})");
+        }
+    }
+
+    #[test]
+    fn nth_back_skips_consumes_and_exhausts() {
+        for n in 0..12 {
+            let mut ours = counted(8).into_iter();
+            let mut theirs = reference(8);
+
+            assert_eq!(ours.nth_back(n), theirs.nth_back(n), "nth_back({n})");
+            assert_eq!(ours.next_back(), theirs.next_back(), "after nth_back({n})");
+            assert_eq!(ours.len(), theirs.len(), "remaining after nth_back({n})");
+        }
+    }
+
+    // `size_hint` and `len` are promises about how many bytes are left, which
+    // callers may rely on to allocate.
+    #[test]
+    fn the_reported_length_tracks_what_is_left() {
+        let mut it = counted(8).into_iter();
+
+        for expected in (0..=8).rev() {
+            assert_eq!(it.len(), expected);
+            assert_eq!(it.size_hint(), (expected, Some(expected)));
+
+            if it.next().is_none() {
+                assert_eq!(expected, 0);
+            }
+        }
+    }
+
+    // Declared `FusedIterator`, which promises `None` forever once exhausted.
+    #[test]
+    fn an_exhausted_iterator_stays_exhausted() {
+        let mut it = counted(2).into_iter();
+
+        assert!(it.by_ref().take(2).count() == 2);
+
+        for _ in 0..3 {
+            assert_eq!(it.next(), None);
+            assert_eq!(it.next_back(), None);
+        }
+    }
+
+    #[test]
+    fn the_overridden_adaptors_agree_with_plain_iteration() {
+        assert_eq!(counted(8).into_iter().count(), 8);
+        assert_eq!(counted(8).into_iter().last(), Some(7));
+        assert_eq!(counted(0).into_iter().last(), None);
+        assert_eq!(counted(8).into_iter().fold(0u32, |a, b| a + b as u32), 28);
+        assert_eq!(counted(8).into_iter().rfold(0u32, |a, b| a + b as u32), 28);
+    }
+
+    // Partly consumed from both ends, the remaining slice is what is left and
+    // nothing more.
+    #[test]
+    fn the_slice_view_shows_only_what_is_unconsumed() {
+        let mut it = counted(8).into_iter();
+        it.next();
+        it.next_back();
+
+        assert_eq!(it.as_slice(), &[1, 2, 3, 4, 5, 6]);
+        assert_eq!(it.as_mut_slice(), &[1, 2, 3, 4, 5, 6]);
+    }
+
+    #[test]
+    fn a_view_shows_the_range_it_was_made_from() {
+        let view = counted(16).try_into_view(4..12).expect("in range");
+
+        assert_eq!(view.len(), 8);
+        assert_eq!(view.as_bytes(), &[4, 5, 6, 7, 8, 9, 10, 11]);
+    }
+
+    #[test]
+    fn a_view_of_everything_is_the_whole_buffer() {
+        let view = counted(16).try_into_view(..).expect("in range");
+
+        assert_eq!(view.as_bytes(), counted(16).as_bytes());
+    }
+
+    #[test]
+    fn a_view_outside_the_buffer_is_refused() {
+        assert!(counted(16).try_into_view(4..17).is_none());
+        assert!(counted(16).try_into_view(17..).is_none());
+    }
+
+    // The buffer belongs to the pool whether or not the range was usable, so a
+    // refused view must not cost the pool its allocation.
+    #[test]
+    fn a_refused_view_returns_the_buffer_to_the_pool() {
+        let pool = BufPool::new();
+        let mut buf = pool.checkout_with_capacity(4096);
+        buf.resize(16, 0);
+        let capacity = buf.capacity();
+
+        assert!(buf.try_into_view(0..999).is_none());
+
+        assert_eq!(
+            pool.checkout_with_capacity(0).capacity(),
+            capacity,
+            "the pool lost the allocation"
+        );
+    }
+
+    #[test]
+    fn a_dropped_view_returns_the_buffer_to_the_pool() {
+        let pool = BufPool::new();
+        let mut buf = pool.checkout_with_capacity(4096);
+        buf.resize(16, 0);
+        let capacity = buf.capacity();
+
+        drop(buf.try_into_view(0..8).expect("in range"));
+
+        assert_eq!(pool.checkout_with_capacity(0).capacity(), capacity);
+    }
+
+    #[test]
+    fn a_whole_buffer_view_keeps_the_bytes() {
+        let view = BufView::from(buf_of(b"all of it"));
+
+        assert_eq!(view.as_bytes(), b"all of it");
+        assert_eq!(view.as_os_str(), std::ffi::OsStr::new("all of it"));
+    }
+}

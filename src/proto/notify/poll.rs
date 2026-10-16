@@ -33,3 +33,20 @@ impl EncodeNotify for Poll {
         }))
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    use crate::proto::notify::test_support::{HDR, assert_notify_header, encode, u64_at};
+
+    // `fuse_notify_poll_wakeup_out { kh }`, code 1.
+    #[test]
+    fn the_wakeup_handle_follows_the_header() {
+        let bytes = encode(Poll::new(0x1234_5678_9abc));
+
+        assert_notify_header(&bytes, 1);
+        assert_eq!(bytes.len(), HDR + 8);
+        assert_eq!(u64_at(&bytes, HDR), 0x1234_5678_9abc);
+    }
+}

@@ -350,3 +350,106 @@ where
         }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    use compio::buf::{IoBuf, IoVectoredBuf};
+
+    #[repr(C)]
+    #[derive(Clone, Copy, bytemuck::NoUninit)]
+    struct Header {
+        len: u32,
+        opcode: u32,
+        unique: u64,
+    }
+
+    fn gathered(bufs: &impl IoVectoredBuf) -> Vec<u8> {
+        bufs.iter_slice().flatten().copied().collect()
+    }
+
+    // `Pod` exists so a `#[repr(C)]` reply can go on the wire without a
+    // hand-written `IoBuf`. What it writes has to be the struct's own bytes, in
+    // order, with nothing added.
+    #[test]
+    fn a_pod_is_exactly_its_own_bytes() {
+        let pod = Pod(Header {
+            len: 0x1122_3344,
+            opcode: 26,
+            unique: 7,
+        });
+
+        let mut expected = Vec::new();
+        expected.extend_from_slice(&0x1122_3344u32.to_ne_bytes());
+        expected.extend_from_slice(&26u32.to_ne_bytes());
+        expected.extend_from_slice(&7u64.to_ne_bytes());
+
+        assert_eq!(pod.as_init(), expected.as_slice());
+        assert_eq!(pod.buf_len(), std::mem::size_of::<Header>());
+        assert!(!pod.is_empty());
+    }
+
+    // The kernel's `namelen` fields count the name without its terminator, so
+    // the two lengths must differ by exactly the one byte.
+    #[test]
+    fn a_nul_terminated_buffer_adds_one_byte_that_the_name_length_excludes() {
+        let with_nul = b"hello.txt".to_vec().into_io_buf_with_nul();
+
+        assert_eq!(with_nul.len_without_nul(), 9);
+        assert_eq!(with_nul.total_len(), 10);
+        assert_eq!(gathered(&with_nul), b"hello.txt\0");
+    }
+
+    #[test]
+    fn an_empty_name_is_still_terminated() {
+        let with_nul = Vec::new().into_io_buf_with_nul();
+
+        assert_eq!(with_nul.len_without_nul(), 0);
+        assert_eq!(with_nul.total_len(), 1);
+        assert_eq!(gathered(&with_nul), b"\0");
+    }
+
+    // A name assembled from several pieces is terminated once, at the end,
+    // rather than after each piece.
+    #[test]
+    fn a_vectored_name_is_terminated_once() {
+        let pieces = Vectored(vec![b"dir".to_vec(), b"/".to_vec(), b"file".to_vec()]);
+        let with_nul = pieces.into_io_buf_with_nul();
+
+        assert_eq!(with_nul.len_without_nul(), 8);
+        assert_eq!(with_nul.total_len(), 9);
+        assert_eq!(gathered(&with_nul), b"dir/file\0");
+    }
+
+    #[test]
+    fn a_vectored_buffer_reports_the_sum_of_its_pieces() {
+        let pieces = Vectored(vec![b"ab".to_vec(), b"cde".to_vec()]);
+
+        // The `Buf` variant is unreachable here: `Vectored`'s single-buffer
+        // half is `NoData`, which is uninhabited, so the type system already
+        // rules out a vectored buffer collapsing into a flat one.
+        let IoBuffer::VecBuf(bufs) = pieces.into_io_buf();
+
+        assert_eq!(bufs.total_len(), 5);
+        assert_eq!(gathered(&bufs), b"abcde");
+    }
+
+    #[test]
+    fn a_flat_buffer_reports_its_own_length() {
+        // Unreachable the other way round for the same reason: a plain
+        // `IoBuf`'s vectored half is `NoData`.
+        let IoBuffer::Buf(buf) = b"flat".to_vec().into_io_buf();
+
+        assert_eq!(buf.buf_len(), 4);
+    }
+
+    #[test]
+    fn either_keeps_whichever_side_it_was_given() {
+        let left = b"left".to_vec().left_buf::<Vec<u8>>();
+        let right = b"right".to_vec().right_buf::<Vec<u8>>();
+
+        assert_eq!(gathered(&left.into_io_buf()), b"left");
+        assert_eq!(gathered(&right.into_io_buf()), b"right");
+    }
+}

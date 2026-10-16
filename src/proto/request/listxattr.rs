@@ -35,3 +35,57 @@ impl ListXattr {
         })
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    use crate::proto::request::Opcode;
+    use crate::proto::request::test_support::{latest, request, root};
+
+    /// `fuse_getxattr_in`, which `FUSE_LISTXATTR` reuses. No key follows it.
+    fn body(size: u32) -> Vec<u8> {
+        let mut body = size.to_ne_bytes().to_vec();
+        body.extend_from_slice(&0u32.to_ne_bytes()); // padding
+        #[cfg(target_os = "macos")]
+        body.extend_from_slice(&[0u8; 8]); // position, padding
+        body
+    }
+
+    fn decode(size: u32) -> Result<ListXattr> {
+        ListXattr::decode(request(Opcode::LISTXATTR, &body(size)), root(), latest())
+    }
+
+    #[test]
+    fn the_size_comes_from_the_body() {
+        let req = decode(4096).expect("decodes");
+
+        assert_eq!(req.len(), 4096);
+        assert_eq!(req.ino(), root().unwrap());
+    }
+
+    // Zero asks how long the list is rather than for the list, so the two cases
+    // have to stay distinguishable.
+    #[test]
+    fn a_size_of_zero_asks_for_the_length() {
+        assert_eq!(decode(0).expect("decodes").len(), 0);
+    }
+
+    #[test]
+    fn a_body_too_short_for_the_size_field_is_refused() {
+        let err = ListXattr::decode(request(Opcode::LISTXATTR, &[0u8; 4]), root(), latest())
+            .map(|_| ())
+            .unwrap_err();
+
+        assert_eq!(err, Error::EPROTO);
+    }
+
+    #[test]
+    fn a_request_without_an_inode_is_refused() {
+        let err = ListXattr::decode(request(Opcode::LISTXATTR, &body(8)), None, latest())
+            .map(|_| ())
+            .unwrap_err();
+
+        assert_eq!(err, Error::EINVAL);
+    }
+}

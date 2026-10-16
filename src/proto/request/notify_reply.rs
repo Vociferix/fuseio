@@ -78,3 +78,74 @@ impl SharedNotifyReply {
         }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    use crate::proto::request::Opcode;
+    use crate::proto::request::test_support::{latest, request};
+
+    /// `fuse_notify_retrieve_in { dummy1, offset, size, dummy2, dummy3,
+    /// dummy4 }`, then the data the kernel is handing back.
+    fn body(offset: u64, size: u32, data: &[u8]) -> Vec<u8> {
+        let mut body = 0u64.to_ne_bytes().to_vec(); // dummy1
+        body.extend_from_slice(&offset.to_ne_bytes());
+        body.extend_from_slice(&size.to_ne_bytes());
+        body.extend_from_slice(&0u32.to_ne_bytes()); // dummy2
+        body.extend_from_slice(&0u64.to_ne_bytes()); // dummy3
+        body.extend_from_slice(&0u64.to_ne_bytes()); // dummy4
+        body.extend_from_slice(data);
+        body
+    }
+
+    fn decode(offset: u64, size: u32, data: &[u8]) -> Result<NotifyReply> {
+        NotifyReply::decode(
+            request(Opcode::NOTIFY_REPLY, &body(offset, size, data)),
+            None,
+            latest(),
+        )
+    }
+
+    #[test]
+    fn the_offset_and_data_come_from_the_body() {
+        let req = decode(8192, 4, b"data").expect("decodes");
+
+        assert_eq!(req.offset(), 8192);
+        assert_eq!(req.data(), b"data");
+    }
+
+    // `size` says how much of the reply is the retrieved data; anything after
+    // it is padding the kernel added, not content.
+    #[test]
+    fn the_data_stops_at_the_announced_size() {
+        let req = decode(0, 4, b"data\0\0\0\0").expect("decodes");
+
+        assert_eq!(req.data(), b"data");
+    }
+
+    // Claiming more data than arrived is a reply that cannot be honoured.
+    #[test]
+    fn a_size_larger_than_what_arrived_is_refused() {
+        assert_eq!(
+            decode(0, 64, b"short").map(|_| ()).unwrap_err(),
+            Error::EINVAL
+        );
+    }
+
+    #[test]
+    fn a_reply_with_no_data_decodes() {
+        let req = decode(0, 0, b"").expect("decodes");
+
+        assert!(req.data().is_empty());
+    }
+
+    #[test]
+    fn a_truncated_body_is_refused() {
+        let err = NotifyReply::decode(request(Opcode::NOTIFY_REPLY, &[0u8; 16]), None, latest())
+            .map(|_| ())
+            .unwrap_err();
+
+        assert_eq!(err, Error::EPROTO);
+    }
+}

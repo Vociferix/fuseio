@@ -45,3 +45,46 @@ impl RemoveXattr {
         Ok(Self { ino, buf })
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    use crate::proto::request::Opcode;
+    use crate::proto::request::test_support::{latest, request, root};
+
+    // The body is the key alone, terminated.
+    #[test]
+    fn the_key_stops_at_the_terminator() {
+        let req = RemoveXattr::decode(
+            request(Opcode::REMOVEXATTR, b"user.gone\0"),
+            root(),
+            latest(),
+        )
+        .expect("decodes");
+
+        assert_eq!(req.ino(), root().unwrap());
+        assert_eq!(req.key(), "user.gone");
+    }
+
+    #[test]
+    fn padding_after_the_key_is_not_part_of_it() {
+        let req = RemoveXattr::decode(
+            request(Opcode::REMOVEXATTR, b"user.a\0\0\0"),
+            root(),
+            latest(),
+        )
+        .expect("decodes");
+
+        assert_eq!(req.key(), "user.a");
+    }
+
+    #[test]
+    fn a_request_without_an_inode_is_refused() {
+        let err = RemoveXattr::decode(request(Opcode::REMOVEXATTR, b"user.a\0"), None, latest())
+            .map(|_| ())
+            .unwrap_err();
+
+        assert_eq!(err, Error::EINVAL);
+    }
+}

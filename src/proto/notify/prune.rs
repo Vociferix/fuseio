@@ -81,3 +81,66 @@ impl EncodeNotify for Prune {
         Ok(buf)
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    use crate::proto::notify::test_support::{HDR, assert_notify_header, encode, u32_at, u64_at};
+
+    const COUNT: usize = HDR;
+    const INOS: usize = HDR + 16;
+
+    fn prune(inos: &[u64]) -> Prune {
+        let pool = BufPool::new();
+        let mut prune = Prune::with_capacity(&pool, inos.len());
+
+        for &ino in inos {
+            prune.push(Ino::from_raw(ino).unwrap());
+        }
+
+        prune
+    }
+
+    // `fuse_notify_prune_out { count, padding, spare }`, code 9, then `count`
+    // inode numbers. The kernel checks the length exactly, so the padding and
+    // the spare word have to be there.
+    #[test]
+    fn the_inodes_follow_a_sixteen_byte_description() {
+        let bytes = encode(prune(&[2, 3, 5]));
+
+        assert_notify_header(&bytes, 9);
+        assert_eq!(u32_at(&bytes, COUNT), 3);
+        assert_eq!(u32_at(&bytes, COUNT + 4), 0, "the padding must be zero");
+        assert_eq!(u64_at(&bytes, COUNT + 8), 0, "the spare word must be zero");
+        assert_eq!(bytes.len(), INOS + 3 * 8, "the kernel checks this exactly");
+
+        for (i, expected) in [2u64, 3, 5].into_iter().enumerate() {
+            assert_eq!(u64_at(&bytes, INOS + i * 8), expected);
+        }
+    }
+
+    #[test]
+    fn pruning_nothing_is_a_description_with_no_inodes() {
+        let bytes = encode(prune(&[]));
+
+        assert_notify_header(&bytes, 9);
+        assert_eq!(u32_at(&bytes, COUNT), 0);
+        assert_eq!(bytes.len(), INOS);
+    }
+
+    #[test]
+    fn the_count_follows_what_was_pushed() {
+        let pool = BufPool::new();
+        let mut p = Prune::with_capacity(&pool, 0);
+        p.extend_from_slice(&[Ino::from_raw(7).unwrap(), Ino::from_raw(8).unwrap()]);
+
+        assert_eq!(p.len(), 2);
+        assert!(!p.is_empty());
+
+        let bytes = encode(p);
+
+        assert_eq!(u32_at(&bytes, COUNT), 2);
+        assert_eq!(bytes.len(), INOS + 16);
+    }
+}

@@ -216,3 +216,79 @@ impl FsCaps {
         self.difference(Self::supported(kernel))
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    // `FsCaps` and `KernelCaps` are the two halves of the negotiation and share
+    // bit positions on purpose, so converting between them is a mask rather
+    // than a table. If the two ever drift, every `supported` answer is wrong.
+    #[test]
+    fn the_two_halves_agree_on_what_each_bit_means() {
+        for flag in FsCaps::all().iter() {
+            let kernel = KernelCaps::from_bits_truncate(flag.bits());
+
+            assert_eq!(
+                kernel.bits(),
+                flag.bits(),
+                "{flag:?} has no counterpart at the same bit"
+            );
+            assert!(
+                FsCaps::supported(kernel).contains(flag),
+                "{flag:?} is not reported as supported when the kernel offers it"
+            );
+        }
+    }
+
+    // A filesystem may only enable what the kernel offered, so an empty offer
+    // supports nothing at all.
+    #[test]
+    fn a_kernel_offering_nothing_supports_nothing() {
+        assert!(FsCaps::supported(KernelCaps::empty()).is_empty());
+        assert!(FsCaps::defaults(KernelCaps::empty()).is_empty());
+    }
+
+    // The defaults are what libfuse turns on without being asked, and they are
+    // still subject to the offer.
+    #[test]
+    fn the_defaults_are_limited_to_what_the_kernel_offered() {
+        let generous = FsCaps::defaults(KernelCaps::all());
+
+        assert!(!generous.is_empty(), "nothing is enabled by default");
+        assert!(generous.contains(FsCaps::ASYNC_READ));
+
+        let stingy = KernelCaps::ASYNC_READ;
+
+        assert_eq!(FsCaps::defaults(stingy), FsCaps::ASYNC_READ);
+    }
+
+    // The handshake fails a mount that asks for something unavailable, so this
+    // is what has to name the offending flags.
+    #[test]
+    fn asking_for_what_was_not_offered_is_reported() {
+        let wanted = FsCaps::ASYNC_READ | FsCaps::WRITEBACK_CACHE;
+        let offered = KernelCaps::ASYNC_READ;
+
+        assert_eq!(wanted.unsupported(offered), FsCaps::WRITEBACK_CACHE);
+    }
+
+    #[test]
+    fn asking_only_for_what_was_offered_reports_nothing() {
+        let wanted = FsCaps::ASYNC_READ | FsCaps::WRITEBACK_CACHE;
+        let offered = KernelCaps::ASYNC_READ | KernelCaps::WRITEBACK_CACHE | KernelCaps::POSIX_ACL;
+
+        assert!(wanted.unsupported(offered).is_empty());
+    }
+
+    // `supported` and `unsupported` are two views of the same question, so
+    // they must never disagree about a flag.
+    #[test]
+    fn the_two_views_of_an_offer_agree() {
+        let offered = KernelCaps::ASYNC_READ | KernelCaps::DO_READDIRPLUS | KernelCaps::POSIX_ACL;
+        let supported = FsCaps::supported(offered);
+
+        assert!(FsCaps::all().unsupported(offered) == FsCaps::all().difference(supported));
+        assert!(supported.unsupported(offered).is_empty());
+    }
+}

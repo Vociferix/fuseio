@@ -33,3 +33,20 @@ impl EncodeResp for Bmap {
         }))
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    use crate::proto::response::test_support::{HDR, assert_reply_header, encode, u64_at};
+
+    // `fuse_bmap_out { block }`.
+    #[test]
+    fn the_block_number_follows_the_header() {
+        let bytes = encode(Bmap::new(0xdead_beef_1234), 7);
+
+        assert_reply_header(&bytes, 7);
+        assert_eq!(bytes.len(), HDR + 8);
+        assert_eq!(u64_at(&bytes, HDR), 0xdead_beef_1234);
+    }
+}

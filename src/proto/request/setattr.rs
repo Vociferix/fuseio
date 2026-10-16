@@ -280,6 +280,12 @@ fn make_time(secs: u64, nsecs: u32) -> Result<SystemTime> {
     crate::proto::time::join_raw(secs, nsecs)
 }
 
+/// The body length a request of this kind needs, which differs by
+/// platform where the layout does.
+#[cfg(test)]
+pub(super) const RAW_LEN: usize =
+    std::mem::size_of::<Raw>() - std::mem::size_of::<super::RawHeader>();
+
 #[cfg(test)]
 mod tests {
     use super::*;
