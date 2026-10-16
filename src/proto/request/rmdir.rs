@@ -45,3 +45,37 @@ impl RmDir {
         Ok(Self { parent: ino, buf })
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    use crate::proto::request::Opcode;
+    use crate::proto::request::test_support::{latest, request, root};
+
+    #[test]
+    fn the_name_stops_at_the_terminator() {
+        let req =
+            RmDir::decode(request(Opcode::RMDIR, b"gone\0"), root(), latest()).expect("decodes");
+
+        assert_eq!(req.parent(), root().unwrap());
+        assert_eq!(req.name(), "gone");
+    }
+
+    #[test]
+    fn padding_after_the_terminator_is_not_part_of_the_name() {
+        let req =
+            RmDir::decode(request(Opcode::RMDIR, b"a\0\0\0"), root(), latest()).expect("decodes");
+
+        assert_eq!(req.name(), "a");
+    }
+
+    #[test]
+    fn a_request_without_an_inode_is_refused() {
+        let err = RmDir::decode(request(Opcode::RMDIR, b"x\0"), None, latest())
+            .map(|_| ())
+            .unwrap_err();
+
+        assert_eq!(err, Error::EINVAL);
+    }
+}
