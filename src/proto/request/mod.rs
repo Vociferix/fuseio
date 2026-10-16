@@ -462,6 +462,132 @@ mod tests {
         assert_eq!(rename.new_name(), "new");
     }
 
+    /// A body of `n` zero bytes, for the layouts whose fields may all be zero.
+    fn zeroed(n: usize) -> Vec<u8> {
+        vec![0u8; n]
+    }
+
+    /// `n` zero bytes followed by a terminated name.
+    fn zeroed_named(n: usize, name: &[u8]) -> Vec<u8> {
+        let mut body = zeroed(n);
+        body.extend_from_slice(name);
+        body
+    }
+
+    /// As [`zeroed_named`], with a `mode` written at `at`. Creation requests
+    /// carry a file type, and zero is not one.
+    fn with_mode(at: usize, mode: u32, n: usize, name: &[u8]) -> Vec<u8> {
+        let mut body = zeroed_named(n, name);
+        body[at..at + 4].copy_from_slice(&mode.to_ne_bytes());
+        body
+    }
+
+    /// A body of `n` zeroes whose first eight bytes are `first`, for the
+    /// layouts that lead with an inode or a handle that may not be zero.
+    fn leading(first: u64, n: usize) -> Vec<u8> {
+        let mut body = first.to_ne_bytes().to_vec();
+        body.resize(n, 0);
+        body
+    }
+
+    // Every opcode has to reach its own decoder. The arms are one line each and
+    // differ only in two names, so a copy-and-paste slip compiles cleanly and
+    // quietly serves the wrong request -- a directory fsync as a file fsync,
+    // say. Nothing but an exhaustive check catches that.
+    // `S_IF*` are `u32` on Linux and `mode_t` elsewhere.
+    #[allow(clippy::unnecessary_cast)]
+    #[test]
+    fn every_opcode_reaches_its_own_decoder() {
+        macro_rules! check {
+            ($op:ident => $variant:ident, $body:expr) => {{
+                let body = $body;
+                let decoded = AnyRequest::decode(
+                    request(Opcode::$op, &body),
+                    crate::handshake::MINOR_VER,
+                    ReplyInitFlags::empty(),
+                )
+                .unwrap_or_else(|err| panic!("{} did not decode: {err:?}", stringify!($op)))
+                .body;
+
+                assert!(
+                    matches!(decoded, Body::$variant(_)),
+                    "{} decoded as {:?}, not {}",
+                    stringify!($op),
+                    decoded,
+                    stringify!($variant),
+                );
+            }};
+        }
+
+        let name = b"x\0".as_slice();
+
+        check!(LOOKUP => Lookup, name.to_vec());
+        check!(FORGET => Forget, zeroed(8));
+        check!(GETATTR => GetAttr, zeroed(16));
+        check!(SETATTR => SetAttr, zeroed(88));
+        check!(READLINK => ReadLink, zeroed(0));
+        check!(SYMLINK => Symlink, b"a\0b\0".to_vec());
+        check!(MKNOD => MkNod, with_mode(0, nix::libc::S_IFREG as u32 | 0o644, 16, name));
+        check!(MKDIR => MkDir, with_mode(0, nix::libc::S_IFDIR as u32 | 0o755, 8, name));
+        check!(UNLINK => Unlink, name.to_vec());
+        check!(RMDIR => RmDir, name.to_vec());
+        check!(RENAME => Rename, leading(1, 8).into_iter().chain(b"a\0b\0".iter().copied()).collect::<Vec<_>>());
+        check!(LINK => Link, leading(1, 8).into_iter().chain(name.iter().copied()).collect::<Vec<_>>());
+        check!(OPEN => Open, zeroed(8));
+        check!(READ => Read, zeroed(40));
+        check!(WRITE => Write, zeroed(40));
+        check!(STATFS => StatFs, zeroed(0));
+        check!(RELEASE => Release, zeroed(24));
+        check!(FSYNC => Fsync, zeroed(16));
+        check!(SETXATTR => SetXattr, zeroed_named(16, b"k\0v\0"));
+        check!(GETXATTR => GetXattr, zeroed_named(GETXATTR_RAW, name));
+        check!(LISTXATTR => ListXattr, zeroed(GETXATTR_RAW));
+        check!(REMOVEXATTR => RemoveXattr, name.to_vec());
+        check!(FLUSH => Flush, zeroed(24));
+        check!(OPENDIR => OpenDir, zeroed(8));
+        check!(READDIR => ReadDir, zeroed(40));
+        check!(RELEASEDIR => ReleaseDir, zeroed(24));
+        check!(FSYNCDIR => FsyncDir, zeroed(16));
+        check!(GETLK => GetLk, zeroed(48));
+        check!(SETLK => SetLk, zeroed(48));
+        check!(SETLKW => SetLkW, zeroed(48));
+        check!(ACCESS => Access, zeroed(8));
+        check!(CREATE => Create, with_mode(4, nix::libc::S_IFREG as u32 | 0o644, 16, name));
+        check!(INTERRUPT => Interrupt, zeroed(8));
+        check!(BMAP => Bmap, zeroed(16));
+        check!(DESTROY => Destroy, zeroed(0));
+        check!(IOCTL => Ioctl, zeroed(32));
+        check!(POLL => Poll, zeroed(24));
+        check!(NOTIFY_REPLY => NotifyReply, zeroed(40));
+        check!(BATCH_FORGET => BatchForget, zeroed(8));
+        check!(FALLOCATE => Fallocate, zeroed(32));
+        check!(READDIRPLUS => ReadDirPlus, zeroed(40));
+        check!(RENAME2 => Rename, leading(1, 16).into_iter().chain(b"a\0b\0".iter().copied()).collect::<Vec<_>>());
+        check!(LSEEK => Lseek, {
+            let mut body = zeroed(24);
+            body[16..20].copy_from_slice(&(nix::libc::SEEK_DATA as u32).to_ne_bytes());
+            body
+        });
+        check!(COPY_FILE_RANGE => CopyFileRange, leading(0, 8).into_iter().chain(zeroed(8)).chain(leading(1, 40)).collect::<Vec<_>>());
+        check!(SYNCFS => SyncFs, zeroed(8));
+        check!(TMPFILE => TmpFile, with_mode(4, nix::libc::S_IFREG as u32 | 0o644, 16, name));
+        check!(STATX => StatX, zeroed(24));
+        check!(COPY_FILE_RANGE_64 => CopyFileRange64, leading(0, 8).into_iter().chain(zeroed(8)).chain(leading(1, 40)).collect::<Vec<_>>());
+
+        // macOS-only opcodes, decodable everywhere.
+        check!(SETVOLNAME => SetVolName, b"volume\0".to_vec());
+        check!(GETXTIMES => GetXtimes, zeroed(0));
+        check!(EXCHANGE => Rename, leading(1, 8).into_iter().chain(leading(1, 16)).chain(b"a\0b\0".iter().copied()).collect::<Vec<_>>());
+        check!(MONITOR => Monitor, {
+            let mut body = zeroed(8);
+            body[0..4].copy_from_slice(&1u32.to_ne_bytes()); // BEGIN
+            body
+        });
+    }
+
+    /// `fuse_getxattr_in` is wider on macOS, which adds `position`.
+    const GETXATTR_RAW: usize = if cfg!(target_os = "macos") { 16 } else { 8 };
+
     // An opcode no kernel defines has to be refused rather than mistaken for a
     // neighbouring one.
     #[test]
