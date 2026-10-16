@@ -524,7 +524,7 @@ mod tests {
         check!(LOOKUP => Lookup, name.to_vec());
         check!(FORGET => Forget, zeroed(8));
         check!(GETATTR => GetAttr, zeroed(16));
-        check!(SETATTR => SetAttr, zeroed(88));
+        check!(SETATTR => SetAttr, zeroed(setattr::RAW_LEN));
         check!(READLINK => ReadLink, zeroed(0));
         check!(SYMLINK => Symlink, b"a\0b\0".to_vec());
         check!(MKNOD => MkNod, with_mode(0, nix::libc::S_IFREG as u32 | 0o644, 16, name));
@@ -539,18 +539,18 @@ mod tests {
         check!(STATFS => StatFs, zeroed(0));
         check!(RELEASE => Release, zeroed(24));
         check!(FSYNC => Fsync, zeroed(16));
-        check!(SETXATTR => SetXattr, zeroed_named(16, b"k\0v\0"));
-        check!(GETXATTR => GetXattr, zeroed_named(GETXATTR_RAW, name));
-        check!(LISTXATTR => ListXattr, zeroed(GETXATTR_RAW));
+        check!(SETXATTR => SetXattr, zeroed_named(setxattr::RAW_LEN, b"k\0v\0"));
+        check!(GETXATTR => GetXattr, zeroed_named(getxattr::RAW_LEN, name));
+        check!(LISTXATTR => ListXattr, zeroed(getxattr::RAW_LEN));
         check!(REMOVEXATTR => RemoveXattr, name.to_vec());
         check!(FLUSH => Flush, zeroed(24));
         check!(OPENDIR => OpenDir, zeroed(8));
         check!(READDIR => ReadDir, zeroed(40));
         check!(RELEASEDIR => ReleaseDir, zeroed(24));
         check!(FSYNCDIR => FsyncDir, zeroed(16));
-        check!(GETLK => GetLk, zeroed(48));
-        check!(SETLK => SetLk, zeroed(48));
-        check!(SETLKW => SetLkW, zeroed(48));
+        check!(GETLK => GetLk, lock_body());
+        check!(SETLK => SetLk, lock_body());
+        check!(SETLKW => SetLkW, lock_body());
         check!(ACCESS => Access, zeroed(8));
         check!(CREATE => Create, with_mode(4, nix::libc::S_IFREG as u32 | 0o644, 16, name));
         check!(INTERRUPT => Interrupt, zeroed(8));
@@ -585,8 +585,16 @@ mod tests {
         });
     }
 
-    /// `fuse_getxattr_in` is wider on macOS, which adds `position`.
-    const GETXATTR_RAW: usize = if cfg!(target_os = "macos") { 16 } else { 8 };
+    /// `fuse_lk_in`, whose `fuse_file_lock` sits at offset 16 with its type at
+    /// 32. Zero is `F_RDLCK` only on Linux; the BSDs start at one, so a zeroed
+    /// body would name no lock type at all there.
+    fn lock_body() -> Vec<u8> {
+        let mut body = zeroed(48);
+
+        body[32..36].copy_from_slice(&(nix::libc::F_RDLCK as u32).to_ne_bytes());
+
+        body
+    }
 
     // An opcode no kernel defines has to be refused rather than mistaken for a
     // neighbouring one.
